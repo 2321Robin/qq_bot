@@ -20,6 +20,10 @@ def build_scheduler_job_kwargs(settings: BotSettings) -> dict[str, object]:
     }
 
 
+def filter_allowed_group_ids(group_ids: list[int], settings: BotSettings) -> list[int]:
+    return [group_id for group_id in group_ids if settings.group_allowed(group_id)]
+
+
 async def send_group_messages(
     bot: GroupMessageBot,
     group_ids: list[int],

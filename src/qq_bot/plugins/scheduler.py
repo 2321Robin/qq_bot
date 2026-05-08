@@ -2,7 +2,11 @@ from nonebot import get_bots, logger, require
 from nonebot.adapters.onebot.v11 import Bot as OneBotV11Bot
 
 from qq_bot.config import get_settings
-from qq_bot.services.scheduled_sender import build_scheduler_job_kwargs, send_group_messages
+from qq_bot.services.scheduled_sender import (
+    build_scheduler_job_kwargs,
+    filter_allowed_group_ids,
+    send_group_messages,
+)
 
 require("nonebot_plugin_apscheduler")
 from nonebot_plugin_apscheduler import scheduler  # noqa: E402
@@ -26,9 +30,14 @@ async def send_daily_messages() -> None:
         logger.warning("No OneBot v11 bot is connected; scheduled message skipped.")
         return
 
+    group_ids = filter_allowed_group_ids(settings.scheduled_group_id_list, settings)
+    if not group_ids:
+        logger.info("Scheduled messages skipped because no configured target groups are allowed.")
+        return
+
     failures = await send_group_messages(
         bot,
-        settings.scheduled_group_id_list,
+        group_ids,
         settings.scheduled_message,
     )
     for group_id in failures:

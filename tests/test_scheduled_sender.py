@@ -1,7 +1,11 @@
 import pytest
 
 from qq_bot.config import BotSettings
-from qq_bot.services.scheduled_sender import build_scheduler_job_kwargs, send_group_messages
+from qq_bot.services.scheduled_sender import (
+    build_scheduler_job_kwargs,
+    filter_allowed_group_ids,
+    send_group_messages,
+)
 
 
 class FakeBot:
@@ -27,6 +31,22 @@ def test_build_scheduler_job_kwargs_uses_configured_time() -> None:
         "id": "daily_group_message",
         "replace_existing": True,
     }
+
+
+def test_filter_allowed_group_ids_allows_all_when_allowlist_is_empty() -> None:
+    settings = BotSettings(allowed_group_ids="")
+
+    group_ids = filter_allowed_group_ids([1001, 1002], settings)
+
+    assert group_ids == [1001, 1002]
+
+
+def test_filter_allowed_group_ids_applies_configured_allowlist() -> None:
+    settings = BotSettings(allowed_group_ids="1002,1004")
+
+    group_ids = filter_allowed_group_ids([1001, 1002, 1003, 1004], settings)
+
+    assert group_ids == [1002, 1004]
 
 
 @pytest.mark.asyncio
