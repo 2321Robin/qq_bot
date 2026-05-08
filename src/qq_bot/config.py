@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -34,7 +34,7 @@ class BotSettings(BaseSettings):
     scheduled_cron_hour: int = 9
     scheduled_cron_minute: int = 0
 
-    ai_api_key: str = ""
+    ai_api_key: str = Field(default="", repr=False)
     ai_base_url: str = "https://api.openai.com/v1"
     ai_model: str = "gpt-4o-mini"
     ai_prefix: str = "ai"
@@ -80,7 +80,7 @@ class BotSettings(BaseSettings):
 
     @property
     def normalized_ai_base_url(self) -> str:
-        return self.ai_base_url.rstrip("/")
+        return self.ai_base_url.strip().rstrip("/")
 
     def group_allowed(self, group_id: int) -> bool:
         allowed_groups = self.allowed_group_id_list

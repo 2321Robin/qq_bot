@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from qq_bot.config import BotSettings, parse_id_list
+from qq_bot.config import BotSettings, get_settings, parse_id_list
 
 
 def test_parse_id_list_accepts_comma_separated_values() -> None:
@@ -48,6 +48,36 @@ def test_scheduled_enabled_requires_group_and_message() -> None:
     assert not empty_message.scheduled_enabled()
     assert not whitespace_message.scheduled_enabled()
     assert enabled.scheduled_enabled()
+
+
+def test_ai_api_key_is_hidden_from_settings_repr() -> None:
+    assert "secret-token" not in repr(BotSettings(ai_api_key="secret-token"))
+
+
+def test_normalized_ai_base_url_strips_whitespace_and_trailing_slash() -> None:
+    settings = BotSettings(ai_base_url=" https://api.example.com/v1/ ")
+
+    assert settings.normalized_ai_base_url == "https://api.example.com/v1"
+
+
+def test_has_ai_config_requires_non_empty_key() -> None:
+    assert BotSettings(ai_api_key="secret-token").has_ai_config()
+    assert not BotSettings(ai_api_key="   ").has_ai_config()
+
+
+def test_get_settings_loads_environment_and_caches(monkeypatch: pytest.MonkeyPatch) -> None:
+    get_settings.cache_clear()
+    try:
+        monkeypatch.setenv("AI_API_KEY", "env-token")
+
+        first = get_settings()
+        monkeypatch.setenv("AI_API_KEY", "changed-token")
+        second = get_settings()
+
+        assert first.ai_api_key == "env-token"
+        assert second is first
+    finally:
+        get_settings.cache_clear()
 
 
 def test_invalid_id_list_raises_validation_error() -> None:
