@@ -62,7 +62,7 @@ async def request_ai_reply(
         content = data["choices"][0]["message"]["content"].strip()
     except httpx.HTTPError as exc:
         raise AIReplyError("AI API request failed") from exc
-    except (KeyError, IndexError, TypeError, AttributeError) as exc:
+    except (KeyError, IndexError, TypeError, AttributeError, ValueError) as exc:
         raise AIReplyError("AI API returned an invalid response") from exc
     finally:
         if owns_client and isinstance(active_client, httpx.AsyncClient):

@@ -15,6 +15,11 @@ class FakeResponse:
         return self.payload
 
 
+class InvalidJsonResponse(FakeResponse):
+    def json(self) -> dict:
+        raise ValueError("not json")
+
+
 class FakeClient:
     def __init__(self, response: FakeResponse):
         self.response = response
@@ -66,6 +71,15 @@ async def test_request_ai_reply_requires_api_key() -> None:
 async def test_request_ai_reply_rejects_invalid_response_shape() -> None:
     settings = BotSettings(ai_api_key="secret")
     client = FakeClient(FakeResponse({"choices": []}))
+
+    with pytest.raises(AIReplyError, match="invalid response"):
+        await request_ai_reply("你好", settings=settings, client=client)
+
+
+@pytest.mark.asyncio
+async def test_request_ai_reply_rejects_invalid_json_response() -> None:
+    settings = BotSettings(ai_api_key="secret")
+    client = FakeClient(InvalidJsonResponse({}))
 
     with pytest.raises(AIReplyError, match="invalid response"):
         await request_ai_reply("你好", settings=settings, client=client)
