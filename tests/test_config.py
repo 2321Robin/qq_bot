@@ -40,9 +40,13 @@ def test_allowed_group_list_blocks_unknown_group() -> None:
 
 def test_scheduled_enabled_requires_group_and_message() -> None:
     disabled = BotSettings(scheduled_group_ids="", scheduled_message="hello")
+    empty_message = BotSettings(scheduled_group_ids="123456", scheduled_message="")
+    whitespace_message = BotSettings(scheduled_group_ids="123456", scheduled_message="   ")
     enabled = BotSettings(scheduled_group_ids="123456", scheduled_message="hello")
 
     assert not disabled.scheduled_enabled()
+    assert not empty_message.scheduled_enabled()
+    assert not whitespace_message.scheduled_enabled()
     assert enabled.scheduled_enabled()
 
 
