@@ -1,0 +1,71 @@
+import pytest
+
+from qq_bot.config import BotSettings
+from qq_bot.services.ai_client import AIReplyError, build_chat_payload, request_ai_reply
+
+
+class FakeResponse:
+    def __init__(self, payload: dict):
+        self.payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict:
+        return self.payload
+
+
+class FakeClient:
+    def __init__(self, response: FakeResponse):
+        self.response = response
+        self.calls: list[dict] = []
+
+    async def post(self, url: str, *, headers: dict, json: dict) -> FakeResponse:
+        self.calls.append({"url": url, "headers": headers, "json": json})
+        return self.response
+
+
+def test_build_chat_payload_uses_model_and_prompt() -> None:
+    settings = BotSettings(ai_model="test-model")
+
+    payload = build_chat_payload("你好", settings)
+
+    assert payload["model"] == "test-model"
+    assert payload["messages"][-1] == {"role": "user", "content": "你好"}
+
+
+@pytest.mark.asyncio
+async def test_request_ai_reply_posts_openai_compatible_payload() -> None:
+    settings = BotSettings(
+        ai_api_key="secret",
+        ai_base_url="https://api.example.com/v1/",
+        ai_model="test-model",
+    )
+    client = FakeClient(
+        FakeResponse({"choices": [{"message": {"content": "机器人回复"}}]})
+    )
+
+    reply = await request_ai_reply("你好", settings=settings, client=client)
+
+    assert reply == "机器人回复"
+    assert client.calls[0]["url"] == "https://api.example.com/v1/chat/completions"
+    assert client.calls[0]["headers"]["Authorization"] == "Bearer secret"
+    assert client.calls[0]["json"]["model"] == "test-model"
+
+
+@pytest.mark.asyncio
+async def test_request_ai_reply_requires_api_key() -> None:
+    settings = BotSettings(ai_api_key="")
+    client = FakeClient(FakeResponse({"choices": []}))
+
+    with pytest.raises(AIReplyError, match="AI_API_KEY"):
+        await request_ai_reply("你好", settings=settings, client=client)
+
+
+@pytest.mark.asyncio
+async def test_request_ai_reply_rejects_invalid_response_shape() -> None:
+    settings = BotSettings(ai_api_key="secret")
+    client = FakeClient(FakeResponse({"choices": []}))
+
+    with pytest.raises(AIReplyError, match="invalid response"):
+        await request_ai_reply("你好", settings=settings, client=client)
