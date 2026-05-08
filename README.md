@@ -15,8 +15,8 @@ Run these commands from the project root:
 
 ```powershell
 py -3.11 -m venv .venv
-.venv\Scripts\python -m pip install --upgrade pip
-.venv\Scripts\python -m pip install -e ".[dev]"
+.\.venv\Scripts\python -m pip install --upgrade pip
+.\.venv\Scripts\python -m pip install -e ".[dev]"
 Copy-Item .env.example .env
 ```
 
@@ -40,7 +40,7 @@ SCHEDULED_CRON_MINUTE=0
 ## Run The Bot
 
 ```powershell
-.venv\Scripts\python bot.py
+.\.venv\Scripts\python bot.py
 ```
 
 By default, the bot listens on `127.0.0.1:8080`.
@@ -56,7 +56,7 @@ If NapCatQQ and the bot are not running on the same machine, replace `127.0.0.1`
 ## Tests
 
 ```powershell
-.venv\Scripts\python -m pytest -v
+.\.venv\Scripts\python -m pytest -v
 ```
 
 ## Manual Verification
