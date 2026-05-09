@@ -29,6 +29,11 @@ ALLOWED_GROUP_IDS=123456789,987654321
 AI_API_KEY=sk-your-api-key
 AI_BASE_URL=https://api.openai.com/v1
 AI_MODEL=gpt-4o-mini
+AI_TIMEOUT_SECONDS=30
+SEARCH_ENABLED=false
+TAVILY_API_KEY=
+SEARCH_MAX_RESULTS=5
+SEARCH_TIMEOUT_SECONDS=10
 SCHEDULED_GROUP_IDS=123456789
 SCHEDULED_MESSAGE=现在是定时提醒时间。
 SCHEDULED_CRON_TIMES=
@@ -38,6 +43,8 @@ SCHEDULED_CRON_MINUTE=0
 
 `ALLOWED_GROUP_IDS` controls which groups can use the bot. `SCHEDULED_GROUP_IDS` controls which groups receive scheduled messages.
 Set `SCHEDULED_CRON_TIMES` to comma-separated `HH:MM` values, such as `11:00,12:10,16:10,20:10`, to send the same scheduled message multiple times per day. If it is blank, the bot uses `SCHEDULED_CRON_HOUR` and `SCHEDULED_CRON_MINUTE`.
+
+Set `SEARCH_ENABLED=true` to enable smart web search for current or search-related AI prompts, such as `ai 今天有什么新闻` or `ai 搜索 DeepSeek 最新消息`. Create a free Tavily API key at https://app.tavily.com/, put `TAVILY_API_KEY` only in your local `.env`, then restart the bot. Tavily's free plan provides monthly free API credits.
 
 ## Run The Bot
 
@@ -68,4 +75,5 @@ After starting the bot and connecting NapCatQQ:
 - Send `/ping` in an allowed group and expect `pong`.
 - Send `/help` in an allowed group and expect the feature list.
 - Send `ai 你好` in an allowed group and expect an AI reply.
+- Enable `SEARCH_ENABLED=true` and set `TAVILY_API_KEY` in `.env`, restart the bot, send `ai 搜索 DeepSeek 最新消息`, and expect an answer using web-search context.
 - Temporarily set `SCHEDULED_CRON_TIMES` to the next few minutes, restart the bot, and expect `SCHEDULED_MESSAGE` in the target group. If `SCHEDULED_CRON_TIMES` is blank, use `SCHEDULED_CRON_HOUR` and `SCHEDULED_CRON_MINUTE` instead.
