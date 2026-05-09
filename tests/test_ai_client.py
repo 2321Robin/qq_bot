@@ -63,6 +63,32 @@ def test_build_chat_payload_limits_reply_length() -> None:
     assert "控制在 600 字以内" in payload["messages"][0]["content"]
 
 
+def test_build_chat_payload_uses_natural_group_chat_style() -> None:
+    settings = BotSettings(ai_model="test-model")
+
+    payload = build_chat_payload("今天新闻", settings)
+
+    system_prompt = payload["messages"][0]["content"]
+    assert "像 QQ 群友聊天" in system_prompt
+    assert "直接回答" in system_prompt
+    assert "不要总用“好的”" in system_prompt
+
+
+def test_build_chat_payload_requires_source_section_with_search_context() -> None:
+    settings = BotSettings(ai_model="test-model")
+
+    payload = build_chat_payload(
+        "今天新闻",
+        settings,
+        search_context="[1] Example\nURL: https://example.com\nSummary: summary",
+    )
+
+    system_prompt = payload["messages"][0]["content"]
+    assert "末尾加“来源：”" in system_prompt
+    assert "最多 3 条" in system_prompt
+    assert "不要编造链接" in system_prompt
+
+
 @pytest.mark.asyncio
 async def test_request_ai_reply_posts_openai_compatible_payload() -> None:
     settings = BotSettings(

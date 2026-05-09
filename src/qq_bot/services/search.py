@@ -104,6 +104,6 @@ def _normalize_result(item: dict[str, Any]) -> SearchResult:
 def format_search_context(results: list[SearchResult]) -> str:
     blocks = [
         f"[{index}] {result.title}\nURL: {result.url}\nSummary: {result.content}"
-        for index, result in enumerate(results, start=1)
+        for index, result in enumerate(results[:3], start=1)
     ]
     return "\n\n".join(blocks)

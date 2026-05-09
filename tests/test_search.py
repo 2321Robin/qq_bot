@@ -131,3 +131,19 @@ def test_format_search_context_includes_numbered_sources() -> None:
     assert "https://example.com/one" in context
     assert "First summary" in context
     assert "[2] Title Two" in context
+
+
+def test_format_search_context_limits_sources_for_reply_prompt() -> None:
+    context = format_search_context(
+        [
+            SearchResult("Title One", "https://example.com/one", "First summary"),
+            SearchResult("Title Two", "https://example.com/two", "Second summary"),
+            SearchResult("Title Three", "https://example.com/three", "Third summary"),
+            SearchResult("Title Four", "https://example.com/four", "Fourth summary"),
+        ]
+    )
+
+    assert "[1] Title One" in context
+    assert "[2] Title Two" in context
+    assert "[3] Title Three" in context
+    assert "Title Four" not in context
