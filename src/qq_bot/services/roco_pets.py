@@ -20,6 +20,12 @@ class PetRecord:
     evolution_chain: list[str]
     evolution_condition: str
     source_url: str
+    height_weight: str = ""
+    body_length: str = ""
+    favorite_partner: str = ""
+    description: str = ""
+    race_value: int | None = None
+    stats: dict[str, int] | None = None
 
 
 def load_pet_records(path: Path = DEFAULT_PET_DATA_PATH) -> list[PetRecord]:
@@ -88,6 +94,12 @@ def _record_from_item(item: Any) -> PetRecord:
         evolution_chain=_string_list(item, "evolution_chain"),
         evolution_condition=_string_value(item, "evolution_condition"),
         source_url=_string_value(item, "source_url"),
+        height_weight=_string_value(item, "height_weight"),
+        body_length=_string_value(item, "body_length"),
+        favorite_partner=_string_value(item, "favorite_partner"),
+        description=_string_value(item, "description"),
+        race_value=_optional_int(item, "race_value"),
+        stats=_stats_value(item),
     )
 
 
@@ -112,6 +124,32 @@ def _string_list(item: dict[str, Any], key: str) -> list[str]:
         if cleaned:
             values.append(cleaned)
     return values
+
+
+def _optional_int(item: dict[str, Any], key: str) -> int | None:
+    value = item.get(key)
+    if value is None or value == "":
+        return None
+    if not isinstance(value, int):
+        raise ValueError(f"{key} must be an integer")
+    return value
+
+
+def _stats_value(item: dict[str, Any]) -> dict[str, int] | None:
+    value = item.get("stats")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("stats must be an object")
+
+    stats: dict[str, int] = {}
+    for key, stat_value in value.items():
+        if not isinstance(key, str):
+            raise ValueError("stats keys must be strings")
+        if not isinstance(stat_value, int):
+            raise ValueError("stats values must be integers")
+        stats[key] = stat_value
+    return stats
 
 
 def _value_or_unknown(value: str) -> str:

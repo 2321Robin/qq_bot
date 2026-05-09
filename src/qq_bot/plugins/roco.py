@@ -1,9 +1,10 @@
 from nonebot import on_command, on_message
-from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message
+from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message, MessageSegment
 from nonebot.params import CommandArg
 
 from qq_bot.config import get_settings
-from qq_bot.services.roco_pets import find_pet, format_pet_query_result, format_pet_record, get_pet_records
+from qq_bot.services.roco_pet_cards import render_pet_card_png
+from qq_bot.services.roco_pets import PetRecord, find_pet, format_pet_query_result, format_pet_record, get_pet_records
 
 
 roco_pet_command = on_command("精灵", aliases={"洛克"}, priority=5, block=True)
@@ -17,7 +18,10 @@ async def handle_roco_pet(event: GroupMessageEvent, args: Message = CommandArg()
         return
 
     query = args.extract_plain_text().strip()
-    await roco_pet_command.finish(format_pet_query_result(query, get_pet_records()))
+    record = find_pet(get_pet_records(), query)
+    if record is None:
+        await roco_pet_command.finish(format_pet_query_result(query, get_pet_records()))
+    await roco_pet_command.finish(_format_pet_card_message(record))
 
 
 @roco_mention_pet.handle()
@@ -34,4 +38,12 @@ async def handle_roco_mention_pet(event: GroupMessageEvent) -> None:
     if record is None:
         return
 
-    await roco_mention_pet.finish(format_pet_record(record))
+    await roco_mention_pet.finish(_format_pet_card_message(record))
+
+
+def _format_pet_card_message(record: PetRecord) -> MessageSegment | str:
+    try:
+        image = render_pet_card_png(record)
+    except Exception:
+        return format_pet_record(record)
+    return MessageSegment.image(image)
