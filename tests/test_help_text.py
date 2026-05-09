@@ -6,6 +6,7 @@ def test_help_text_lists_supported_commands() -> None:
 
     assert "/help" in text
     assert "/ping" in text
+    assert "/精灵 迪莫" in text
     assert "ai 你好" in text
     assert "定时任务" in text
 

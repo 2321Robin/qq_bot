@@ -1,0 +1,102 @@
+[
+  {
+    "name": "迪莫",
+    "aliases": ["小迪莫"],
+    "number": "001",
+    "attributes": ["光"],
+    "stage": "最终形态",
+    "evolution_chain": ["迪莫"],
+    "evolution_condition": "图鉴显示为最终形态；暂无普通等级进化条件。",
+    "source_url": "https://lokewangguoshijie.com/"
+  },
+  {
+    "name": "喵喵",
+    "aliases": ["草系御三家"],
+    "number": "002",
+    "attributes": ["草"],
+    "stage": "Ⅰ阶",
+    "evolution_chain": ["喵喵", "喵呜", "魔力猫"],
+    "evolution_condition": "16级进化为喵呜，32级进化为魔力猫。",
+    "source_url": "https://gl.ali213.net/html/2026-4/1759355.html"
+  },
+  {
+    "name": "喵呜",
+    "aliases": [],
+    "number": "003",
+    "attributes": ["草"],
+    "stage": "Ⅱ阶",
+    "evolution_chain": ["喵喵", "喵呜", "魔力猫"],
+    "evolution_condition": "由喵喵16级进化；32级进化为魔力猫。",
+    "source_url": "https://gl.ali213.net/html/2026-4/1759355.html"
+  },
+  {
+    "name": "魔力猫",
+    "aliases": ["魔力喵"],
+    "number": "004",
+    "attributes": ["草"],
+    "stage": "最终形态",
+    "evolution_chain": ["喵喵", "喵呜", "魔力猫"],
+    "evolution_condition": "由喵呜32级进化；常规图鉴形态为最终形态。",
+    "source_url": "https://gl.ali213.net/html/2026-4/1759355.html"
+  },
+  {
+    "name": "火花",
+    "aliases": ["火系御三家"],
+    "number": "005",
+    "attributes": ["火"],
+    "stage": "Ⅰ阶",
+    "evolution_chain": ["火花", "焰火", "火神"],
+    "evolution_condition": "16级进化为焰火，36级进化为火神。",
+    "source_url": "https://wap.pp.cn/news/1048425.html"
+  },
+  {
+    "name": "焰火",
+    "aliases": [],
+    "number": "006",
+    "attributes": ["火"],
+    "stage": "Ⅱ阶",
+    "evolution_chain": ["火花", "焰火", "火神"],
+    "evolution_condition": "由火花16级进化；36级进化为火神。",
+    "source_url": "https://wap.pp.cn/news/1048425.html"
+  },
+  {
+    "name": "火神",
+    "aliases": [],
+    "number": "007",
+    "attributes": ["火"],
+    "stage": "最终形态",
+    "evolution_chain": ["火花", "焰火", "火神"],
+    "evolution_condition": "由焰火36级进化；常规图鉴形态为最终形态。",
+    "source_url": "https://wap.pp.cn/news/1048425.html"
+  },
+  {
+    "name": "水蓝蓝",
+    "aliases": ["水系御三家"],
+    "number": "008",
+    "attributes": ["水"],
+    "stage": "Ⅰ阶",
+    "evolution_chain": ["水蓝蓝", "波波拉", "水灵"],
+    "evolution_condition": "16级进化为波波拉，32级进化为水灵。",
+    "source_url": "https://lokewangguoshijie.com/"
+  },
+  {
+    "name": "波波拉",
+    "aliases": [],
+    "number": "009",
+    "attributes": ["水"],
+    "stage": "Ⅱ阶",
+    "evolution_chain": ["水蓝蓝", "波波拉", "水灵"],
+    "evolution_condition": "由水蓝蓝16级进化；32级进化为水灵。",
+    "source_url": "https://lokewangguoshijie.com/"
+  },
+  {
+    "name": "水灵",
+    "aliases": [],
+    "number": "010",
+    "attributes": ["水"],
+    "stage": "最终形态",
+    "evolution_chain": ["水蓝蓝", "波波拉", "水灵"],
+    "evolution_condition": "由波波拉32级进化；常规图鉴形态为最终形态。",
+    "source_url": "https://lokewangguoshijie.com/"
+  }
+]

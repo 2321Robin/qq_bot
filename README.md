@@ -6,6 +6,7 @@ This project is a QQ group bot based on NoneBot2, OneBot v11, and NapCatQQ.
 
 - `/help`: Show the available bot features.
 - `/ping`: Check whether the bot is running. The bot replies with `pong`.
+- `/精灵 迪莫` or `/洛克 迪莫`: Query the local Rock Kingdom World pet database, including evolution conditions.
 - Explicit AI chat: Send messages such as `ai 你好` to ask the configured AI model for a reply.
 - Scheduled messages: Send configured messages to target QQ groups on a cron schedule.
 
@@ -74,6 +75,7 @@ After starting the bot and connecting NapCatQQ:
 
 - Send `/ping` in an allowed group and expect `pong`.
 - Send `/help` in an allowed group and expect the feature list.
+- Send `/精灵 迪莫` in an allowed group and expect local pet data with evolution conditions.
 - Send `ai 你好` in an allowed group and expect an AI reply.
 - Enable `SEARCH_ENABLED=true` and set `TAVILY_API_KEY` in `.env`, restart the bot, send `ai 搜索 DeepSeek 最新消息`, and expect an answer using web-search context.
 - Temporarily set `SCHEDULED_CRON_TIMES` to the next few minutes, restart the bot, and expect `SCHEDULED_MESSAGE` in the target group. If `SCHEDULED_CRON_TIMES` is blank, use `SCHEDULED_CRON_HOUR` and `SCHEDULED_CRON_MINUTE` instead.
