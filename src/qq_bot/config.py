@@ -26,11 +26,39 @@ def parse_id_list(value: str | None) -> list[int]:
     return ids
 
 
+def parse_schedule_time_list(value: str | None) -> list[tuple[int, int]]:
+    if value is None:
+        return []
+
+    text = value.strip()
+    if not text:
+        return []
+
+    times: list[tuple[int, int]] = []
+    for part in text.split(","):
+        item = part.strip()
+        if not item:
+            continue
+        pieces = item.split(":")
+        if len(pieces) != 2:
+            raise ValueError("scheduled_cron_times must use HH:MM comma-separated values")
+        try:
+            hour = int(pieces[0])
+            minute = int(pieces[1])
+        except ValueError as exc:
+            raise ValueError("scheduled_cron_times must use HH:MM comma-separated values") from exc
+        if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+            raise ValueError("scheduled_cron_times must use valid HH:MM values")
+        times.append((hour, minute))
+    return times
+
+
 class BotSettings(BaseSettings):
     allowed_group_ids: str = ""
     admin_user_ids: str = ""
     scheduled_group_ids: str = ""
     scheduled_message: str = "现在是定时提醒时间。"
+    scheduled_cron_times: str = ""
     scheduled_cron_hour: int = 9
     scheduled_cron_minute: int = 0
 
@@ -50,6 +78,12 @@ class BotSettings(BaseSettings):
     @classmethod
     def validate_id_list(cls, value: str) -> str:
         parse_id_list(value)
+        return value.strip()
+
+    @field_validator("scheduled_cron_times")
+    @classmethod
+    def validate_schedule_times(cls, value: str) -> str:
+        parse_schedule_time_list(value)
         return value.strip()
 
     @field_validator("scheduled_cron_hour")
@@ -77,6 +111,13 @@ class BotSettings(BaseSettings):
     @property
     def scheduled_group_id_list(self) -> list[int]:
         return parse_id_list(self.scheduled_group_ids)
+
+    @property
+    def scheduled_cron_time_list(self) -> list[tuple[int, int]]:
+        configured_times = parse_schedule_time_list(self.scheduled_cron_times)
+        if configured_times:
+            return configured_times
+        return [(self.scheduled_cron_hour, self.scheduled_cron_minute)]
 
     @property
     def normalized_ai_base_url(self) -> str:

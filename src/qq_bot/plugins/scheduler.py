@@ -3,7 +3,7 @@ from nonebot.adapters.onebot.v11 import Bot as OneBotV11Bot
 
 from qq_bot.config import get_settings
 from qq_bot.services.scheduled_sender import (
-    build_scheduler_job_kwargs,
+    build_scheduler_jobs_kwargs,
     filter_allowed_group_ids,
     send_group_messages,
 )
@@ -46,4 +46,5 @@ async def send_daily_messages() -> None:
 
 settings = get_settings()
 if settings.scheduled_enabled():
-    scheduler.add_job(send_daily_messages, **build_scheduler_job_kwargs(settings))
+    for job_kwargs in build_scheduler_jobs_kwargs(settings):
+        scheduler.add_job(send_daily_messages, **job_kwargs)

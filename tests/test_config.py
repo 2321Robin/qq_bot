@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from qq_bot.config import BotSettings, get_settings, parse_id_list
+from qq_bot.config import BotSettings, get_settings, parse_id_list, parse_schedule_time_list
 
 
 def test_parse_id_list_accepts_comma_separated_values() -> None:
@@ -11,6 +11,15 @@ def test_parse_id_list_accepts_comma_separated_values() -> None:
 def test_parse_id_list_accepts_empty_value() -> None:
     assert parse_id_list("") == []
     assert parse_id_list(None) == []
+
+
+def test_parse_schedule_time_list_accepts_comma_separated_times() -> None:
+    assert parse_schedule_time_list("11:00, 12:10,16:10,20:10") == [
+        (11, 0),
+        (12, 10),
+        (16, 10),
+        (20, 10),
+    ]
 
 
 def test_settings_expose_group_id_lists() -> None:
@@ -48,6 +57,31 @@ def test_scheduled_enabled_requires_group_and_message() -> None:
     assert not empty_message.scheduled_enabled()
     assert not whitespace_message.scheduled_enabled()
     assert enabled.scheduled_enabled()
+
+
+def test_scheduled_cron_time_list_uses_multi_time_config() -> None:
+    settings = BotSettings(
+        scheduled_cron_hour=9,
+        scheduled_cron_minute=0,
+        scheduled_cron_times="11:00,12:10,16:10,20:10",
+    )
+
+    assert settings.scheduled_cron_time_list == [
+        (11, 0),
+        (12, 10),
+        (16, 10),
+        (20, 10),
+    ]
+
+
+def test_scheduled_cron_time_list_falls_back_to_single_time_config() -> None:
+    settings = BotSettings(
+        scheduled_cron_times="",
+        scheduled_cron_hour=8,
+        scheduled_cron_minute=30,
+    )
+
+    assert settings.scheduled_cron_time_list == [(8, 30)]
 
 
 def test_ai_api_key_is_hidden_from_settings_repr() -> None:
@@ -91,3 +125,6 @@ def test_invalid_schedule_time_raises_validation_error() -> None:
 
     with pytest.raises(ValidationError, match="scheduled_cron_minute"):
         BotSettings(scheduled_cron_minute=60)
+
+    with pytest.raises(ValidationError, match="scheduled_cron_times"):
+        BotSettings(scheduled_cron_times="11:00,25:10")
