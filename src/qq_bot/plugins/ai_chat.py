@@ -3,6 +3,7 @@ from nonebot.adapters.onebot.v11 import GroupMessageEvent
 
 from qq_bot.config import get_settings
 from qq_bot.services.ai_client import AIReplyError, request_ai_reply
+from qq_bot.services.message_formatting import replace_named_mentions
 from qq_bot.services.prompt import extract_ai_prompt
 
 
@@ -35,4 +36,4 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
     except AIReplyError:
         await ai_chat.finish("AI 服务暂时不可用，请稍后再试。")
 
-    await ai_chat.finish(reply)
+    await ai_chat.finish(replace_named_mentions(reply))
