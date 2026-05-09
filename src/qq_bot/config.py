@@ -68,6 +68,11 @@ class BotSettings(BaseSettings):
     ai_prefix: str = "ai"
     ai_timeout_seconds: float = 30.0
 
+    search_enabled: bool = False
+    tavily_api_key: str = Field(default="", repr=False)
+    search_max_results: int = 5
+    search_timeout_seconds: float = 10.0
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -100,6 +105,20 @@ class BotSettings(BaseSettings):
             raise ValueError("scheduled_cron_minute must be between 0 and 59")
         return value
 
+    @field_validator("search_max_results")
+    @classmethod
+    def validate_search_max_results(cls, value: int) -> int:
+        if value < 1 or value > 20:
+            raise ValueError("search_max_results must be between 1 and 20")
+        return value
+
+    @field_validator("search_timeout_seconds")
+    @classmethod
+    def validate_search_timeout_seconds(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("search_timeout_seconds must be greater than 0")
+        return value
+
     @property
     def allowed_group_id_list(self) -> list[int]:
         return parse_id_list(self.allowed_group_ids)
@@ -129,6 +148,9 @@ class BotSettings(BaseSettings):
 
     def has_ai_config(self) -> bool:
         return bool(self.ai_api_key.strip())
+
+    def has_search_config(self) -> bool:
+        return self.search_enabled and bool(self.tavily_api_key.strip())
 
     def scheduled_enabled(self) -> bool:
         return bool(self.scheduled_group_id_list) and bool(self.scheduled_message.strip())

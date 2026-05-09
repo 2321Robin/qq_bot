@@ -128,3 +128,32 @@ def test_invalid_schedule_time_raises_validation_error() -> None:
 
     with pytest.raises(ValidationError, match="scheduled_cron_times"):
         BotSettings(scheduled_cron_times="11:00,25:10")
+
+
+def test_search_settings_are_exposed_and_secret_is_hidden() -> None:
+    settings = BotSettings(
+        search_enabled=True,
+        tavily_api_key="tvly-secret",
+        search_max_results=3,
+        search_timeout_seconds=7,
+    )
+
+    assert settings.search_enabled is True
+    assert settings.tavily_api_key == "tvly-secret"
+    assert settings.search_max_results == 3
+    assert settings.search_timeout_seconds == 7
+    assert "tvly-secret" not in repr(settings)
+
+
+def test_has_search_config_requires_enabled_and_key() -> None:
+    assert BotSettings(search_enabled=True, tavily_api_key="tvly-secret").has_search_config()
+    assert not BotSettings(search_enabled=False, tavily_api_key="tvly-secret").has_search_config()
+    assert not BotSettings(search_enabled=True, tavily_api_key="   ").has_search_config()
+
+
+def test_invalid_search_limits_raise_validation_error() -> None:
+    with pytest.raises(ValidationError, match="search_max_results"):
+        BotSettings(search_max_results=0)
+
+    with pytest.raises(ValidationError, match="search_timeout_seconds"):
+        BotSettings(search_timeout_seconds=0)
