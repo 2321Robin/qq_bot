@@ -7,7 +7,20 @@
     "stage": "最终形态",
     "evolution_chain": ["迪莫"],
     "evolution_condition": "图鉴显示为最终形态；暂无普通等级进化条件。",
-    "source_url": "https://lokewangguoshijie.com/"
+    "source_url": "https://lokewangguoshijie.com/",
+    "height_weight": "5.5~7KG",
+    "body_length": "0.54~0.78M",
+    "favorite_partner": "最好的伙伴",
+    "description": "造成翼制伤害后，获得攻防速+20%，并回复2能量",
+    "race_value": 582,
+    "stats": {
+      "hp": 120,
+      "physical_attack": 80,
+      "magic_attack": 80,
+      "physical_defense": 105,
+      "magic_defense": 105,
+      "speed": 92
+    }
   },
   {
     "name": "喵喵",

@@ -14,7 +14,7 @@ class FakeArgs:
 
 
 class FinishCalled(Exception):
-    def __init__(self, message: str):
+    def __init__(self, message: object):
         self.message = message
 
 
@@ -36,7 +36,7 @@ class FakeEvent:
 
 @pytest.mark.asyncio
 async def test_roco_pet_command_replies_with_local_pet(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_finish(message: str) -> None:
+    async def fake_finish(message: object) -> None:
         raise FinishCalled(message)
 
     monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
@@ -45,15 +45,15 @@ async def test_roco_pet_command_replies_with_local_pet(monkeypatch: pytest.Monke
     with pytest.raises(FinishCalled) as exc_info:
         await roco_plugin.handle_roco_pet(FakeEvent(), FakeArgs("迪莫"))  # type: ignore[arg-type]
 
-    assert "迪莫" in exc_info.value.message
-    assert "进化条件" in exc_info.value.message
+    message = exc_info.value.message
+    assert "image" in str(message)
 
 
 @pytest.mark.asyncio
 async def test_roco_mention_lookup_replies_when_pet_exists(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_finish(message: str) -> None:
+    async def fake_finish(message: object) -> None:
         raise FinishCalled(message)
 
     monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
@@ -62,15 +62,36 @@ async def test_roco_mention_lookup_replies_when_pet_exists(
     with pytest.raises(FinishCalled) as exc_info:
         await roco_plugin.handle_roco_mention_pet(FakeEvent("迪莫"))  # type: ignore[arg-type]
 
-    assert "迪莫" in exc_info.value.message
-    assert "进化条件" in exc_info.value.message
+    message = exc_info.value.message
+    assert "image" in str(message)
+
+
+@pytest.mark.asyncio
+async def test_roco_pet_command_falls_back_to_text_when_card_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    def fake_render_card(record: object) -> bytes:
+        raise RuntimeError("render failed")
+
+    monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
+    monkeypatch.setattr(roco_plugin, "render_pet_card_png", fake_render_card)
+    monkeypatch.setattr(roco_plugin.roco_pet_command, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled) as exc_info:
+        await roco_plugin.handle_roco_pet(FakeEvent(), FakeArgs("迪莫"))  # type: ignore[arg-type]
+
+    assert "迪莫" in str(exc_info.value.message)
+    assert "进化条件" in str(exc_info.value.message)
 
 
 @pytest.mark.asyncio
 async def test_roco_mention_lookup_returns_when_pet_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_finish(message: str) -> None:
+    async def fake_finish(message: object) -> None:
         raise FinishCalled(message)
 
     monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
