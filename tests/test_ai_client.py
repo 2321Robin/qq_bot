@@ -89,6 +89,37 @@ def test_build_chat_payload_requires_source_section_with_search_context() -> Non
     assert "不要编造链接" in system_prompt
 
 
+def test_build_chat_payload_injects_current_local_time() -> None:
+    settings = BotSettings(ai_model="test-model")
+
+    payload = build_chat_payload(
+        "今天几号",
+        settings,
+        current_time="2026-05-09 19:30",
+    )
+
+    system_prompt = payload["messages"][0]["content"]
+    assert "当前本地时间：2026-05-09 19:30" in system_prompt
+
+
+def test_build_chat_payload_uses_reliability_rules_with_search_context() -> None:
+    settings = BotSettings(ai_model="test-model")
+
+    payload = build_chat_payload(
+        "BTC 价格",
+        settings,
+        current_time="2026-05-09 19:30",
+        search_context="[1] Price\nURL: https://example.com\nSummary: summary",
+    )
+
+    system_prompt = payload["messages"][0]["content"]
+    assert "不要编造事实" in system_prompt
+    assert "不要编造链接" in system_prompt
+    assert "不要编造时间" in system_prompt
+    assert "不要编造价格" in system_prompt
+    assert "没有可靠来源" in system_prompt
+
+
 @pytest.mark.asyncio
 async def test_request_ai_reply_posts_openai_compatible_payload() -> None:
     settings = BotSettings(
