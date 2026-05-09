@@ -39,6 +39,21 @@ def test_build_chat_payload_uses_model_and_prompt() -> None:
     assert payload["messages"][-1] == {"role": "user", "content": "你好"}
 
 
+def test_build_chat_payload_includes_search_context_when_provided() -> None:
+    settings = BotSettings(ai_model="test-model")
+
+    payload = build_chat_payload(
+        "今天新闻",
+        settings,
+        search_context="[1] Example\nURL: https://example.com\n摘要: summary",
+    )
+
+    assert payload["model"] == "test-model"
+    assert "联网搜索资料" in payload["messages"][-1]["content"]
+    assert "https://example.com" in payload["messages"][-1]["content"]
+    assert "优先依据资料" in payload["messages"][0]["content"]
+
+
 @pytest.mark.asyncio
 async def test_request_ai_reply_posts_openai_compatible_payload() -> None:
     settings = BotSettings(
@@ -56,6 +71,25 @@ async def test_request_ai_reply_posts_openai_compatible_payload() -> None:
     assert client.calls[0]["url"] == "https://api.example.com/v1/chat/completions"
     assert client.calls[0]["headers"]["Authorization"] == "Bearer secret"
     assert client.calls[0]["json"]["model"] == "test-model"
+
+
+@pytest.mark.asyncio
+async def test_request_ai_reply_posts_search_context_payload() -> None:
+    settings = BotSettings(ai_api_key="secret", ai_model="test-model")
+    client = FakeClient(FakeResponse({"choices": [{"message": {"content": "带来源回复"}}]}))
+
+    reply = await request_ai_reply(
+        "今天新闻",
+        settings=settings,
+        client=client,
+        search_context="[1] Example\nURL: https://example.com\n摘要: summary",
+    )
+
+    assert reply == "带来源回复"
+    user_message = client.calls[0]["json"]["messages"][-1]["content"]
+    assert "今天新闻" in user_message
+    assert "联网搜索资料" in user_message
+    assert "https://example.com" in user_message
 
 
 @pytest.mark.asyncio
