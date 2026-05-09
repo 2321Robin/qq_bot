@@ -1,8 +1,10 @@
 import pytest
+from pathlib import Path
 
 import bot  # noqa: F401  # Initialize NoneBot before importing command plugins.
 from qq_bot.config import BotSettings
 from qq_bot.plugins import roco as roco_plugin
+from qq_bot.services.roco_pets import PetRecord
 
 
 class FakeArgs:
@@ -35,11 +37,21 @@ class FakeEvent:
 
 
 @pytest.mark.asyncio
-async def test_roco_pet_command_replies_with_local_pet(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_roco_pet_command_replies_with_local_pet(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     async def fake_finish(message: object) -> None:
         raise FinishCalled(message)
 
+    def fake_card_path(record: PetRecord) -> object:
+        assert record.name == "迪莫"
+        path = tmp_path / "001.png"
+        path.write_bytes(b"png")
+        return path
+
     monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
+    monkeypatch.setattr(roco_plugin, "pet_card_path", fake_card_path)
     monkeypatch.setattr(roco_plugin.roco_pet_command, "finish", fake_finish)
 
     with pytest.raises(FinishCalled) as exc_info:
@@ -47,16 +59,25 @@ async def test_roco_pet_command_replies_with_local_pet(monkeypatch: pytest.Monke
 
     message = exc_info.value.message
     assert "image" in str(message)
+    assert (tmp_path / "001.png").resolve().as_posix() in str(message)
 
 
 @pytest.mark.asyncio
 async def test_roco_mention_lookup_replies_when_pet_exists(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     async def fake_finish(message: object) -> None:
         raise FinishCalled(message)
 
+    def fake_card_path(record: PetRecord) -> object:
+        assert record.name == "迪莫"
+        path = tmp_path / "001.png"
+        path.write_bytes(b"png")
+        return path
+
     monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
+    monkeypatch.setattr(roco_plugin, "pet_card_path", fake_card_path)
     monkeypatch.setattr(roco_plugin.roco_mention_pet, "finish", fake_finish)
 
     with pytest.raises(FinishCalled) as exc_info:
@@ -64,20 +85,22 @@ async def test_roco_mention_lookup_replies_when_pet_exists(
 
     message = exc_info.value.message
     assert "image" in str(message)
+    assert (tmp_path / "001.png").resolve().as_posix() in str(message)
 
 
 @pytest.mark.asyncio
-async def test_roco_pet_command_falls_back_to_text_when_card_fails(
+async def test_roco_pet_command_falls_back_to_text_when_card_file_is_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def fake_finish(message: object) -> None:
         raise FinishCalled(message)
 
-    def fake_render_card(record: object) -> bytes:
-        raise RuntimeError("render failed")
+    def fake_card_path(record: PetRecord) -> object:
+        assert record.name == "迪莫"
+        return type("FakePath", (), {"exists": lambda self: False})()
 
     monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
-    monkeypatch.setattr(roco_plugin, "render_pet_card_png", fake_render_card)
+    monkeypatch.setattr(roco_plugin, "pet_card_path", fake_card_path)
     monkeypatch.setattr(roco_plugin.roco_pet_command, "finish", fake_finish)
 
     with pytest.raises(FinishCalled) as exc_info:

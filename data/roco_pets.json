@@ -11,7 +11,7 @@
     "height_weight": "5.5~7KG",
     "body_length": "0.54~0.78M",
     "favorite_partner": "最好的伙伴",
-    "description": "造成翼制伤害后，获得攻防速+20%，并回复2能量",
+    "description": "造成克制伤害后，获得攻防速+20%，并回复2能量",
     "race_value": 582,
     "stats": {
       "hp": 120,
