@@ -22,13 +22,21 @@ class SearchResult:
 
 def prompt_needs_search(prompt: str) -> bool:
     triggers = (
-        "今天",
-        "新闻",
+        "搜索",
         "联网",
+        "今天",
+        "现在",
+        "新闻",
         "查一下",
+        "查下",
         "最新",
+        "价格",
+        "天气",
         "官网",
-        "是什么",
+        "search",
+        "latest",
+        "today",
+        "news",
     )
     return any(trigger in prompt for trigger in triggers)
 

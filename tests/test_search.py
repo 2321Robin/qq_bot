@@ -40,7 +40,14 @@ def test_prompt_needs_search_detects_current_information_requests() -> None:
     assert prompt_needs_search("今天有什么新闻")
     assert prompt_needs_search("帮我联网查一下 DeepSeek 最新消息")
     assert prompt_needs_search("OpenAI 官网是什么")
+    assert prompt_needs_search("搜索 OpenAI")
+    assert prompt_needs_search("帮我查下 Tavily")
+    assert prompt_needs_search("现在天气怎么样")
+    assert prompt_needs_search("BTC 价格")
+    assert prompt_needs_search("search OpenAI latest news")
+    assert prompt_needs_search("today news")
     assert not prompt_needs_search("讲个笑话")
+    assert not prompt_needs_search("Python 是什么")
 
 
 @pytest.mark.asyncio
