@@ -54,6 +54,15 @@ def test_build_chat_payload_includes_search_context_when_provided() -> None:
     assert "优先依据资料" in payload["messages"][0]["content"]
 
 
+def test_build_chat_payload_limits_reply_length() -> None:
+    settings = BotSettings(ai_model="test-model")
+
+    payload = build_chat_payload("今天新闻", settings)
+
+    assert payload["max_tokens"] == 600
+    assert "控制在 600 字以内" in payload["messages"][0]["content"]
+
+
 @pytest.mark.asyncio
 async def test_request_ai_reply_posts_openai_compatible_payload() -> None:
     settings = BotSettings(

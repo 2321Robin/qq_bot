@@ -26,7 +26,7 @@ def build_chat_payload(
     if not cleaned_prompt:
         raise AIReplyError("prompt cannot be empty")
 
-    system_prompt = "你是一个简洁友好的 QQ 群助手。请用中文简洁回答。"
+    system_prompt = "你是一个简洁友好的 QQ 群助手。请用中文简洁回答，控制在 600 字以内。"
     user_content = cleaned_prompt
     cleaned_search_context = search_context.strip()
     if cleaned_search_context:
@@ -43,6 +43,7 @@ def build_chat_payload(
             {"role": "user", "content": user_content},
         ],
         "temperature": 0.7,
+        "max_tokens": 600,
     }
 
 
