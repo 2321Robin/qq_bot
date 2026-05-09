@@ -69,6 +69,18 @@ If NapCatQQ and the bot are not running on the same machine, replace `127.0.0.1`
 .\.venv\Scripts\python -m pytest -v
 ```
 
+## Pet Card Images
+
+Generate static Rock Kingdom World pet card images before starting the bot:
+
+```powershell
+.\.venv\Scripts\python scripts\generate_roco_pet_cards.py
+```
+
+The command writes PNG files to `data/roco_pet_cards/`. Pet lookup commands send these existing files; if a card file is missing, the bot falls back to the text pet record.
+
+Pet art assets are stored locally under `data/roco_assets/`. The Dimo asset and card data are sourced from the Rock Kingdom Mobile BWiki page at https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB and are credited on generated cards. BWiki text data is marked as CC BY-NC-SA 4.0 on the source page.
+
 ## Manual Verification
 
 After starting the bot and connecting NapCatQQ:

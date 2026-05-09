@@ -23,7 +23,7 @@ def test_load_pet_records_reads_card_fields() -> None:
     assert dimo.height_weight == "5.5~7KG"
     assert dimo.body_length == "0.54~0.78M"
     assert dimo.favorite_partner == "最好的伙伴"
-    assert dimo.description == "造成翼制伤害后，获得攻防速+20%，并回复2能量"
+    assert dimo.description == "造成克制伤害后，获得攻防速+20%，并回复2能量"
     assert dimo.race_value == 582
     assert dimo.stats == {
         "hp": 120,

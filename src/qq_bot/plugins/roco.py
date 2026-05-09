@@ -3,7 +3,7 @@ from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message, MessageSegme
 from nonebot.params import CommandArg
 
 from qq_bot.config import get_settings
-from qq_bot.services.roco_pet_cards import render_pet_card_png
+from qq_bot.services.roco_pet_cards import pet_card_path
 from qq_bot.services.roco_pets import PetRecord, find_pet, format_pet_query_result, format_pet_record, get_pet_records
 
 
@@ -42,8 +42,7 @@ async def handle_roco_mention_pet(event: GroupMessageEvent) -> None:
 
 
 def _format_pet_card_message(record: PetRecord) -> MessageSegment | str:
-    try:
-        image = render_pet_card_png(record)
-    except Exception:
+    path = pet_card_path(record)
+    if not path.exists():
         return format_pet_record(record)
-    return MessageSegment.image(image)
+    return MessageSegment.image(f"file:///{path.resolve().as_posix()}")

@@ -1,4 +1,9 @@
-from qq_bot.services.roco_pet_cards import render_pet_card_png
+from io import BytesIO
+from pathlib import Path
+
+from PIL import Image
+
+from qq_bot.services.roco_pet_cards import generate_pet_card_files, pet_art_path, pet_card_path, render_pet_card_png
 from qq_bot.services.roco_pets import PetRecord
 
 
@@ -48,3 +53,96 @@ def test_render_pet_card_png_handles_missing_optional_fields() -> None:
     image = render_pet_card_png(record)
 
     assert image.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_render_pet_card_png_uses_local_pet_art(tmp_path: Path) -> None:
+    record = PetRecord(
+        name="迪莫",
+        aliases=[],
+        number="001",
+        attributes=["光"],
+        stage="最终形态",
+        evolution_chain=["迪莫"],
+        evolution_condition="无法进化。",
+        source_url="https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB",
+    )
+    art_path = tmp_path / "001-迪莫.png"
+    Image.new("RGBA", (96, 96), (255, 0, 255, 255)).save(art_path)
+
+    image = Image.open(BytesIO(render_pet_card_png(record, asset_directory=tmp_path)))
+
+    assert image.getpixel((118, 106)) == (255, 0, 255)
+
+
+def test_render_pet_card_png_uses_local_bwiki_icons(tmp_path: Path) -> None:
+    record = PetRecord(
+        name="迪莫",
+        aliases=[],
+        number="001",
+        attributes=["光"],
+        stage="最终形态",
+        evolution_chain=["迪莫"],
+        evolution_condition="无法进化。",
+        source_url="https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB",
+        height_weight="5.5~7KG",
+        body_length="0.54~0.78M",
+        favorite_partner="最好的伙伴",
+        stats={"hp": 120},
+    )
+    icon_dir = tmp_path / "icons"
+    icon_dir.mkdir()
+    Image.new("RGBA", (26, 26), (255, 0, 255, 255)).save(icon_dir / "attribute-光.png")
+    Image.new("RGBA", (24, 24), (0, 255, 255, 255)).save(icon_dir / "stat-hp.png")
+
+    image = Image.open(BytesIO(render_pet_card_png(record, asset_directory=tmp_path)))
+
+    assert image.getpixel((400, 86)) == (255, 0, 255)
+    assert image.getpixel((101, 458)) == (0, 255, 255)
+
+
+def test_generate_pet_card_files_writes_png_to_directory(tmp_path: Path) -> None:
+    record = PetRecord(
+        name="迪莫",
+        aliases=["小迪莫"],
+        number="001",
+        attributes=["光"],
+        stage="最终形态",
+        evolution_chain=["迪莫"],
+        evolution_condition="图鉴显示为最终形态；暂无普通等级进化条件。",
+        source_url="https://example.com/dimo",
+    )
+
+    paths = generate_pet_card_files([record], tmp_path)
+
+    assert paths == [tmp_path / "001-迪莫.png"]
+    assert paths[0].read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_pet_card_path_sanitizes_file_name(tmp_path: Path) -> None:
+    record = PetRecord(
+        name='测/试:宠*物?',
+        aliases=[],
+        number="9/9",
+        attributes=[],
+        stage="Ⅰ阶",
+        evolution_chain=["测试宠物"],
+        evolution_condition="暂无普通等级进化条件。",
+        source_url="https://example.com/pet",
+    )
+
+    assert pet_card_path(record, tmp_path) == tmp_path / "9_9-测_试_宠_物_.png"
+
+
+def test_pet_art_path_sanitizes_file_name(tmp_path: Path) -> None:
+    record = PetRecord(
+        name='测/试:宠*物?',
+        aliases=[],
+        number="9/9",
+        attributes=[],
+        stage="Ⅰ阶",
+        evolution_chain=["测试宠物"],
+        evolution_condition="暂无普通等级进化条件。",
+        source_url="https://example.com/pet",
+    )
+
+    assert pet_art_path(record, tmp_path) == tmp_path / "9_9-测_试_宠_物_.png"
