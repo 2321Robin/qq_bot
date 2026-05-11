@@ -266,6 +266,7 @@ async def test_request_ai_reply_preserves_failure_when_fallback_is_not_configure
         ai_api_key="primary-secret",
         ai_base_url="https://primary.example.com/v1",
         ai_model="primary-model",
+        ai_fallback_api_key="",
     )
     client = SequenceClient([HttpErrorResponse({})])
 

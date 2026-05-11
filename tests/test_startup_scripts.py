@@ -21,6 +21,17 @@ def test_start_all_script_contains_required_startup_targets() -> None:
     assert "OutputEncoding" in script
     assert "powershell.exe" in script
     assert "-NoExit" in script
+    assert "Stop-Process -Id" in script
+    assert "Restarting bot backend" in script
+
+
+def test_start_all_script_does_not_keep_stale_backend_process() -> None:
+    script = (ROOT / "start_all.ps1").read_text(encoding="utf-8")
+
+    stale_process_branch = script[script.index("} elseif ($botProcesses.Count -gt 0) {") : script.index("} else {")]
+    assert "Warning: bot.py is running but port $BotPort is not listening." not in stale_process_branch
+    assert "Stop-Process -Id" in stale_process_branch
+    assert "Starting bot backend" in stale_process_branch
 
 
 def test_batch_entrypoint_invokes_powershell_script() -> None:
