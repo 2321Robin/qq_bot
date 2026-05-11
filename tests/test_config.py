@@ -157,3 +157,28 @@ def test_invalid_search_limits_raise_validation_error() -> None:
 
     with pytest.raises(ValidationError, match="search_timeout_seconds"):
         BotSettings(search_timeout_seconds=0)
+
+
+def test_chat_memory_settings_are_exposed() -> None:
+    settings = BotSettings(
+        chat_memory_path="data/test-memory.sqlite3",
+        chat_memory_retention_days=3,
+        chat_memory_default_turns=10,
+        chat_memory_max_results=20,
+    )
+
+    assert settings.chat_memory_path == "data/test-memory.sqlite3"
+    assert settings.chat_memory_retention_days == 3
+    assert settings.chat_memory_default_turns == 10
+    assert settings.chat_memory_max_results == 20
+
+
+def test_chat_memory_settings_validate_positive_limits() -> None:
+    with pytest.raises(ValidationError, match="chat_memory_retention_days"):
+        BotSettings(chat_memory_retention_days=0)
+
+    with pytest.raises(ValidationError, match="chat_memory_default_turns"):
+        BotSettings(chat_memory_default_turns=0)
+
+    with pytest.raises(ValidationError, match="chat_memory_max_results"):
+        BotSettings(chat_memory_max_results=0)
