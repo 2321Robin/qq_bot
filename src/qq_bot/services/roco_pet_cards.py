@@ -126,10 +126,12 @@ def _draw_top_info(
 ) -> None:
     _rounded(draw, (186, 68, 279, 101), 16, ORANGE)
     _center_text(draw, _value(record.number), (233, 84), small_bold_font, "#202326")
-    _vcenter_text(draw, (292, 63, 363, 105), record.name or "未知", title_font, TEXT)
+    name_box = (292, 63, 420, 105)
+    fitted_title_font = _fit_font_to_width(draw, record.name or "未知", title_font, name_box[2] - name_box[0])
+    _vcenter_text(draw, name_box, record.name or "未知", fitted_title_font, TEXT)
 
     attr_text = "、".join(record.attributes) if record.attributes else "未知"
-    attr_box = (376, 72, 456, 100)
+    attr_box = (438, 72, 518, 100)
     _rounded(draw, attr_box, 14, "#34383d")
     attr_icon = _load_icon(asset_directory, f"attribute-{record.attributes[0]}.png") if record.attributes else None
     _draw_icon_text(image, draw, attr_box, attr_icon, attr_text[:2], small_bold_font, TEXT, icon_size=(24, 24), gap=7)
@@ -294,6 +296,28 @@ def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, 
     if current:
         lines.append(current)
     return lines or ["未知"]
+
+
+def _fit_font_to_width(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.ImageFont,
+    max_width: int,
+    *,
+    min_size: int = 22,
+) -> ImageFont.ImageFont:
+    bbox = draw.textbbox((0, 0), text, font=font)
+    if bbox[2] - bbox[0] <= max_width:
+        return font
+    if not isinstance(font, ImageFont.FreeTypeFont):
+        return font
+
+    for size in range(font.size - 1, min_size - 1, -1):
+        fitted = font.font_variant(size=size)
+        bbox = draw.textbbox((0, 0), text, font=fitted)
+        if bbox[2] - bbox[0] <= max_width:
+            return fitted
+    return font.font_variant(size=min_size)
 
 
 def _draw_icon_text(
