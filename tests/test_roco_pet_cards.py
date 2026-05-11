@@ -1,9 +1,15 @@
 from io import BytesIO
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
-from qq_bot.services.roco_pet_cards import generate_pet_card_files, pet_art_path, pet_card_path, render_pet_card_png
+from qq_bot.services.roco_pet_cards import (
+    _fit_font_to_width,
+    generate_pet_card_files,
+    pet_art_path,
+    pet_card_path,
+    render_pet_card_png,
+)
 from qq_bot.services.roco_pets import PetRecord
 
 
@@ -96,8 +102,19 @@ def test_render_pet_card_png_uses_local_bwiki_icons(tmp_path: Path) -> None:
 
     image = Image.open(BytesIO(render_pet_card_png(record, asset_directory=tmp_path)))
 
-    assert image.getpixel((400, 86)) == (255, 0, 255)
+    assert image.getpixel((462, 86)) == (255, 0, 255)
     assert image.getpixel((101, 458)) == (0, 255, 255)
+
+
+def test_fit_font_to_width_keeps_long_pet_name_before_attribute() -> None:
+    image = Image.new("RGB", (700, 765))
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", size=32)
+
+    fitted = _fit_font_to_width(draw, "魔力猫", font, 120)
+    bbox = draw.textbbox((0, 0), "魔力猫", font=fitted)
+
+    assert bbox[2] - bbox[0] <= 120
 
 
 def test_generate_pet_card_files_writes_png_to_directory(tmp_path: Path) -> None:
