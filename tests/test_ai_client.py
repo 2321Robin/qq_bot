@@ -131,8 +131,13 @@ def test_build_chat_payload_includes_chat_context_when_provided() -> None:
 
     user_message = payload["messages"][-1]["content"]
     system_prompt = payload["messages"][0]["content"]
-    assert "当前用户问题：继续刚才的话题" in user_message
-    assert "历史聊天记录" in user_message
+    assert user_message == (
+        "当前用户问题：继续刚才的话题\n\n"
+        "历史聊天记录：\n"
+        "用户2001：ai 你好\n"
+        "机器人：你好呀"
+    )
+    assert user_message.count("历史聊天记录") == 1
     assert "不要编造不存在的历史聊天记录" in system_prompt
 
 
@@ -147,9 +152,16 @@ def test_build_chat_payload_combines_search_and_chat_context() -> None:
     )
 
     user_message = payload["messages"][-1]["content"]
-    assert "当前用户问题：这事现在怎么样" in user_message
-    assert "联网搜索资料" in user_message
-    assert "历史聊天记录" in user_message
+    assert user_message == (
+        "当前用户问题：这事现在怎么样\n\n"
+        "历史聊天记录：\n"
+        "用户2001：之前说过 DeepSeek\n\n"
+        "联网搜索资料：\n"
+        "[1] News\n"
+        "URL: https://example.com\n"
+        "摘要: summary"
+    )
+    assert user_message.count("历史聊天记录") == 1
 
 
 @pytest.mark.asyncio
