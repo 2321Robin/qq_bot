@@ -3,6 +3,7 @@ from nonebot.adapters.onebot.v11 import Message
 
 from qq_bot.config import BotSettings
 from qq_bot.plugins import ai_chat as ai_chat_plugin
+from qq_bot.services.chat_memory import ChatMemoryRow
 
 
 class FakeEvent:
@@ -40,6 +41,24 @@ class EmptyMemoryStore:
 
     def recent_user_turns(self, *, group_id: int, user_id: int, limit: int):
         return []
+
+
+def memory_row(
+    *,
+    message_text: str,
+    ai_reply: str = "",
+    row_id: int = 1,
+    user_id: int = 2001,
+) -> ChatMemoryRow:
+    return ChatMemoryRow(
+        id=row_id,
+        group_id=1001,
+        user_id=user_id,
+        message_text=message_text,
+        created_at="2026-05-11T00:00:00+00:00",
+        is_ai_prompt=True,
+        ai_reply=ai_reply,
+    )
 
 
 @pytest.mark.asyncio
@@ -246,7 +265,7 @@ async def test_ai_chat_passes_default_group_user_memory_context(
             assert group_id == 1001
             assert user_id == 2001
             assert limit == 10
-            return []
+            return [memory_row(message_text="之前的问题", ai_reply="之前的回答")]
 
     async def fake_request_ai_reply(
         prompt: str,
@@ -256,7 +275,8 @@ async def test_ai_chat_passes_default_group_user_memory_context(
         chat_context: str = "",
     ) -> str:
         assert prompt == "继续"
-        assert chat_context == "没有找到相关历史聊天记录。"
+        assert "用户2001：之前的问题" in chat_context
+        assert "机器人：之前的回答" in chat_context
         return "带记忆回复"
 
     async def fake_finish(message: object) -> None:
@@ -366,3 +386,161 @@ async def test_ai_chat_memory_failure_does_not_block_reply(
 
     with pytest.raises(FinishCalled):
         await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 你好"))  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_ai_chat_memory_store_construction_failure_does_not_block_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken_store(path, retention_days):
+        raise OSError("cannot initialize database")
+
+    async def fake_request_ai_reply(
+        prompt: str,
+        *,
+        settings: BotSettings,
+        search_context: str = "",
+        chat_context: str = "",
+    ) -> str:
+        assert prompt == "你好"
+        assert chat_context == ""
+        return "你好"
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "ChatMemoryStore", broken_store)
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 你好"))  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_ai_chat_records_non_ai_group_messages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded: list[dict[str, object]] = []
+
+    class FakeStore:
+        def add_message(self, **kwargs) -> int:
+            recorded.append(kwargs)
+            return 123
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+    )
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "ChatMemoryStore",
+        lambda path, retention_days: FakeStore(),
+    )
+
+    await ai_chat_plugin.handle_ai_chat(FakeEvent("普通聊天"))  # type: ignore[arg-type]
+
+    assert recorded == [
+        {
+            "group_id": 1001,
+            "user_id": 2001,
+            "message_text": "普通聊天",
+            "is_ai_prompt": False,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ai_chat_excludes_current_prompt_from_memory_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStore:
+        def __init__(self) -> None:
+            self.rows = [memory_row(message_text="旧问题", row_id=1)]
+
+        def add_message(self, *, message_text: str, **kwargs) -> int:
+            self.rows.append(memory_row(message_text=message_text, row_id=2))
+            return 2
+
+        def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
+            return None
+
+        def recent_user_turns(self, *, group_id: int, user_id: int, limit: int):
+            return self.rows[-limit:]
+
+    store = FakeStore()
+
+    async def fake_request_ai_reply(
+        prompt: str,
+        *,
+        settings: BotSettings,
+        search_context: str = "",
+        chat_context: str = "",
+    ) -> str:
+        assert prompt == "继续"
+        assert "旧问题" in chat_context
+        assert "ai 继续" not in chat_context
+        return "好的"
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "ChatMemoryStore", lambda path, retention_days: store)
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 继续"))  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_ai_chat_rejects_empty_question_after_memory_reference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStore:
+        def add_message(self, *args, **kwargs) -> int:
+            return 123
+
+        def recent_group_messages(self, *, group_id: int, limit: int):
+            return []
+
+    async def fake_request_ai_reply(
+        prompt: str,
+        *,
+        settings: BotSettings,
+        search_context: str = "",
+        chat_context: str = "",
+    ) -> str:
+        raise AssertionError("AI should not be called")
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+    )
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "ChatMemoryStore",
+        lambda path, retention_days: FakeStore(),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled) as exc_info:
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 参考最近5条："))  # type: ignore[arg-type]
+
+    assert exc_info.value.message == "请在 ai 后面输入要问的问题。"
