@@ -51,6 +51,7 @@ def test_parse_pet_detail_extracts_profile_stats_and_skill_groups() -> None:
         "魔防": 105,
         "速度": 92,
     }
+    assert detail["total_race_value"] == 582
     assert detail["skills"] == [
         {
             "source": "本身就有",
@@ -76,6 +77,7 @@ def test_parse_pet_detail_uses_empty_values_for_missing_fields() -> None:
     assert detail["evolution_condition"] == ""
     assert detail["profile"] == {}
     assert detail["stats"] == {}
+    assert detail["total_race_value"] is None
     assert detail["skills"] == []
 
 
@@ -111,6 +113,7 @@ def test_parse_pet_detail_extracts_real_page_component_layout() -> None:
         <h1>迪莫</h1>
         <div class="rocom_sprite_grament_name">001 迪莫</div>
         <div class="rocom_sprite_grament_attributes_text">光</div>
+        <div class="rocom_sprite_info_total"><p>种族值</p><p>582</p></div>
         <div>进化条件:<span class="rocom_evolution_data">无法进化</span></div>
         <div class="rocom_sprite_info_qualification">
           <div>
@@ -142,6 +145,7 @@ def test_parse_pet_detail_extracts_real_page_component_layout() -> None:
     assert detail["profile"]["系别"] == "光"
     assert detail["profile"]["进化条件"] == "无法进化"
     assert detail["stats"] == {"生命": 120, "物攻": 80}
+    assert detail["total_race_value"] == 582
     assert detail["skills"] == [
         {
             "source": "技能",
@@ -149,7 +153,7 @@ def test_parse_pet_detail_extracts_real_page_component_layout() -> None:
                 {
                     "等级": "初始",
                     "技能": "闪光冲击",
-                    "星级": "一星",
+                    "耗能": "一星",
                     "类型": "光",
                     "威力": "40",
                     "效果": "造成光系伤害。",
@@ -157,6 +161,24 @@ def test_parse_pet_detail_extracts_real_page_component_layout() -> None:
             ],
         }
     ]
+
+
+def test_parse_pet_detail_sums_stats_when_total_race_value_is_missing() -> None:
+    html = """
+    <html>
+      <body>
+        <h1>迪莫</h1>
+        <table>
+          <tr><th>生命</th><th>物攻</th><th>魔攻</th><th>物防</th><th>魔防</th><th>速度</th></tr>
+          <tr><td>120</td><td>80</td><td>80</td><td>105</td><td>105</td><td>92</td></tr>
+        </table>
+      </body>
+    </html>
+    """
+
+    detail = parse_pet_detail("https://example.com/dimo", html)
+
+    assert detail["total_race_value"] == 582
 
 
 def test_parse_pet_detail_deduplicates_repeated_component_skill_boxes() -> None:
@@ -201,7 +223,7 @@ def test_parse_pet_detail_deduplicates_repeated_component_skill_boxes() -> None:
                 {
                     "等级": "初始",
                     "技能": "闪光冲击",
-                    "星级": "一星",
+                    "耗能": "一星",
                     "类型": "光",
                     "威力": "40",
                     "效果": "造成光系伤害。",
@@ -209,7 +231,7 @@ def test_parse_pet_detail_deduplicates_repeated_component_skill_boxes() -> None:
                 {
                     "等级": "10",
                     "技能": "光芒护盾",
-                    "星级": "二星",
+                    "耗能": "二星",
                     "类型": "光",
                     "威力": "60",
                     "效果": "提高自身防御。",
@@ -225,6 +247,7 @@ def test_write_pet_detail_creates_parent_and_writes_utf8_json(tmp_path) -> None:
         "source_url": "https://example.com/dimo",
         "attributes": ["光"],
         "evolution_condition": "暂无普通等级进化条件。",
+        "total_race_value": 582,
         "profile": {"编号": "001"},
         "stats": {},
         "skills": [],
@@ -237,3 +260,4 @@ def test_write_pet_detail_creates_parent_and_writes_utf8_json(tmp_path) -> None:
     saved = json.loads(output_path.read_text(encoding="utf-8"))
     assert saved["name"] == "迪莫"
     assert saved["attributes"] == ["光"]
+    assert saved["total_race_value"] == 582
