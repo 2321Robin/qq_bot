@@ -1,18 +1,65 @@
 # QQ Group Bot
 
-This project is a QQ group bot based on NoneBot2, OneBot v11, and NapCatQQ.
+一个基于 NoneBot2、OneBot v11 和 NapCatQQ 的 QQ 群机器人项目。
 
-## Features
+项目当前支持基础群命令、洛克王国世界精灵查询、AI 对话、群聊记忆、联网搜索增强回答，以及定时群消息发送。
 
-- `/help`: Show the available bot features.
-- `/ping`: Check whether the bot is running. The bot replies with `pong`.
-- `/精灵 迪莫` or `/洛克 迪莫`: Query the local Rock Kingdom World pet database and return a static pet card image for found pets.
-- Explicit AI chat: Send messages such as `ai 你好` to ask the configured AI model for a reply.
-- Scheduled messages: Send configured messages to target QQ groups on a cron schedule.
+## 功能特性
 
-## Local Installation
+- `/help`：查看当前可用功能。
+- `/ping`：检查机器人是否在线，正常时回复 `pong`。
+- `/精灵 迪莫` 或 `/洛克 迪莫`：查询本地洛克王国世界精灵数据库，并返回静态精灵卡片图片。
+- `ai 你好`：显式向配置的 AI 模型提问。
+- AI 群聊记忆：自动记录近期群消息，AI 可在同一群聊和用户上下文中引用近期对话。
+- AI 搜索增强：启用 Tavily 后，可对新闻、当前事件或搜索类问题自动补充联网搜索结果。
+- AI 备用模型：主模型不可用时，可自动切换到备用 OpenAI 兼容接口。
+- 定时消息：按配置的时间向指定 QQ 群自动发送固定消息。
 
-Run these commands from the project root:
+## 技术栈
+
+- Python 3.11+
+- NoneBot2
+- OneBot v11
+- NapCatQQ
+- FastAPI driver
+- SQLite 群聊记忆
+- httpx、Pillow、pydantic-settings
+
+## 项目结构
+
+```text
+qq_bot/
+├── bot.py                         # NoneBot 启动入口
+├── pyproject.toml                 # 项目依赖与测试配置
+├── .env.example                   # 环境变量示例
+├── start_all.ps1                  # Windows 一键启动脚本
+├── 一键启动.bat                    # Windows 批处理启动入口
+├── scripts/
+│   └── generate_roco_pet_cards.py # 生成洛克王国精灵卡片图片
+├── src/qq_bot/
+│   ├── config.py                  # 配置读取与校验
+│   ├── plugins/                   # NoneBot 插件
+│   └── services/                  # AI、搜索、记忆、精灵数据等服务
+├── data/
+│   ├── roco_pets.json             # 本地精灵数据
+│   ├── roco_assets/               # 精灵素材
+│   └── roco_pet_cards/            # 生成后的精灵卡片
+└── tests/                         # 自动化测试
+```
+
+## 环境要求
+
+运行前请准备：
+
+- Python 3.11 或更高版本。
+- 可登录 QQ 的 NapCatQQ。
+- 可用的 OneBot v11 反向 WebSocket 连接。
+- 如需 AI 对话，需要一个 OpenAI 兼容接口的 API Key。
+- 如需联网搜索增强，需要 Tavily API Key。
+
+## 本地安装
+
+在项目根目录执行：
 
 ```powershell
 py -3.11 -m venv .venv
@@ -21,88 +68,269 @@ py -3.11 -m venv .venv
 Copy-Item .env.example .env
 ```
 
-## Configuration
+安装完成后，编辑 `.env` 填写本地配置。
 
-Edit `.env` after copying it from `.env.example`. Example:
+## 配置说明
+
+`.env.example` 提供了完整配置模板。常用配置如下：
 
 ```dotenv
-ALLOWED_GROUP_IDS=123456789,987654321
-AI_API_KEY=sk-your-api-key
+DRIVER=~fastapi
+HOST=127.0.0.1
+PORT=8080
+COMMAND_START=["/"]
+SUPERUSERS=[]
+
+ALLOWED_GROUP_IDS=
+ADMIN_USER_IDS=
+
+AI_API_KEY=
 AI_BASE_URL=https://api.openai.com/v1
 AI_MODEL=gpt-4o-mini
+AI_PREFIX=ai
 AI_TIMEOUT_SECONDS=30
 AI_FALLBACK_API_KEY=
 AI_FALLBACK_BASE_URL=https://open.bigmodel.cn/api/paas/v4
 AI_FALLBACK_MODEL=glm-4-flash
+
 CHAT_MEMORY_PATH=data/chat_memory.sqlite3
 CHAT_MEMORY_RETENTION_DAYS=3
 CHAT_MEMORY_DEFAULT_TURNS=10
 CHAT_MEMORY_MAX_RESULTS=20
+
 SEARCH_ENABLED=false
 TAVILY_API_KEY=
 SEARCH_MAX_RESULTS=5
 SEARCH_TIMEOUT_SECONDS=10
-SCHEDULED_GROUP_IDS=123456789
+
+SCHEDULED_GROUP_IDS=
 SCHEDULED_MESSAGE=现在是定时提醒时间。
 SCHEDULED_CRON_TIMES=
 SCHEDULED_CRON_HOUR=9
 SCHEDULED_CRON_MINUTE=0
 ```
 
-`ALLOWED_GROUP_IDS` controls which groups can use the bot. `SCHEDULED_GROUP_IDS` controls which groups receive scheduled messages.
-Set `SCHEDULED_CRON_TIMES` to comma-separated `HH:MM` values, such as `11:00,12:10,16:10,20:10`, to send the same scheduled message multiple times per day. If it is blank, the bot uses `SCHEDULED_CRON_HOUR` and `SCHEDULED_CRON_MINUTE`.
+### 群权限
 
-Set `SEARCH_ENABLED=true` to enable smart web search for current or search-related AI prompts, such as `ai 今天有什么新闻` or `ai 搜索 DeepSeek 最新消息`. Create a free Tavily API key at https://app.tavily.com/, put `TAVILY_API_KEY` only in your local `.env`, then restart the bot. Tavily's free plan provides monthly free API credits.
+- `ALLOWED_GROUP_IDS` 控制哪些群可以使用机器人。
+- 留空表示不限制群。
+- 多个群号使用英文逗号分隔，例如 `123456789,987654321`。
 
-AI chat keeps a local 3-day SQLite memory at `CHAT_MEMORY_PATH`. Normal AI prompts automatically use recent context for the current group user. You can explicitly ask it to reference group history with prompts such as `ai 参考最近20条：总结一下`, `ai 参考 洛克王国 的聊天：我们之前说了什么`, or `ai 参考 @某人 的最近20条：总结他的想法`, where `@某人` means using a real QQ @ mention.
+### AI 对话
 
-To keep AI chat available when the primary provider is unstable, configure `AI_FALLBACK_API_KEY`. By default the fallback base URL and model target Zhipu AI's OpenAI-compatible chat completions API (`https://open.bigmodel.cn/api/paas/v4`, `glm-4-flash`). The bot tries the primary `AI_*` provider first and only uses fallback when that request fails or returns an unusable response.
+- `AI_API_KEY` 是主 AI 服务的 API Key。
+- `AI_BASE_URL` 需要填写 OpenAI 兼容接口地址。
+- `AI_MODEL` 是主模型名称。
+- `AI_PREFIX` 是触发 AI 对话的前缀，默认是 `ai`。
 
-## Run The Bot
+示例：
+
+```text
+ai 你好
+ai 帮我总结一下洛克王国迪莫的特点
+```
+
+### AI 备用模型
+
+配置 `AI_FALLBACK_API_KEY` 后，机器人会在主 AI 服务请求失败或返回不可用内容时尝试备用模型。
+
+默认备用接口配置为智谱 AI 的 OpenAI 兼容接口：
+
+```dotenv
+AI_FALLBACK_BASE_URL=https://open.bigmodel.cn/api/paas/v4
+AI_FALLBACK_MODEL=glm-4-flash
+```
+
+### 群聊记忆
+
+AI 对话会使用本地 SQLite 保存近期群聊记忆，默认路径为：
+
+```text
+data/chat_memory.sqlite3
+```
+
+相关配置：
+
+- `CHAT_MEMORY_RETENTION_DAYS`：记忆保留天数，默认 3 天。
+- `CHAT_MEMORY_DEFAULT_TURNS`：默认引用最近多少轮上下文。
+- `CHAT_MEMORY_MAX_RESULTS`：单次最多检索多少条历史消息。
+
+可用示例：
+
+```text
+ai 我喜欢迪莫
+ai 我刚才说我喜欢谁
+ai 参考最近20条：总结一下
+ai 参考 洛克王国 的聊天：我们之前说了什么
+ai 参考 @某人 的最近20条：总结他的观点
+```
+
+其中 `@某人` 需要在 QQ 群里使用真实的 QQ @ 提及。
+
+### 联网搜索增强
+
+设置以下配置后，AI 可以在搜索类或时效性问题中使用联网搜索结果：
+
+```dotenv
+SEARCH_ENABLED=true
+TAVILY_API_KEY=你的 Tavily API Key
+```
+
+可到 https://app.tavily.com/ 创建 Tavily API Key。请只把 API Key 放在本地 `.env`，不要提交到仓库。
+
+示例：
+
+```text
+ai 今天有什么新闻
+ai 搜索 DeepSeek 最新消息
+```
+
+### 定时消息
+
+- `SCHEDULED_GROUP_IDS` 控制定时消息发送到哪些群。
+- `SCHEDULED_MESSAGE` 是定时发送的内容。
+- `SCHEDULED_CRON_TIMES` 支持配置多个发送时间。
+
+示例：
+
+```dotenv
+SCHEDULED_GROUP_IDS=123456789
+SCHEDULED_MESSAGE=现在是定时提醒时间。
+SCHEDULED_CRON_TIMES=11:00,12:10,16:10,20:10
+```
+
+如果 `SCHEDULED_CRON_TIMES` 为空，则使用 `SCHEDULED_CRON_HOUR` 和 `SCHEDULED_CRON_MINUTE`。
+
+## 运行机器人
+
+在项目根目录执行：
 
 ```powershell
 .\.venv\Scripts\python bot.py
 ```
 
-By default, the bot listens on `127.0.0.1:8080`.
+默认情况下，机器人会监听：
 
-Configure NapCatQQ's OneBot v11 reverse WebSocket URL as:
+```text
+127.0.0.1:8080
+```
+
+实际监听地址由 `.env` 中的 `HOST` 和 `PORT` 决定。
+
+## 连接 NapCatQQ
+
+在 NapCatQQ 的 OneBot v11 配置中添加反向 WebSocket 地址：
 
 ```text
 ws://127.0.0.1:8080/onebot/v11/ws
 ```
 
-If NapCatQQ and the bot are not running on the same machine, replace `127.0.0.1` with the bot machine's LAN or server address.
+如果 NapCatQQ 和机器人不在同一台机器上，请将 `127.0.0.1` 改成机器人所在机器的局域网或服务器地址。
 
-## Tests
+连接成功后，可在允许的 QQ 群中发送：
 
-```powershell
-.\.venv\Scripts\python -m pytest -v
+```text
+/ping
 ```
 
-## Pet Card Images
+正常情况下机器人会回复：
 
-Generate static Rock Kingdom World pet card images before starting the bot:
+```text
+pong
+```
+
+## Windows 一键启动
+
+仓库包含 Windows 启动脚本：
+
+```text
+一键启动.bat
+start_all.ps1
+```
+
+这些脚本用于在本机同时启动机器人后端和 NapCatQQ。使用前请检查 `start_all.ps1` 中的本机路径、QQ 账号、端口和 NapCatQQ WebUI 地址是否符合你的环境。
+
+## 洛克王国精灵卡片
+
+精灵查询命令示例：
+
+```text
+/精灵 迪莫
+/洛克 迪莫
+```
+
+命中本地精灵数据时，机器人会优先发送静态精灵卡片图片。如果对应卡片图片不存在，则回退为文字结果。
+
+启动前可生成或刷新精灵卡片：
 
 ```powershell
 .\.venv\Scripts\python scripts\generate_roco_pet_cards.py
 ```
 
-The command writes PNG files to `data/roco_pet_cards/`. Pet lookup commands send these existing files; if a card file is missing, the bot falls back to the text pet record.
+生成结果会写入：
 
-Pet art assets are stored locally under `data/roco_assets/`. The Dimo asset and card data are sourced from the Rock Kingdom Mobile BWiki page at https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB and are credited on generated cards. BWiki text data is marked as CC BY-NC-SA 4.0 on the source page.
+```text
+data/roco_pet_cards/
+```
 
-## Manual Verification
+精灵素材位于：
 
-After starting the bot and connecting NapCatQQ:
+```text
+data/roco_assets/
+```
 
-- Send `/ping` in an allowed group and expect `pong`.
-- Send `/help` in an allowed group and expect the feature list.
-- Send `/精灵 迪莫` in an allowed group and expect a static pet card image. Send `/精灵 不存在` and expect a not-found text reply.
-- Send `ai 你好` in an allowed group and expect an AI reply.
-- Configure `AI_FALLBACK_API_KEY` with a Zhipu AI key, temporarily set `AI_BASE_URL` to an invalid local URL, restart the bot, send `ai 你好`, and expect an AI reply from the fallback provider.
-- Enable `SEARCH_ENABLED=true` and set `TAVILY_API_KEY` in `.env`, restart the bot, send `ai 搜索 DeepSeek 最新消息`, and expect an answer using web-search context.
-- Send `ai 我喜欢迪莫`, then send `ai 我刚才说我喜欢谁` from the same QQ user in the same group, and expect the reply to use the recent context.
-- Send several normal group messages, then send `ai 参考最近5条：总结一下`, and expect the reply to reference those recent group messages.
-- Send `ai 参考 @某人 的最近5条：总结他的观点` using a real QQ @ mention, and expect the reply to use that mentioned user's messages when present.
-- Temporarily set `SCHEDULED_CRON_TIMES` to the next few minutes, restart the bot, and expect `SCHEDULED_MESSAGE` in the target group. If `SCHEDULED_CRON_TIMES` is blank, use `SCHEDULED_CRON_HOUR` and `SCHEDULED_CRON_MINUTE` instead.
+迪莫素材和卡片数据来源于洛克王国手游 BWiki 页面：
+
+```text
+https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB
+```
+
+生成卡片中会标注来源。BWiki 页面文本数据标注为 CC BY-NC-SA 4.0。
+
+## 测试
+
+运行完整测试：
+
+```powershell
+.\.venv\Scripts\python -m pytest -v
+```
+
+## 手动验证清单
+
+启动机器人并连接 NapCatQQ 后，可按以下步骤验证：
+
+- 在允许的群中发送 `/ping`，期望回复 `pong`。
+- 发送 `/help`，期望看到功能列表。
+- 发送 `/精灵 迪莫`，期望收到静态精灵卡片图片。
+- 发送 `/精灵 不存在`，期望收到未找到提示。
+- 配置 `AI_API_KEY` 后发送 `ai 你好`，期望收到 AI 回复。
+- 配置 `AI_FALLBACK_API_KEY` 后，将 `AI_BASE_URL` 临时改成无效地址并重启，再发送 `ai 你好`，期望仍能通过备用模型收到回复。
+- 设置 `SEARCH_ENABLED=true` 和 `TAVILY_API_KEY` 后重启，发送 `ai 搜索 DeepSeek 最新消息`，期望回复中使用联网搜索上下文。
+- 发送 `ai 我喜欢迪莫`，再发送 `ai 我刚才说我喜欢谁`，期望回复能引用近期上下文。
+- 发送几条普通群消息后，发送 `ai 参考最近5条：总结一下`，期望回复能引用近期群消息。
+- 使用真实 QQ @ 发送 `ai 参考 @某人 的最近5条：总结他的观点`，期望回复能引用被提及用户的消息。
+- 将 `SCHEDULED_CRON_TIMES` 临时设置为接下来几分钟，重启后观察目标群是否收到 `SCHEDULED_MESSAGE`。
+
+## 注意事项
+
+- `.env` 中可能包含 API Key、群号、QQ 账号等敏感信息，不要提交到仓库。
+- `data/chat_memory.sqlite3` 是本地群聊记忆数据库，包含聊天上下文，分享项目前请确认是否需要清理。
+- NapCatQQ、机器人后端和 `.env` 中的端口必须一致。
+- 如果机器人没有响应，优先检查 NapCatQQ 反向 WebSocket 是否已连接到机器人后端。
+- 如果 AI 没有回复，检查 `AI_API_KEY`、`AI_BASE_URL`、`AI_MODEL` 和网络连接。
+
+## 开发说明
+
+常用开发命令：
+
+```powershell
+.\.venv\Scripts\python -m pytest -v
+.\.venv\Scripts\ruff check .
+```
+
+新增功能时建议同步补充：
+
+- `src/qq_bot/plugins/` 中的插件逻辑。
+- `src/qq_bot/services/` 中的服务逻辑。
+- `tests/` 下对应测试。
+- 本 README 中的使用说明和手动验证步骤。
