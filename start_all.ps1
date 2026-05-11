@@ -91,8 +91,15 @@ if (Test-PortListening -Port $BotPort) {
     }
 
     if (-not (Test-PortListening -Port $BotPort)) {
-        Write-Host "Warning: bot.py is running but port $BotPort is not listening."
-        Write-Host "Not starting another backend process. Check the existing bot window for errors."
+        Write-Host "Restarting bot backend because existing bot.py process is not listening on port $BotPort."
+        foreach ($process in $botProcesses) {
+            Stop-Process -Id $process.ProcessId -Force
+        }
+
+        Write-Host "Starting bot backend on port $BotPort..."
+        $botCommand = "chcp 65001 > `$null; [Console]::InputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; `$OutputEncoding = [System.Text.Encoding]::UTF8; Set-Location -LiteralPath '$ProjectDir'; & '$PythonExe' '$BotScript'"
+        Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $botCommand -WorkingDirectory $ProjectDir
+        Start-Sleep -Seconds 5
     }
 } else {
     Write-Host "Starting bot backend on port $BotPort..."
