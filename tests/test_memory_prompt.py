@@ -37,6 +37,30 @@ def test_parse_non_reference_keeps_prompt_as_question() -> None:
     assert parsed == MemoryReference(question="讲个笑话")
 
 
+def test_parse_reference_without_separator_keeps_full_prompt_as_question() -> None:
+    parsed = parse_memory_reference("参考最近20条继续总结", mentioned_user_ids=[])
+
+    assert parsed == MemoryReference(question="参考最近20条继续总结")
+
+
+def test_parse_reference_url_colon_keeps_full_prompt_as_question() -> None:
+    parsed = parse_memory_reference("参考 https://example.com 怎么看", mentioned_user_ids=[])
+
+    assert parsed == MemoryReference(question="参考 https://example.com 怎么看")
+
+
+def test_parse_reference_prose_colon_keeps_full_prompt_as_question() -> None:
+    parsed = parse_memory_reference("参考 这个说法: 怎么看", mentioned_user_ids=[])
+
+    assert parsed == MemoryReference(question="参考 这个说法: 怎么看")
+
+
+def test_parse_valid_recent_reference_allows_ascii_colon_separator() -> None:
+    parsed = parse_memory_reference("参考最近20条: 继续总结", mentioned_user_ids=[])
+
+    assert parsed == MemoryReference(question="继续总结", limit=20)
+
+
 def test_extract_at_user_ids_from_message_segments() -> None:
     class FakeSegment:
         def __init__(self, segment_type: str, qq: str) -> None:
@@ -44,6 +68,30 @@ def test_extract_at_user_ids_from_message_segments() -> None:
             self.data = {"qq": qq}
 
     assert extract_at_user_ids([FakeSegment("at", "2001"), FakeSegment("text", "ignored")]) == [2001]
+
+
+def test_extract_at_user_ids_skips_invalid_payloads() -> None:
+    class FakeSegment:
+        def __init__(self, segment_type: str, qq: object) -> None:
+            self.type = segment_type
+            self.data = {"qq": qq}
+
+    assert extract_at_user_ids([FakeSegment("at", "all"), FakeSegment("at", None)]) == []
+
+
+def test_extract_at_user_ids_preserves_valid_mention_order() -> None:
+    class FakeSegment:
+        def __init__(self, segment_type: str, qq: str) -> None:
+            self.type = segment_type
+            self.data = {"qq": qq}
+
+    assert extract_at_user_ids([FakeSegment("at", "2002"), FakeSegment("at", "2001")]) == [2002, 2001]
+
+
+def test_parse_uses_first_valid_mentioned_user_id() -> None:
+    parsed = parse_memory_reference("参考 @小明 的最近20条：总结他的想法", mentioned_user_ids=[2002, 2001])
+
+    assert parsed == MemoryReference(question="总结他的想法", user_id=2002, limit=20)
 
 
 def test_format_chat_context_includes_messages_and_ai_replies() -> None:
