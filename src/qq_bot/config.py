@@ -68,6 +68,11 @@ class BotSettings(BaseSettings):
     ai_prefix: str = "ai"
     ai_timeout_seconds: float = 30.0
 
+    chat_memory_path: str = "data/chat_memory.sqlite3"
+    chat_memory_retention_days: int = 3
+    chat_memory_default_turns: int = 10
+    chat_memory_max_results: int = 20
+
     search_enabled: bool = False
     tavily_api_key: str = Field(default="", repr=False)
     search_max_results: int = 5
@@ -117,6 +122,27 @@ class BotSettings(BaseSettings):
     def validate_search_timeout_seconds(cls, value: float) -> float:
         if value <= 0:
             raise ValueError("search_timeout_seconds must be greater than 0")
+        return value
+
+    @field_validator("chat_memory_retention_days")
+    @classmethod
+    def validate_chat_memory_retention_days(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("chat_memory_retention_days must be greater than 0")
+        return value
+
+    @field_validator("chat_memory_default_turns")
+    @classmethod
+    def validate_chat_memory_default_turns(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("chat_memory_default_turns must be greater than 0")
+        return value
+
+    @field_validator("chat_memory_max_results")
+    @classmethod
+    def validate_chat_memory_max_results(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("chat_memory_max_results must be greater than 0")
         return value
 
     @property
