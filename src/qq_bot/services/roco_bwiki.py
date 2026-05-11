@@ -4,14 +4,16 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from html.parser import HTMLParser
+import re
 from typing import Any
 
 
-STAT_HEADERS = {"精力", "物攻", "魔攻", "物防", "魔防", "速度", "HP", "hp"}
+STAT_HEADERS = {"精力", "生命", "物攻", "魔攻", "物防", "魔防", "速度", "HP", "hp"}
 SKILL_HEADING_MARKERS = ("技能", "本身就有", "技能石", "血脉", "转血脉", "学习")
 CAPTURE_CLASSES = {
     "rocom_sprite_grament_name",
     "rocom_sprite_grament_attributes_text",
+    "rocom_sprite_info_total",
     "rocom_sprite_info_qualification_name",
     "rocom_sprite_info_qualification_value",
     "rocom_evolution_data",
@@ -25,7 +27,7 @@ CAPTURE_CLASSES = {
 SKILL_FIELD_CLASSES = {
     "rocom_sprite_skill_level": "等级",
     "rocom_sprite_skillName": "技能",
-    "rocom_sprite_skillDamage": "星级",
+    "rocom_sprite_skillDamage": "耗能",
     "rocom_sprite_skillType": "类型",
     "rocom_sprite_skill_power": "威力",
     "rocom_sprite_skillContent": "效果",
@@ -154,12 +156,14 @@ def parse_pet_detail(source_url: str, html: str) -> dict[str, Any]:
 
     attributes = _split_values(profile.get("系别", "")) or div_attributes
     evolution_condition = profile.get("进化条件", "") or div_evolution_condition
+    total_race_value = _parse_total_race_value(parser, stats)
 
     return {
         "name": _extract_name(parser),
         "source_url": source_url,
         "attributes": attributes,
         "evolution_condition": evolution_condition,
+        "total_race_value": total_race_value,
         "profile": profile,
         "stats": stats,
         "skills": skills,
@@ -297,6 +301,18 @@ def _parse_component_skills(parser: _BwikiParser) -> list[dict[str, Any]]:
     if not parser.skill_rows:
         return []
     return [{"source": "技能", "rows": _dedupe_records(parser.skill_rows)}]
+
+
+def _parse_total_race_value(parser: _BwikiParser, stats: dict[str, int]) -> int | None:
+    for text in parser.class_texts["rocom_sprite_info_total"]:
+        if "种族值" not in text:
+            continue
+        match = re.search(r"\d+", text)
+        if match:
+            return int(match.group())
+    if len(stats) >= 6:
+        return sum(stats.values())
+    return None
 
 
 def _dedupe_records(records: list[dict[str, str]]) -> list[dict[str, str]]:
