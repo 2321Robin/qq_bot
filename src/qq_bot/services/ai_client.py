@@ -84,6 +84,8 @@ async def request_ai_reply(
     active_settings = settings or get_settings()
     if not active_settings.has_ai_config():
         raise AIReplyError("AI_API_KEY is not configured")
+    if not prompt.strip():
+        raise AIReplyError("prompt cannot be empty")
 
     owns_client = client is None
     active_client: AsyncPostClient
@@ -93,18 +95,63 @@ async def request_ai_reply(
         active_client = client
 
     try:
-        response = await active_client.post(
-            f"{active_settings.normalized_ai_base_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {active_settings.ai_api_key}",
-                "Content-Type": "application/json",
-            },
-            json=build_chat_payload(
+        try:
+            content = await _request_ai_reply_once(
                 prompt,
-                active_settings,
+                settings=active_settings,
+                client=active_client,
+                base_url=active_settings.normalized_ai_base_url,
+                api_key=active_settings.ai_api_key,
+                model=active_settings.ai_model,
                 search_context=search_context,
                 chat_context=chat_context,
-            ),
+            )
+        except AIReplyError:
+            if not active_settings.has_ai_fallback_config():
+                raise
+            content = await _request_ai_reply_once(
+                prompt,
+                settings=active_settings,
+                client=active_client,
+                base_url=active_settings.normalized_ai_fallback_base_url,
+                api_key=active_settings.ai_fallback_api_key,
+                model=active_settings.ai_fallback_model,
+                search_context=search_context,
+                chat_context=chat_context,
+            )
+    finally:
+        if owns_client and isinstance(active_client, httpx.AsyncClient):
+            await active_client.aclose()
+
+    return content
+
+
+async def _request_ai_reply_once(
+    prompt: str,
+    *,
+    settings: BotSettings,
+    client: AsyncPostClient,
+    base_url: str,
+    api_key: str,
+    model: str,
+    search_context: str,
+    chat_context: str,
+) -> str:
+    payload = build_chat_payload(
+        prompt,
+        settings.model_copy(update={"ai_model": model}),
+        search_context=search_context,
+        chat_context=chat_context,
+    )
+
+    try:
+        response = await client.post(
+            f"{base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
         )
         response.raise_for_status()
         data = response.json()
@@ -113,9 +160,6 @@ async def request_ai_reply(
         raise AIReplyError("AI API request failed") from exc
     except (KeyError, IndexError, TypeError, AttributeError, ValueError) as exc:
         raise AIReplyError("AI API returned an invalid response") from exc
-    finally:
-        if owns_client and isinstance(active_client, httpx.AsyncClient):
-            await active_client.aclose()
 
     if not content:
         raise AIReplyError("AI API returned an empty response")

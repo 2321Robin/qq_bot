@@ -99,6 +99,30 @@ def test_has_ai_config_requires_non_empty_key() -> None:
     assert not BotSettings(ai_api_key="   ").has_ai_config()
 
 
+def test_ai_fallback_settings_are_exposed_and_secret_is_hidden() -> None:
+    settings = BotSettings(
+        ai_fallback_api_key="fallback-secret",
+        ai_fallback_base_url="https://open.bigmodel.cn/api/paas/v4",
+        ai_fallback_model="glm-4-flash",
+    )
+
+    assert settings.ai_fallback_api_key == "fallback-secret"
+    assert settings.ai_fallback_base_url == "https://open.bigmodel.cn/api/paas/v4"
+    assert settings.ai_fallback_model == "glm-4-flash"
+    assert "fallback-secret" not in repr(settings)
+
+
+def test_normalized_ai_fallback_base_url_strips_whitespace_and_trailing_slash() -> None:
+    settings = BotSettings(ai_fallback_base_url=" https://fallback.example.com/v1/ ")
+
+    assert settings.normalized_ai_fallback_base_url == "https://fallback.example.com/v1"
+
+
+def test_has_ai_fallback_config_requires_non_empty_key() -> None:
+    assert BotSettings(ai_fallback_api_key="fallback-secret").has_ai_fallback_config()
+    assert not BotSettings(ai_fallback_api_key="   ").has_ai_fallback_config()
+
+
 def test_get_settings_loads_environment_and_caches(monkeypatch: pytest.MonkeyPatch) -> None:
     get_settings.cache_clear()
     try:
