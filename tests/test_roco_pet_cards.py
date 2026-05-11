@@ -4,7 +4,11 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from qq_bot.services.roco_pet_cards import (
+    _evolution_chain_layout,
+    _evolution_steps,
+    _evolution_tokens,
     _fit_font_to_width,
+    _format_evolution_chain,
     generate_pet_card_files,
     pet_art_path,
     pet_card_path,
@@ -115,6 +119,80 @@ def test_fit_font_to_width_keeps_long_pet_name_before_attribute() -> None:
     bbox = draw.textbbox((0, 0), "魔力猫", font=fitted)
 
     assert bbox[2] - bbox[0] <= 120
+
+
+def test_format_evolution_chain_uses_full_chain() -> None:
+    record = PetRecord(
+        name="魔力猫",
+        aliases=[],
+        number="004",
+        attributes=["草"],
+        stage="最终形态",
+        evolution_chain=["喵喵", "喵呜", "魔力猫"],
+        evolution_condition="由喵呜32级进化；常规图鉴形态为最终形态。",
+        source_url="https://wiki.biligame.com/rocom/魔力猫",
+    )
+
+    assert _format_evolution_chain(record) == "喵喵 → 喵呜 → 魔力猫"
+
+
+def test_evolution_steps_extracts_conditions_for_arrows() -> None:
+    record = PetRecord(
+        name="魔力猫",
+        aliases=[],
+        number="004",
+        attributes=["草"],
+        stage="最终形态",
+        evolution_chain=["喵喵", "喵呜", "魔力猫"],
+        evolution_condition="由喵呜32级进化；常规图鉴形态为最终形态。",
+        source_url="https://wiki.biligame.com/rocom/魔力猫",
+    )
+
+    assert _evolution_steps(record) == [("喵喵", "喵呜", "16级"), ("喵呜", "魔力猫", "32级")]
+
+
+def test_evolution_tokens_put_conditions_on_matching_arrows() -> None:
+    image = Image.new("RGB", (700, 765))
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", size=20)
+    record = PetRecord(
+        name="魔力猫",
+        aliases=[],
+        number="004",
+        attributes=["草"],
+        stage="最终形态",
+        evolution_chain=["喵喵", "喵呜", "魔力猫"],
+        evolution_condition="由喵呜32级进化；常规图鉴形态为最终形态。",
+        source_url="https://wiki.biligame.com/rocom/魔力猫",
+    )
+
+    tokens = _evolution_tokens(draw, record, font, max_width=360)
+
+    arrows = [token for token in tokens if token[0] == "arrow"]
+    assert arrows == [("arrow", "→", "16级"), ("arrow", "→", "32级")]
+
+
+def test_evolution_chain_layout_uses_dynamic_box_and_arrow_width() -> None:
+    image = Image.new("RGB", (700, 765))
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", size=20)
+    record = PetRecord(
+        name="魔力猫",
+        aliases=[],
+        number="004",
+        attributes=["草"],
+        stage="最终形态",
+        evolution_chain=["喵喵", "喵呜", "魔力猫"],
+        evolution_condition="由喵呜32级进化；常规图鉴形态为最终形态。",
+        source_url="https://wiki.biligame.com/rocom/魔力猫",
+    )
+
+    box, placements = _evolution_chain_layout(draw, record, font, max_width=448)
+
+    assert box[0] > 126
+    assert box[2] < 574
+    assert [placement[0] for placement in placements] == ["name", "arrow", "name", "arrow", "name"]
+    assert [placement[2] for placement in placements if placement[0] == "arrow"] == [48, 48]
 
 
 def test_generate_pet_card_files_writes_png_to_directory(tmp_path: Path) -> None:
