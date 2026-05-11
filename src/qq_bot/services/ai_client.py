@@ -22,6 +22,7 @@ def build_chat_payload(
     settings: BotSettings,
     *,
     search_context: str = "",
+    chat_context: str = "",
     current_time: str | None = None,
 ) -> dict[str, Any]:
     cleaned_prompt = prompt.strip()
@@ -36,8 +37,16 @@ def build_chat_payload(
         "不要编造事实，不要编造链接，不要编造时间，不要编造价格。"
         "默认 2-4 句，新闻或搜索类问题可以用 3-5 条短点，控制在 600 字以内。"
     )
-    user_content = cleaned_prompt
     cleaned_search_context = search_context.strip()
+    cleaned_chat_context = chat_context.strip()
+    user_sections = [f"当前用户问题：{cleaned_prompt}"]
+    if cleaned_chat_context:
+        system_prompt += (
+            " 如果提供了历史聊天记录，只把它作为理解前文和用户意图的参考。"
+            "不要编造不存在的历史聊天记录；历史不足时要直接说明。"
+        )
+        user_sections.append(f"历史聊天记录：\n{cleaned_chat_context}")
+
     if cleaned_search_context:
         system_prompt += (
             " 如果提供了联网搜索资料，请优先依据资料回答；"
@@ -45,10 +54,13 @@ def build_chat_payload(
             "如果搜索资料不足或互相冲突，就说没有可靠来源或信息不一致。"
             "回复末尾加“来源：”，最多 3 条，格式为“1. 标题 - URL”。"
         )
-        user_content = (
-            f"用户问题：{cleaned_prompt}\n\n"
-            f"联网搜索资料：\n{cleaned_search_context}"
-        )
+        user_sections.append(f"联网搜索资料：\n{cleaned_search_context}")
+
+    user_content = (
+        "\n\n".join(user_sections)
+        if cleaned_search_context or cleaned_chat_context
+        else cleaned_prompt
+    )
 
     return {
         "model": settings.ai_model,
@@ -67,6 +79,7 @@ async def request_ai_reply(
     settings: BotSettings | None = None,
     client: AsyncPostClient | None = None,
     search_context: str = "",
+    chat_context: str = "",
 ) -> str:
     active_settings = settings or get_settings()
     if not active_settings.has_ai_config():
@@ -90,6 +103,7 @@ async def request_ai_reply(
                 prompt,
                 active_settings,
                 search_context=search_context,
+                chat_context=chat_context,
             ),
         )
         response.raise_for_status()
