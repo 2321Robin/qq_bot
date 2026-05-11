@@ -67,6 +67,9 @@ class BotSettings(BaseSettings):
     ai_model: str = "gpt-4o-mini"
     ai_prefix: str = "ai"
     ai_timeout_seconds: float = 30.0
+    ai_fallback_api_key: str = Field(default="", repr=False)
+    ai_fallback_base_url: str = "https://open.bigmodel.cn/api/paas/v4"
+    ai_fallback_model: str = "glm-4-flash"
 
     chat_memory_path: str = "data/chat_memory.sqlite3"
     chat_memory_retention_days: int = 3
@@ -168,12 +171,19 @@ class BotSettings(BaseSettings):
     def normalized_ai_base_url(self) -> str:
         return self.ai_base_url.strip().rstrip("/")
 
+    @property
+    def normalized_ai_fallback_base_url(self) -> str:
+        return self.ai_fallback_base_url.strip().rstrip("/")
+
     def group_allowed(self, group_id: int) -> bool:
         allowed_groups = self.allowed_group_id_list
         return not allowed_groups or group_id in allowed_groups
 
     def has_ai_config(self) -> bool:
         return bool(self.ai_api_key.strip())
+
+    def has_ai_fallback_config(self) -> bool:
+        return bool(self.ai_fallback_api_key.strip())
 
     def has_search_config(self) -> bool:
         return self.search_enabled and bool(self.tavily_api_key.strip())

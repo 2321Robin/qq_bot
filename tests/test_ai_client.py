@@ -1,3 +1,4 @@
+import httpx
 import pytest
 
 from qq_bot.config import BotSettings
@@ -18,6 +19,31 @@ class FakeResponse:
 class InvalidJsonResponse(FakeResponse):
     def json(self) -> dict:
         raise ValueError("not json")
+
+
+class HttpErrorResponse(FakeResponse):
+    def raise_for_status(self) -> None:
+        raise httpx.HTTPStatusError(
+            "server error",
+            request=httpx.Request("POST", "https://api.example.com/v1/chat/completions"),
+            response=httpx.Response(500),
+        )
+
+
+class SequenceClient:
+    def __init__(self, responses: list[FakeResponse]):
+        self.responses = responses
+        self.calls: list[dict] = []
+
+    async def post(self, url: str, *, headers: dict, json: dict) -> FakeResponse:
+        self.calls.append({"url": url, "headers": headers, "json": json})
+        return self.responses.pop(0)
+
+
+class FallbackAccessSettings(BotSettings):
+    @property
+    def normalized_ai_fallback_base_url(self) -> str:
+        raise AssertionError("fallback should not be attempted")
 
 
 class FakeClient:
@@ -181,6 +207,90 @@ async def test_request_ai_reply_posts_openai_compatible_payload() -> None:
     assert client.calls[0]["url"] == "https://api.example.com/v1/chat/completions"
     assert client.calls[0]["headers"]["Authorization"] == "Bearer secret"
     assert client.calls[0]["json"]["model"] == "test-model"
+
+
+@pytest.mark.asyncio
+async def test_request_ai_reply_does_not_call_fallback_when_primary_succeeds() -> None:
+    settings = BotSettings(
+        ai_api_key="primary-secret",
+        ai_base_url="https://primary.example.com/v1",
+        ai_model="primary-model",
+        ai_fallback_api_key="fallback-secret",
+        ai_fallback_base_url="https://fallback.example.com/v1",
+        ai_fallback_model="fallback-model",
+    )
+    client = SequenceClient(
+        [FakeResponse({"choices": [{"message": {"content": "主服务回复"}}]})]
+    )
+
+    reply = await request_ai_reply("你好", settings=settings, client=client)
+
+    assert reply == "主服务回复"
+    assert len(client.calls) == 1
+    assert client.calls[0]["url"] == "https://primary.example.com/v1/chat/completions"
+    assert client.calls[0]["json"]["model"] == "primary-model"
+
+
+@pytest.mark.asyncio
+async def test_request_ai_reply_uses_fallback_when_primary_fails() -> None:
+    settings = BotSettings(
+        ai_api_key="primary-secret",
+        ai_base_url="https://primary.example.com/v1",
+        ai_model="primary-model",
+        ai_fallback_api_key="fallback-secret",
+        ai_fallback_base_url="https://fallback.example.com/v1/",
+        ai_fallback_model="fallback-model",
+    )
+    client = SequenceClient(
+        [
+            HttpErrorResponse({}),
+            FakeResponse({"choices": [{"message": {"content": "备用服务回复"}}]}),
+        ]
+    )
+
+    reply = await request_ai_reply("你好", settings=settings, client=client)
+
+    assert reply == "备用服务回复"
+    assert len(client.calls) == 2
+    assert client.calls[0]["url"] == "https://primary.example.com/v1/chat/completions"
+    assert client.calls[0]["headers"]["Authorization"] == "Bearer primary-secret"
+    assert client.calls[0]["json"]["model"] == "primary-model"
+    assert client.calls[1]["url"] == "https://fallback.example.com/v1/chat/completions"
+    assert client.calls[1]["headers"]["Authorization"] == "Bearer fallback-secret"
+    assert client.calls[1]["json"]["model"] == "fallback-model"
+
+
+@pytest.mark.asyncio
+async def test_request_ai_reply_preserves_failure_when_fallback_is_not_configured() -> None:
+    settings = BotSettings(
+        ai_api_key="primary-secret",
+        ai_base_url="https://primary.example.com/v1",
+        ai_model="primary-model",
+    )
+    client = SequenceClient([HttpErrorResponse({})])
+
+    with pytest.raises(AIReplyError, match="AI API request failed"):
+        await request_ai_reply("你好", settings=settings, client=client)
+
+    assert len(client.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_request_ai_reply_empty_prompt_does_not_call_fallback() -> None:
+    settings = FallbackAccessSettings(
+        ai_api_key="primary-secret",
+        ai_base_url="https://primary.example.com/v1",
+        ai_model="primary-model",
+        ai_fallback_api_key="fallback-secret",
+        ai_fallback_base_url="https://fallback.example.com/v1",
+        ai_fallback_model="fallback-model",
+    )
+    client = SequenceClient([])
+
+    with pytest.raises(AIReplyError, match="prompt cannot be empty"):
+        await request_ai_reply("  ", settings=settings, client=client)
+
+    assert len(client.calls) == 0
 
 
 @pytest.mark.asyncio
