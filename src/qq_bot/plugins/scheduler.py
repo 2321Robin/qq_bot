@@ -4,6 +4,7 @@ from nonebot.adapters.onebot.v11 import Bot as OneBotV11Bot
 from qq_bot.config import get_settings
 from qq_bot.services.scheduled_sender import (
     build_scheduler_jobs_kwargs,
+    describe_scheduler_job,
     filter_allowed_group_ids,
     send_group_messages,
 )
@@ -14,6 +15,7 @@ from nonebot_plugin_apscheduler import scheduler  # noqa: E402
 
 async def send_daily_messages() -> None:
     settings = get_settings()
+    logger.info("Scheduled message job triggered.")
     if not settings.scheduled_enabled():
         logger.info("Scheduled messages are disabled because no target groups are configured.")
         return
@@ -35,10 +37,16 @@ async def send_daily_messages() -> None:
         logger.info("Scheduled messages skipped because no configured target groups are allowed.")
         return
 
+    logger.info(f"Sending scheduled message to {len(group_ids)} group(s): {group_ids}.")
+
     failures = await send_group_messages(
         bot,
         group_ids,
         settings.scheduled_message,
+    )
+    successful_count = len(group_ids) - len(failures)
+    logger.info(
+        f"Scheduled message job finished: {successful_count} succeeded, {len(failures)} failed."
     )
     for group_id in failures:
         logger.warning(f"Scheduled message failed for group {group_id}.")
@@ -48,3 +56,6 @@ settings = get_settings()
 if settings.scheduled_enabled():
     for job_kwargs in build_scheduler_jobs_kwargs(settings):
         scheduler.add_job(send_daily_messages, **job_kwargs)
+        logger.info(f"Registered scheduled message job: {describe_scheduler_job(job_kwargs)}.")
+else:
+    logger.info("Scheduled message jobs were not registered because scheduled messages are disabled.")

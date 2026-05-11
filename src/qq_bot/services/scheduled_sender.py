@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from nonebot import logger
+
 from qq_bot.config import BotSettings
 from qq_bot.services.message_formatting import replace_named_mentions
 
@@ -34,6 +36,10 @@ def build_scheduler_jobs_kwargs(settings: BotSettings) -> list[dict[str, object]
     ]
 
 
+def describe_scheduler_job(job_kwargs: dict[str, object]) -> str:
+    return f"{job_kwargs['id']} at {job_kwargs['hour']:02d}:{job_kwargs['minute']:02d}"
+
+
 def filter_allowed_group_ids(group_ids: list[int], settings: BotSettings) -> list[int]:
     return [group_id for group_id in group_ids if settings.group_allowed(group_id)]
 
@@ -49,5 +55,6 @@ async def send_group_messages(
         try:
             await bot.send_group_msg(group_id=group_id, message=formatted_message)
         except Exception:
+            logger.exception(f"Scheduled message send failed for group {group_id}.")
             failed_group_ids.append(group_id)
     return failed_group_ids

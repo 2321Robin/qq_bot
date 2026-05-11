@@ -5,6 +5,7 @@ from qq_bot.config import BotSettings
 from qq_bot.services.scheduled_sender import (
     build_scheduler_jobs_kwargs,
     build_scheduler_job_kwargs,
+    describe_scheduler_job,
     filter_allowed_group_ids,
     send_group_messages,
 )
@@ -70,6 +71,18 @@ def test_build_scheduler_jobs_kwargs_uses_configured_times() -> None:
             "replace_existing": True,
         },
     ]
+
+
+def test_describe_scheduler_job_includes_configured_time() -> None:
+    assert describe_scheduler_job(
+        {
+            "trigger": "cron",
+            "hour": 16,
+            "minute": 10,
+            "id": "daily_group_message_1610",
+            "replace_existing": True,
+        }
+    ) == "daily_group_message_1610 at 16:10"
 
 
 def test_filter_allowed_group_ids_allows_all_when_allowlist_is_empty() -> None:
