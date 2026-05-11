@@ -31,6 +31,12 @@ def test_parse_mentioned_user_keyword_reference() -> None:
     assert parsed == MemoryReference(question="整理重点", user_id=2001, keyword="洛克王国")
 
 
+def test_parse_mentioned_user_only_reference() -> None:
+    parsed = parse_memory_reference("参考 @小明：总结他的想法", mentioned_user_ids=[2001])
+
+    assert parsed == MemoryReference(question="总结他的想法", user_id=2001)
+
+
 def test_parse_non_reference_keeps_prompt_as_question() -> None:
     parsed = parse_memory_reference("讲个笑话", mentioned_user_ids=[])
 
