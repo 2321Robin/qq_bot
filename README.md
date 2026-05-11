@@ -261,6 +261,8 @@ start_all.ps1
 
 命中本地精灵数据时，机器人会优先发送静态精灵卡片图片。如果对应卡片图片不存在，则回退为文字结果。
 
+现有 `/精灵 <名称>` 与 `/洛克 <名称>` 查询仍使用本地 `data/roco_pets.json`，不会在 QQ 机器人运行时抓取 BWiki。
+
 启动前可生成或刷新精灵卡片：
 
 ```powershell
@@ -286,6 +288,20 @@ https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB
 ```
 
 生成卡片中会标注来源。BWiki 页面文本数据标注为 CC BY-NC-SA 4.0。
+
+### 洛克王国 BWiki 详情数据
+
+结构化 BWiki 详情数据是离线数据准备步骤，可按需重新抓取生成，不属于 QQ 机器人运行时抓取逻辑：
+
+```powershell
+.\.venv\Scripts\python scripts\fetch_roco_pet_detail.py
+```
+
+当前生成的详情文件路径为：
+
+```text
+data/roco_pet_details/迪莫.json
+```
 
 ## 测试
 
