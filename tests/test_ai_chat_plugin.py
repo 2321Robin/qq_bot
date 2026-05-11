@@ -543,4 +543,4 @@ async def test_ai_chat_rejects_empty_question_after_memory_reference(
     with pytest.raises(FinishCalled) as exc_info:
         await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 参考最近5条："))  # type: ignore[arg-type]
 
-    assert exc_info.value.message == "请在 ai 后面输入要问的问题。"
+    assert exc_info.value.message == "请输入要问的问题"

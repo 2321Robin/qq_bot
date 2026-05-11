@@ -71,7 +71,7 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
     prompt = memory_reference.question
 
     if not prompt:
-        await ai_chat.finish(f"请在 {settings.ai_prefix} 后面输入要问的问题。")
+        await ai_chat.finish("请输入要问的问题")
 
     chat_context = ""
     if memory_store is not None:
