@@ -186,7 +186,7 @@ def _draw_description(
         "#202326",
         icon_size=(24, 24),
     )
-    _vcenter_text(draw, (78, 190, 625, 256), _value(record.description), normal_font, TEXT)
+    _draw_wrapped_vcenter_text(draw, (78, 190, 625, 256), _value(record.description), normal_font, TEXT, line_spacing=4)
     _rounded(draw, (316, 278, 385, 312), 17, PILL, outline=ORANGE)
     _center_text(draw, record.name or "未知", (350, 295), small_font, TEXT)
 
@@ -259,6 +259,41 @@ def _vcenter_text(
     height = bbox[3] - bbox[1]
     y = box[1] + (box[3] - box[1] - height) / 2 - bbox[1]
     draw.text((box[0], y), text, fill=fill, font=font)
+
+
+def _draw_wrapped_vcenter_text(
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    text: str,
+    font: ImageFont.ImageFont,
+    fill: str,
+    *,
+    line_spacing: int = 4,
+) -> None:
+    lines = _wrap_text(draw, text, font, box[2] - box[0])
+    line_boxes = [draw.textbbox((0, 0), line, font=font) for line in lines]
+    line_heights = [bbox[3] - bbox[1] for bbox in line_boxes]
+    total_height = sum(line_heights) + line_spacing * max(0, len(lines) - 1)
+    y = box[1] + (box[3] - box[1] - total_height) / 2
+    for line, bbox, height in zip(lines, line_boxes, line_heights, strict=True):
+        draw.text((box[0] - bbox[0], y - bbox[1]), line, fill=fill, font=font)
+        y += height + line_spacing
+
+
+def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, max_width: int) -> list[str]:
+    lines: list[str] = []
+    current = ""
+    for character in text:
+        candidate = f"{current}{character}"
+        bbox = draw.textbbox((0, 0), candidate, font=font)
+        if current and bbox[2] - bbox[0] > max_width:
+            lines.append(current)
+            current = character
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return lines or ["未知"]
 
 
 def _draw_icon_text(
