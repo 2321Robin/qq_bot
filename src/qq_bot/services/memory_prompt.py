@@ -32,6 +32,20 @@ def extract_at_user_ids(segments: Iterable[MessageSegmentLike]) -> list[int]:
     return user_ids
 
 
+def extract_at_user_ids_before_separator(segments: Iterable[MessageSegmentLike]) -> list[int]:
+    user_ids: list[int] = []
+    for segment in segments:
+        if segment.type == "text" and re.search(r"[：:]", str(segment.data.get("text", ""))):
+            break
+        if segment.type != "at":
+            continue
+        try:
+            user_ids.append(int(segment.data.get("qq", "")))
+        except (TypeError, ValueError):
+            continue
+    return user_ids
+
+
 def parse_memory_reference(prompt: str, *, mentioned_user_ids: list[int]) -> MemoryReference:
     text = prompt.strip()
     if not text.startswith("参考"):

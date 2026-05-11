@@ -34,6 +34,13 @@ class FakeAtSegment:
         self.data = {"qq": str(qq)}
 
 
+class FakeTextSegment:
+    type = "text"
+
+    def __init__(self, text: str):
+        self.data = {"text": text}
+
+
 class FinishCalled(Exception):
     def __init__(self, message: object):
         self.message = message
@@ -410,7 +417,73 @@ async def test_ai_chat_uses_actual_at_segment_for_explicit_user_history(
 
     with pytest.raises(FinishCalled):
         await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
-            FakeEvent("ai 参考  的最近5条：总结他的观点", [FakeAtSegment(2002)])
+            FakeEvent(
+                "ai 参考  的最近5条：总结他的观点",
+                [
+                    FakeTextSegment("ai 参考 "),
+                    FakeAtSegment(2002),
+                    FakeTextSegment(" 的最近5条：总结他的观点"),
+                ],
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_ai_chat_does_not_scope_group_history_to_at_after_separator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStore:
+        def add_message(self, *args, **kwargs) -> int:
+            return 123
+
+        def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
+            return None
+
+        def recent_group_messages(self, *, group_id: int, limit: int):
+            assert group_id == 1001
+            assert limit == 5
+            return [memory_row(message_text="群聊观点", user_id=2003)]
+
+        def search_messages(self, *args, **kwargs):
+            raise AssertionError("question mention should not scope group history")
+
+    async def fake_request_ai_reply(
+        prompt: str,
+        *,
+        settings: BotSettings,
+        search_context: str = "",
+        chat_context: str = "",
+    ) -> str:
+        assert prompt == "你怎么看"
+        assert "用户2003：群聊观点" in chat_context
+        return "总结好了"
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+    )
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "ChatMemoryStore",
+        lambda path, retention_days: FakeStore(),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
+            FakeEvent(
+                "ai 参考最近5条： 你怎么看",
+                [
+                    FakeTextSegment("ai 参考最近5条："),
+                    FakeAtSegment(2002),
+                    FakeTextSegment(" 你怎么看"),
+                ],
+            )
         )
 
 
