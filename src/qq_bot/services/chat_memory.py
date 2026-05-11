@@ -92,8 +92,8 @@ class ChatMemoryStore:
         clauses = ["group_id = ?"]
         params: list[object] = [group_id]
         if keyword:
-            clauses.append("message_text LIKE ?")
-            params.append(f"%{keyword}%")
+            clauses.append("message_text LIKE ? ESCAPE '\\'")
+            params.append(f"%{self._escape_like(keyword)}%")
         if user_id is not None:
             clauses.append("user_id = ?")
             params.append(user_id)
@@ -163,6 +163,10 @@ class ChatMemoryStore:
         if value.tzinfo is None:
             value = value.replace(tzinfo=UTC)
         return value.astimezone(UTC).isoformat()
+
+    @staticmethod
+    def _escape_like(value: str) -> str:
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
     @staticmethod
     def _row_from_sqlite(row: sqlite3.Row | tuple[object, ...]) -> ChatMemoryRow:

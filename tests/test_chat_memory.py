@@ -5,6 +5,7 @@ from qq_bot.services.chat_memory import ChatMemoryStore
 
 def test_add_message_initializes_database_and_reads_user_history(tmp_path) -> None:
     store = ChatMemoryStore(tmp_path / "memory.sqlite3", retention_days=3)
+    now = datetime(2026, 5, 11, 12, 2, tzinfo=timezone.utc)
     message_id = store.add_message(
         group_id=1001,
         user_id=2001,
@@ -20,7 +21,7 @@ def test_add_message_initializes_database_and_reads_user_history(tmp_path) -> No
         created_at=datetime(2026, 5, 11, 12, 1, tzinfo=timezone.utc),
     )
 
-    rows = store.recent_user_turns(group_id=1001, user_id=2001, limit=10)
+    rows = store.recent_user_turns(group_id=1001, user_id=2001, limit=10, now=now)
 
     assert len(rows) == 1
     assert rows[0].message_text == "ai 你好"
@@ -33,6 +34,7 @@ def test_recent_group_messages_returns_newest_limited_rows_in_chronological_orde
 ) -> None:
     store = ChatMemoryStore(tmp_path / "memory.sqlite3", retention_days=3)
     base = datetime(2026, 5, 11, 12, 0, tzinfo=timezone.utc)
+    now = base + timedelta(minutes=5)
     for index in range(5):
         store.add_message(
             group_id=1001,
@@ -41,7 +43,7 @@ def test_recent_group_messages_returns_newest_limited_rows_in_chronological_orde
             created_at=base + timedelta(minutes=index),
         )
 
-    rows = store.recent_group_messages(group_id=1001, limit=3)
+    rows = store.recent_group_messages(group_id=1001, limit=3, now=now)
 
     assert [row.message_text for row in rows] == ["消息2", "消息3", "消息4"]
 
@@ -53,9 +55,26 @@ def test_search_group_messages_filters_keyword_and_user(tmp_path) -> None:
     store.add_message(1001, 2002, "洛克王国 火花", created_at=created_at)
     store.add_message(1001, 2001, "别的话题", created_at=created_at)
 
-    rows = store.search_messages(group_id=1001, keyword="洛克", user_id=2001, limit=10)
+    rows = store.search_messages(
+        group_id=1001,
+        keyword="洛克",
+        user_id=2001,
+        limit=10,
+        now=created_at,
+    )
 
     assert [row.message_text for row in rows] == ["洛克王国 迪莫"]
+
+
+def test_search_group_messages_treats_percent_as_literal(tmp_path) -> None:
+    store = ChatMemoryStore(tmp_path / "memory.sqlite3", retention_days=3)
+    created_at = datetime(2026, 5, 11, 12, 0, tzinfo=timezone.utc)
+    store.add_message(1001, 2001, "百分比 50%", created_at=created_at)
+    store.add_message(1001, 2001, "没有百分号", created_at=created_at)
+
+    rows = store.search_messages(group_id=1001, keyword="%", limit=10, now=created_at)
+
+    assert [row.message_text for row in rows] == ["百分比 50%"]
 
 
 def test_cleanup_removes_records_older_than_retention(tmp_path) -> None:
