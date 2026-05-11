@@ -7,6 +7,8 @@ __pycache__/
 .mypy_cache/
 .env
 .superpowers/
+docs/
+data/chat_memory.sqlite3
 dist/
 build/
 *.egg-info/
