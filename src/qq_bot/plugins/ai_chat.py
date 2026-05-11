@@ -5,7 +5,7 @@ from qq_bot.config import get_settings
 from qq_bot.services.ai_client import AIReplyError, request_ai_reply
 from qq_bot.services.chat_memory import ChatMemoryStore
 from qq_bot.services.memory_prompt import (
-    extract_at_user_ids,
+    extract_at_user_ids_before_separator,
     format_chat_context,
     parse_memory_reference,
 )
@@ -63,7 +63,7 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
     if not settings.has_ai_config():
         await ai_chat.finish("AI 功能还没有配置 API Key。")
 
-    mentioned_user_ids = extract_at_user_ids(event.get_message())
+    mentioned_user_ids = extract_at_user_ids_before_separator(event.get_message())
     memory_reference = parse_memory_reference(
         prompt,
         mentioned_user_ids=mentioned_user_ids,
