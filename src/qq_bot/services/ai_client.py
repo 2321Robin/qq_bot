@@ -45,7 +45,7 @@ def build_chat_payload(
             " 如果提供了历史聊天记录，只把它作为理解前文和用户意图的参考。"
             "不要编造不存在的历史聊天记录；历史不足时要直接说明。"
         )
-        user_sections.append(f"历史聊天记录：\n{cleaned_chat_context}")
+        user_sections.append(cleaned_chat_context)
 
     if cleaned_search_context:
         system_prompt += (
