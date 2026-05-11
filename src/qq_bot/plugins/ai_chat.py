@@ -5,6 +5,7 @@ from qq_bot.config import get_settings
 from qq_bot.services.ai_client import AIReplyError, request_ai_reply
 from qq_bot.services.chat_memory import ChatMemoryStore
 from qq_bot.services.memory_prompt import (
+    extract_at_user_ids,
     extract_at_user_ids_before_separator,
     format_chat_context,
     parse_memory_reference,
@@ -40,10 +41,14 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
     raw_text = event.get_message().extract_plain_text().strip()
     prompt = extract_ai_prompt(raw_text, prefix=settings.ai_prefix)
 
-    if prompt is None and event.is_tome():
+    mentioned_self = _mentions_self(event)
+    addressed_to_bot = event.is_tome() or mentioned_self
+    if prompt is None and addressed_to_bot:
         prompt = raw_text
+        if mentioned_self:
+            prompt = _strip_leading_self_mention_text(event).strip()
 
-    is_ai_prompt = prompt is not None or event.is_tome()
+    is_ai_prompt = prompt is not None or addressed_to_bot
     if prompt is None:
         if memory_store is not None:
             try:
@@ -63,7 +68,10 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
     if not settings.has_ai_config():
         await ai_chat.finish("AI 功能还没有配置 API Key。")
 
-    mentioned_user_ids = extract_at_user_ids_before_separator(event.get_message())
+    mentioned_user_ids = _without_self_mentions(
+        extract_at_user_ids_before_separator(event.get_message()),
+        event,
+    )
     memory_reference = parse_memory_reference(
         prompt,
         mentioned_user_ids=mentioned_user_ids,
@@ -138,3 +146,36 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
             logger.exception("Chat memory reply update failed")
 
     await ai_chat.finish(replace_named_mentions(reply))
+
+
+def _mentions_self(event: GroupMessageEvent) -> bool:
+    try:
+        self_id = int(event.self_id)
+    except (TypeError, ValueError):
+        return False
+    return self_id in extract_at_user_ids(event.get_message())
+
+
+def _strip_leading_self_mention_text(event: GroupMessageEvent) -> str:
+    segments = iter(event.get_message())
+    try:
+        first_segment = next(segments)
+    except StopIteration:
+        return event.get_message().extract_plain_text()
+
+    if first_segment.type != "at" or str(first_segment.data.get("qq", "")) != str(event.self_id):
+        return event.get_message().extract_plain_text()
+
+    return "".join(
+        str(segment.data.get("text", ""))
+        for segment in segments
+        if segment.type == "text"
+    )
+
+
+def _without_self_mentions(user_ids: list[int], event: GroupMessageEvent) -> list[int]:
+    try:
+        self_id = int(event.self_id)
+    except (TypeError, ValueError):
+        return user_ids
+    return [user_id for user_id in user_ids if user_id != self_id]
