@@ -31,6 +31,31 @@ def test_add_message_initializes_database_and_reads_user_history(tmp_path) -> No
     assert rows[0].is_ai_prompt is True
 
 
+def test_recent_user_turns_excludes_non_ai_group_messages(tmp_path) -> None:
+    store = ChatMemoryStore(tmp_path / "memory.sqlite3", retention_days=3)
+    base = datetime(2026, 5, 11, 12, 0, tzinfo=timezone.utc)
+    now = base + timedelta(minutes=3)
+    store.add_message(
+        group_id=1001,
+        user_id=2001,
+        message_text="普通聊天",
+        created_at=base,
+        now=now,
+    )
+    store.add_message(
+        group_id=1001,
+        user_id=2001,
+        message_text="ai 之前的问题",
+        is_ai_prompt=True,
+        created_at=base + timedelta(minutes=1),
+        now=now,
+    )
+
+    rows = store.recent_user_turns(group_id=1001, user_id=2001, limit=10, now=now)
+
+    assert [row.message_text for row in rows] == ["ai 之前的问题"]
+
+
 def test_recent_group_messages_returns_newest_limited_rows_in_chronological_order(
     tmp_path,
 ) -> None:

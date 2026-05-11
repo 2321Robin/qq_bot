@@ -64,7 +64,7 @@ class ChatMemoryStore:
     ) -> list[ChatMemoryRow]:
         self._cleanup(now)
         return self._latest_rows(
-            "group_id = ? AND user_id = ?",
+            "group_id = ? AND user_id = ? AND is_ai_prompt = 1",
             (group_id, user_id),
             limit,
         )
