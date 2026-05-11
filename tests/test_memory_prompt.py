@@ -100,6 +100,12 @@ def test_parse_uses_first_valid_mentioned_user_id() -> None:
     assert parsed == MemoryReference(question="总结他的想法", user_id=2002, limit=20)
 
 
+def test_parse_natural_mentioned_user_sent_messages_reference() -> None:
+    parsed = parse_memory_reference("总结 @小明 发送的消息", mentioned_user_ids=[2002])
+
+    assert parsed == MemoryReference(question="总结 发送的消息", user_id=2002)
+
+
 def test_format_chat_context_includes_messages_and_ai_replies() -> None:
     rows = [
         ChatMemoryRow(1, 1001, 2001, "ai 你好", "2026-05-11T12:00:00+00:00", True, "你好呀"),

@@ -49,7 +49,7 @@ def extract_at_user_ids_before_separator(segments: Iterable[MessageSegmentLike])
 def parse_memory_reference(prompt: str, *, mentioned_user_ids: list[int]) -> MemoryReference:
     text = prompt.strip()
     if not text.startswith("参考"):
-        return MemoryReference(question=text)
+        return _parse_natural_mentioned_user_reference(text, mentioned_user_ids)
 
     separator_match = re.search(r"[：:]", text)
     if not separator_match:
@@ -65,6 +65,29 @@ def parse_memory_reference(prompt: str, *, mentioned_user_ids: list[int]) -> Mem
         return MemoryReference(question=text)
 
     return MemoryReference(question=question, user_id=user_id, keyword=keyword, limit=limit)
+
+
+def _parse_natural_mentioned_user_reference(
+    text: str,
+    mentioned_user_ids: list[int],
+) -> MemoryReference:
+    if not mentioned_user_ids or not re.search(r"消息|信息", text):
+        return MemoryReference(question=text)
+
+    cleaned_question = re.sub(r"\s+", " ", re.sub(r"@\S+", "", text)).strip()
+
+    if re.search(r"发送的(?:消息|信息)", text):
+        return MemoryReference(question=cleaned_question, user_id=mentioned_user_ids[0])
+
+    limit_match = re.search(r"最近\s*(\d+|[一二两三四五六七八九十])\s*条", text)
+    if not limit_match:
+        return MemoryReference(question=text)
+
+    limit = _parse_count(limit_match.group(1))
+    if limit is None:
+        return MemoryReference(question=text)
+
+    return MemoryReference(question=cleaned_question, user_id=mentioned_user_ids[0], limit=limit)
 
 
 def format_chat_context(rows: list[ChatMemoryRow]) -> str:
@@ -91,6 +114,24 @@ def _extract_keyword(head: str) -> str | None:
     if not keyword or re.fullmatch(r"最近\s*\d*\s*条?", keyword):
         return None
     return keyword
+
+
+def _parse_count(value: str) -> int | None:
+    if value.isdigit():
+        return int(value)
+    return {
+        "一": 1,
+        "二": 2,
+        "两": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+        "十": 10,
+    }.get(value)
 
 
 def _references_mentioned_user(head: str, mentioned_user_ids: list[int]) -> bool:
