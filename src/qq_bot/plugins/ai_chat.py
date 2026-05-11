@@ -28,29 +28,33 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
     if not settings.group_allowed(event.group_id):
         return
 
-    memory_store = ChatMemoryStore(
-        settings.chat_memory_path,
-        retention_days=settings.chat_memory_retention_days,
-    )
+    memory_store: ChatMemoryStore | None = None
+    try:
+        memory_store = ChatMemoryStore(
+            settings.chat_memory_path,
+            retention_days=settings.chat_memory_retention_days,
+        )
+    except Exception:
+        logger.exception("Chat memory initialization failed; continuing without memory")
+
     raw_text = event.get_message().extract_plain_text().strip()
     prompt = extract_ai_prompt(raw_text, prefix=settings.ai_prefix)
 
     if prompt is None and event.is_tome():
         prompt = raw_text
 
-    memory_message_id: int | None = None
     is_ai_prompt = prompt is not None or event.is_tome()
-    try:
-        memory_message_id = memory_store.add_message(
-            group_id=event.group_id,
-            user_id=event.user_id,
-            message_text=raw_text,
-            is_ai_prompt=is_ai_prompt,
-        )
-    except Exception:
-        logger.exception("Chat memory write failed; continuing without storing message")
-
     if prompt is None:
+        if memory_store is not None:
+            try:
+                memory_store.add_message(
+                    group_id=event.group_id,
+                    user_id=event.user_id,
+                    message_text=raw_text,
+                    is_ai_prompt=is_ai_prompt,
+                )
+            except Exception:
+                logger.exception("Chat memory write failed; continuing without storing message")
         return
 
     if not prompt:
@@ -66,30 +70,46 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
     )
     prompt = memory_reference.question
 
+    if not prompt:
+        await ai_chat.finish(f"请在 {settings.ai_prefix} 后面输入要问的问题。")
+
     chat_context = ""
-    try:
-        limit = min(
-            memory_reference.limit or settings.chat_memory_default_turns,
-            settings.chat_memory_max_results,
-        )
-        if memory_reference.user_id is not None or memory_reference.keyword:
-            rows = memory_store.search_messages(
-                group_id=event.group_id,
-                user_id=memory_reference.user_id,
-                keyword=memory_reference.keyword,
-                limit=limit,
+    if memory_store is not None:
+        try:
+            limit = min(
+                memory_reference.limit or settings.chat_memory_default_turns,
+                settings.chat_memory_max_results,
             )
-        elif memory_reference.limit is not None:
-            rows = memory_store.recent_group_messages(group_id=event.group_id, limit=limit)
-        else:
-            rows = memory_store.recent_user_turns(
+            if memory_reference.user_id is not None or memory_reference.keyword:
+                rows = memory_store.search_messages(
+                    group_id=event.group_id,
+                    user_id=memory_reference.user_id,
+                    keyword=memory_reference.keyword,
+                    limit=limit,
+                )
+            elif memory_reference.limit is not None:
+                rows = memory_store.recent_group_messages(group_id=event.group_id, limit=limit)
+            else:
+                rows = memory_store.recent_user_turns(
+                    group_id=event.group_id,
+                    user_id=event.user_id,
+                    limit=limit,
+                )
+            chat_context = format_chat_context(rows)
+        except Exception:
+            logger.exception("Chat memory read failed; continuing without chat context")
+
+    memory_message_id: int | None = None
+    if memory_store is not None:
+        try:
+            memory_message_id = memory_store.add_message(
                 group_id=event.group_id,
                 user_id=event.user_id,
-                limit=limit,
+                message_text=raw_text,
+                is_ai_prompt=is_ai_prompt,
             )
-        chat_context = format_chat_context(rows)
-    except Exception:
-        logger.exception("Chat memory read failed; continuing without chat context")
+        except Exception:
+            logger.exception("Chat memory write failed; continuing without storing message")
 
     search_context = ""
     if prompt_needs_search(prompt) and settings.has_search_config():
