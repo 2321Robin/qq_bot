@@ -12,6 +12,7 @@ def test_add_message_initializes_database_and_reads_user_history(tmp_path) -> No
         message_text="ai 你好",
         is_ai_prompt=True,
         created_at=datetime(2026, 5, 11, 12, 0, tzinfo=timezone.utc),
+        now=now,
     )
     store.update_ai_reply(message_id, "你好呀")
     store.add_message(
@@ -19,6 +20,7 @@ def test_add_message_initializes_database_and_reads_user_history(tmp_path) -> No
         user_id=2002,
         message_text="别人的消息",
         created_at=datetime(2026, 5, 11, 12, 1, tzinfo=timezone.utc),
+        now=now,
     )
 
     rows = store.recent_user_turns(group_id=1001, user_id=2001, limit=10, now=now)
@@ -41,6 +43,7 @@ def test_recent_group_messages_returns_newest_limited_rows_in_chronological_orde
             user_id=2001 + index,
             message_text=f"消息{index}",
             created_at=base + timedelta(minutes=index),
+            now=now,
         )
 
     rows = store.recent_group_messages(group_id=1001, limit=3, now=now)
@@ -51,9 +54,9 @@ def test_recent_group_messages_returns_newest_limited_rows_in_chronological_orde
 def test_search_group_messages_filters_keyword_and_user(tmp_path) -> None:
     store = ChatMemoryStore(tmp_path / "memory.sqlite3", retention_days=3)
     created_at = datetime(2026, 5, 11, 12, 0, tzinfo=timezone.utc)
-    store.add_message(1001, 2001, "洛克王国 迪莫", created_at=created_at)
-    store.add_message(1001, 2002, "洛克王国 火花", created_at=created_at)
-    store.add_message(1001, 2001, "别的话题", created_at=created_at)
+    store.add_message(1001, 2001, "洛克王国 迪莫", created_at=created_at, now=created_at)
+    store.add_message(1001, 2002, "洛克王国 火花", created_at=created_at, now=created_at)
+    store.add_message(1001, 2001, "别的话题", created_at=created_at, now=created_at)
 
     rows = store.search_messages(
         group_id=1001,
@@ -69,8 +72,8 @@ def test_search_group_messages_filters_keyword_and_user(tmp_path) -> None:
 def test_search_group_messages_treats_percent_as_literal(tmp_path) -> None:
     store = ChatMemoryStore(tmp_path / "memory.sqlite3", retention_days=3)
     created_at = datetime(2026, 5, 11, 12, 0, tzinfo=timezone.utc)
-    store.add_message(1001, 2001, "百分比 50%", created_at=created_at)
-    store.add_message(1001, 2001, "没有百分号", created_at=created_at)
+    store.add_message(1001, 2001, "百分比 50%", created_at=created_at, now=created_at)
+    store.add_message(1001, 2001, "没有百分号", created_at=created_at, now=created_at)
 
     rows = store.search_messages(group_id=1001, keyword="%", limit=10, now=created_at)
 
