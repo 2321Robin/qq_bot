@@ -8,7 +8,7 @@ from qq_bot.services.roco_pets import PetRecord, find_pet, format_pet_query_resu
 
 
 roco_pet_command = on_command("精灵", aliases={"洛克"}, priority=5, block=True)
-roco_mention_pet = on_message(priority=10, block=True)
+roco_mention_pet = on_message(priority=10, block=False)
 
 
 @roco_pet_command.handle()

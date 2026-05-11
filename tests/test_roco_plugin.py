@@ -7,6 +7,10 @@ from qq_bot.plugins import roco as roco_plugin
 from qq_bot.services.roco_pets import PetRecord
 
 
+def test_roco_mention_matcher_does_not_block_ai_chat() -> None:
+    assert not roco_plugin.roco_mention_pet.block
+
+
 class FakeArgs:
     def __init__(self, text: str):
         self.text = text
