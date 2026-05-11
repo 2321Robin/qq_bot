@@ -120,6 +120,38 @@ def test_build_chat_payload_uses_reliability_rules_with_search_context() -> None
     assert "没有可靠来源" in system_prompt
 
 
+def test_build_chat_payload_includes_chat_context_when_provided() -> None:
+    settings = BotSettings(ai_model="test-model")
+
+    payload = build_chat_payload(
+        "继续刚才的话题",
+        settings,
+        chat_context="历史聊天记录：\n用户2001：ai 你好\n机器人：你好呀",
+    )
+
+    user_message = payload["messages"][-1]["content"]
+    system_prompt = payload["messages"][0]["content"]
+    assert "当前用户问题：继续刚才的话题" in user_message
+    assert "历史聊天记录" in user_message
+    assert "不要编造不存在的历史聊天记录" in system_prompt
+
+
+def test_build_chat_payload_combines_search_and_chat_context() -> None:
+    settings = BotSettings(ai_model="test-model")
+
+    payload = build_chat_payload(
+        "这事现在怎么样",
+        settings,
+        search_context="[1] News\nURL: https://example.com\n摘要: summary",
+        chat_context="历史聊天记录：\n用户2001：之前说过 DeepSeek",
+    )
+
+    user_message = payload["messages"][-1]["content"]
+    assert "当前用户问题：这事现在怎么样" in user_message
+    assert "联网搜索资料" in user_message
+    assert "历史聊天记录" in user_message
+
+
 @pytest.mark.asyncio
 async def test_request_ai_reply_posts_openai_compatible_payload() -> None:
     settings = BotSettings(
