@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from io import BytesIO
 from pathlib import Path
 
@@ -38,6 +39,9 @@ STAT_ICON_FILES = {
     "magic_defense": "stat-magic-defense.png",
     "speed": "stat-speed.png",
 }
+EVOLUTION_ARROW_WIDTH = 48
+EVOLUTION_TOKEN_GAP = 18
+EVOLUTION_BOX_PADDING = 18
 
 
 def pet_card_path(record: PetRecord, directory: Path = DEFAULT_CARD_DIR) -> Path:
@@ -189,8 +193,7 @@ def _draw_description(
         icon_size=(24, 24),
     )
     _draw_wrapped_vcenter_text(draw, (78, 190, 625, 256), _value(record.description), normal_font, TEXT, line_spacing=4)
-    _rounded(draw, (316, 278, 385, 312), 17, PILL, outline=ORANGE)
-    _center_text(draw, record.name or "未知", (350, 295), small_font, TEXT)
+    _draw_evolution_chain(draw, record, small_font, small_bold_font)
 
 
 def _draw_stats(
@@ -224,6 +227,148 @@ def _draw_stats(
             _rounded(draw, (bar_x, y + 1, bar_x + width, y + 23), 11, ORANGE)
         _vcenter_text(draw, (585, y - 5, 630, y + 27), display_value, normal_bold_font, MUTED)
         y += 38
+
+
+def _draw_evolution_chain(
+    draw: ImageDraw.ImageDraw,
+    record: PetRecord,
+    name_font: ImageFont.ImageFont,
+    condition_font: ImageFont.ImageFont,
+) -> None:
+    chain_font = _fit_chain_font(draw, record, name_font, 448 - EVOLUTION_BOX_PADDING * 2)
+    chain_box, placements = _evolution_chain_layout(draw, record, chain_font, max_width=448)
+
+    _rounded(draw, chain_box, 17, PILL, outline=ORANGE)
+
+    for kind, text, width, x, condition in placements:
+        token_box = (x, chain_box[1], x + width, chain_box[3])
+        if kind == "arrow":
+            arrow_center_x = x + width // 2
+            _draw_evolution_arrow(draw, arrow_center_x, 303)
+            _draw_evolution_condition(draw, condition, arrow_center_x, condition_font)
+        else:
+            _vcenter_text(draw, token_box, text, chain_font, TEXT)
+
+
+def _evolution_chain_layout(
+    draw: ImageDraw.ImageDraw,
+    record: PetRecord,
+    font: ImageFont.ImageFont,
+    *,
+    max_width: int,
+) -> tuple[tuple[int, int, int, int], list[tuple[str, str, int, int, str]]]:
+    content_max_width = max_width - EVOLUTION_BOX_PADDING * 2
+    tokens = _evolution_tokens(draw, record, font, max_width=content_max_width)
+    token_widths = [_evolution_token_width(draw, token, font) for token in tokens]
+    content_width = sum(token_widths) + EVOLUTION_TOKEN_GAP * max(0, len(tokens) - 1)
+    box_width = min(max_width, content_width + EVOLUTION_BOX_PADDING * 2)
+    left = round((CARD_WIDTH - box_width) / 2)
+    chain_box = (left, 286, left + box_width, 320)
+    x = left + round((box_width - content_width) / 2)
+    placements = []
+
+    for token, width in zip(tokens, token_widths, strict=True):
+        kind, text, condition = token
+        placements.append((kind, text, width, x, condition))
+        x += width + EVOLUTION_TOKEN_GAP
+
+    return chain_box, placements
+
+
+def _draw_evolution_condition(
+    draw: ImageDraw.ImageDraw,
+    condition: str,
+    arrow_center_x: int,
+    condition_font: ImageFont.ImageFont,
+) -> None:
+    if not condition:
+        return
+    label_box = (arrow_center_x - 36, 260, arrow_center_x + 36, 283)
+    label_font = _fit_font_to_width(draw, condition, condition_font, label_box[2] - label_box[0] - 10, min_size=12)
+    _rounded(draw, label_box, 11, ORANGE)
+    _center_text(draw, condition, (arrow_center_x, 271), label_font, "#202326")
+
+
+def _fit_chain_font(
+    draw: ImageDraw.ImageDraw,
+    record: PetRecord,
+    font: ImageFont.ImageFont,
+    max_width: int,
+) -> ImageFont.ImageFont:
+    if not isinstance(font, ImageFont.FreeTypeFont):
+        return font
+    for size in range(font.size, 13, -1):
+        candidate = font.font_variant(size=size)
+        tokens = _evolution_tokens(draw, record, candidate, max_width=max_width)
+        widths = [_evolution_token_width(draw, token, candidate) for token in tokens]
+        if sum(widths) + EVOLUTION_TOKEN_GAP * max(0, len(tokens) - 1) <= max_width:
+            return candidate
+    return font.font_variant(size=14)
+
+
+def _draw_evolution_arrow(draw: ImageDraw.ImageDraw, center_x: int, center_y: int) -> None:
+    half_width = 24
+    shaft_start = center_x - half_width
+    shaft_end = center_x + half_width - 8
+    draw.line((shaft_start, center_y, shaft_end, center_y), fill=ORANGE, width=5)
+    draw.polygon(
+        [
+            (center_x + half_width, center_y),
+            (center_x + half_width - 12, center_y - 8),
+            (center_x + half_width - 12, center_y + 8),
+        ],
+        fill=ORANGE,
+    )
+
+
+def _evolution_tokens(
+    draw: ImageDraw.ImageDraw,
+    record: PetRecord,
+    font: ImageFont.ImageFont,
+    *,
+    max_width: int,
+) -> list[tuple[str, str, str]]:
+    chain = record.evolution_chain or [record.name or "未知"]
+    steps = _evolution_steps(record)
+    tokens: list[tuple[str, str, str]] = []
+
+    for index, name in enumerate(chain):
+        tokens.append(("name", name, ""))
+        if index >= len(steps):
+            continue
+        tokens.append(("arrow", "→", steps[index][2]))
+
+    return _compact_evolution_tokens(draw, tokens, font, max_width)
+
+
+def _compact_evolution_tokens(
+    draw: ImageDraw.ImageDraw,
+    tokens: list[tuple[str, str, str]],
+    font: ImageFont.ImageFont,
+    max_width: int,
+) -> list[tuple[str, str, str]]:
+    widths = [_evolution_token_width(draw, token, font) for token in tokens]
+    if sum(widths) + EVOLUTION_TOKEN_GAP * max(0, len(tokens) - 1) <= max_width:
+        return tokens
+
+    compacted = []
+    for kind, text, condition in tokens:
+        if kind == "name" and len(text) > 3:
+            compacted.append((kind, f"{text[:2]}…", condition))
+        else:
+            compacted.append((kind, text, condition))
+    return compacted
+
+
+def _evolution_token_width(
+    draw: ImageDraw.ImageDraw,
+    token: tuple[str, str, str],
+    font: ImageFont.ImageFont,
+) -> int:
+    kind, text, _ = token
+    if kind == "arrow":
+        return EVOLUTION_ARROW_WIDTH
+    return _text_width(draw, text, font)
 
 
 def _rounded(
@@ -320,6 +465,11 @@ def _fit_font_to_width(
     return font.font_variant(size=min_size)
 
 
+def _text_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) -> int:
+    bbox = draw.textbbox((0, 0), text, font=font)
+    return bbox[2] - bbox[0]
+
+
 def _draw_icon_text(
     image: Image.Image,
     draw: ImageDraw.ImageDraw,
@@ -354,6 +504,36 @@ def _draw_icon_text(
 
 def _value(value: str | None) -> str:
     return value or "未知"
+
+
+def _format_evolution_chain(record: PetRecord) -> str:
+    return " → ".join(record.evolution_chain) if record.evolution_chain else _value(record.name)
+
+
+def _evolution_steps(record: PetRecord) -> list[tuple[str, str, str]]:
+    chain = record.evolution_chain
+    if len(chain) < 2:
+        return []
+    levels = [f"{level}级" for level in re.findall(r"(\d+)级", record.evolution_condition)]
+    if len(chain) == 3 and len(levels) == 1:
+        levels = ["16级", levels[0]]
+    return [(source, target, levels[index] if index < len(levels) else "") for index, (source, target) in enumerate(zip(chain, chain[1:], strict=False))]
+
+
+def _evolution_step_positions(record: PetRecord) -> list[tuple[str, str, str, int]]:
+    steps = _evolution_steps(record)
+    if not steps:
+        return []
+    if len(steps) == 1:
+        positions = [350]
+    elif len(steps) == 2:
+        positions = [292, 408]
+    else:
+        start = 220
+        end = 480
+        interval = (end - start) / (len(steps) - 1)
+        positions = [round(start + interval * index) for index in range(len(steps))]
+    return [(source, target, condition, positions[index]) for index, (source, target, condition) in enumerate(steps)]
 
 
 def _attribute_color(attribute: str) -> str:
