@@ -31,6 +31,10 @@ AI_API_KEY=sk-your-api-key
 AI_BASE_URL=https://api.openai.com/v1
 AI_MODEL=gpt-4o-mini
 AI_TIMEOUT_SECONDS=30
+CHAT_MEMORY_PATH=data/chat_memory.sqlite3
+CHAT_MEMORY_RETENTION_DAYS=3
+CHAT_MEMORY_DEFAULT_TURNS=10
+CHAT_MEMORY_MAX_RESULTS=20
 SEARCH_ENABLED=false
 TAVILY_API_KEY=
 SEARCH_MAX_RESULTS=5
@@ -46,6 +50,8 @@ SCHEDULED_CRON_MINUTE=0
 Set `SCHEDULED_CRON_TIMES` to comma-separated `HH:MM` values, such as `11:00,12:10,16:10,20:10`, to send the same scheduled message multiple times per day. If it is blank, the bot uses `SCHEDULED_CRON_HOUR` and `SCHEDULED_CRON_MINUTE`.
 
 Set `SEARCH_ENABLED=true` to enable smart web search for current or search-related AI prompts, such as `ai 今天有什么新闻` or `ai 搜索 DeepSeek 最新消息`. Create a free Tavily API key at https://app.tavily.com/, put `TAVILY_API_KEY` only in your local `.env`, then restart the bot. Tavily's free plan provides monthly free API credits.
+
+AI chat keeps a local 3-day SQLite memory at `CHAT_MEMORY_PATH`. Normal AI prompts automatically use recent context for the current group user. You can explicitly ask it to reference group history with prompts such as `ai 参考最近20条：总结一下`, `ai 参考 洛克王国 的聊天：我们之前说了什么`, or `ai 参考 @某人 的最近20条：总结他的想法`.
 
 ## Run The Bot
 
@@ -90,4 +96,7 @@ After starting the bot and connecting NapCatQQ:
 - Send `/精灵 迪莫` in an allowed group and expect a static pet card image. Send `/精灵 不存在` and expect a not-found text reply.
 - Send `ai 你好` in an allowed group and expect an AI reply.
 - Enable `SEARCH_ENABLED=true` and set `TAVILY_API_KEY` in `.env`, restart the bot, send `ai 搜索 DeepSeek 最新消息`, and expect an answer using web-search context.
+- Send `ai 我喜欢迪莫`, then send `ai 我刚才说我喜欢谁` from the same QQ user in the same group, and expect the reply to use the recent context.
+- Send several normal group messages, then send `ai 参考最近5条：总结一下`, and expect the reply to reference those recent group messages.
+- Send `ai 参考 @某人 的最近5条：总结他的观点`, and expect the reply to use that mentioned user's messages when present.
 - Temporarily set `SCHEDULED_CRON_TIMES` to the next few minutes, restart the bot, and expect `SCHEDULED_MESSAGE` in the target group. If `SCHEDULED_CRON_TIMES` is blank, use `SCHEDULED_CRON_HOUR` and `SCHEDULED_CRON_MINUTE` instead.
