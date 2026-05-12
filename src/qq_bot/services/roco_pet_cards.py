@@ -572,7 +572,7 @@ def _draw_description(
         "#202326",
         icon_size=(24, 24),
     )
-    _draw_wrapped_vcenter_text(draw, (78, 204, 625, 256), _value(record.description), normal_font, TEXT, line_spacing=4)
+    _draw_wrapped_vcenter_text(draw, _trait_description_text_box(), _value(record.description), normal_font, TEXT, line_spacing=4)
     _draw_evolution_chain(draw, record, small_font, small_bold_font)
 
 
@@ -683,6 +683,10 @@ def _trait_pill_box(
     width = _text_width(draw, text, font) + 28
     width = max(68, min(150, width))
     return (70, 164, 70 + width, 198)
+
+
+def _trait_description_text_box() -> tuple[int, int, int, int]:
+    return (78, 204, 625, 250)
 
 
 def _attribute_display_items(attributes: list[str]) -> list[str]:
