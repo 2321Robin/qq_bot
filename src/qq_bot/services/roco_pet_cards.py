@@ -62,6 +62,7 @@ STAT_ICON_FILES = {
 EVOLUTION_ARROW_WIDTH = 48
 EVOLUTION_TOKEN_GAP = 18
 EVOLUTION_BOX_PADDING = 18
+EVOLUTION_NAME_PADDING = 12
 
 
 def pet_card_path(record: PetRecord, directory: Path = DEFAULT_CARD_DIR) -> Path:
@@ -558,14 +559,15 @@ def _draw_description(
     asset_directory: Path,
 ) -> None:
     _rounded(draw, (46, 190, 654, 256), 33, PILL)
-    trait_box = (70, 164, 220, 198)
+    trait_text = _value(record.favorite_partner)
+    trait_box = _trait_pill_box(draw, trait_text, small_bold_font)
     _rounded(draw, trait_box, 17, GOLD)
     _draw_icon_text(
         image,
         draw,
         trait_box,
         None,
-        _value(record.favorite_partner),
+        trait_text,
         small_bold_font,
         "#202326",
         icon_size=(24, 24),
@@ -673,6 +675,16 @@ def _attribute_pill_box(
     return (454, 70, 454 + width, 102)
 
 
+def _trait_pill_box(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.ImageFont,
+) -> tuple[int, int, int, int]:
+    width = _text_width(draw, text, font) + 28
+    width = max(68, min(150, width))
+    return (70, 164, 70 + width, 198)
+
+
 def _attribute_display_items(attributes: list[str]) -> list[str]:
     values = _attribute_values(*attributes)
     return values or ["未知"]
@@ -754,8 +766,6 @@ def _draw_evolution_chain(
     chain_font = _fit_chain_font(draw, record, name_font, 560 - EVOLUTION_BOX_PADDING * 2)
     chain_box, placements = _evolution_chain_layout(draw, record, chain_font, max_width=560)
 
-    _rounded(draw, chain_box, 17, PILL, outline=ORANGE)
-
     for kind, text, width, x, condition in placements:
         token_box = (x, chain_box[1], x + width, chain_box[3])
         if kind == "arrow":
@@ -763,7 +773,8 @@ def _draw_evolution_chain(
             _draw_evolution_arrow(draw, arrow_center_x, 303)
             _draw_evolution_condition(draw, condition, arrow_center_x, condition_font)
         else:
-            _vcenter_text(draw, token_box, text, chain_font, TEXT)
+            _rounded(draw, token_box, 17, PILL, outline=ORANGE)
+            draw.text(_evolution_name_text_position(draw, token_box, text, chain_font), text, fill=TEXT, font=chain_font)
 
 
 def _evolution_chain_layout(
@@ -837,6 +848,20 @@ def _draw_evolution_arrow(draw: ImageDraw.ImageDraw, center_x: int, center_y: in
     )
 
 
+def _evolution_name_text_position(
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    text: str,
+    font: ImageFont.ImageFont,
+) -> tuple[float, float]:
+    bbox = draw.textbbox((0, 0), text, font=font)
+    width = bbox[2] - bbox[0]
+    height = bbox[3] - bbox[1]
+    x = box[0] + (box[2] - box[0] - width) / 2 - bbox[0]
+    y = box[1] + (box[3] - box[1] - height) / 2 - bbox[1]
+    return x, y
+
+
 def _evolution_tokens(
     draw: ImageDraw.ImageDraw,
     record: PetRecord,
@@ -865,7 +890,7 @@ def _evolution_token_width(
     kind, text, _ = token
     if kind == "arrow":
         return EVOLUTION_ARROW_WIDTH
-    return _text_width(draw, text, font)
+    return _text_width(draw, text, font) + EVOLUTION_NAME_PADDING * 2
 
 
 def _rounded(

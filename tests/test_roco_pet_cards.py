@@ -10,10 +10,12 @@ from qq_bot.services.roco_pet_cards import (
     _evolution_chain_layout,
     _evolution_steps,
     _evolution_tokens,
+    _evolution_name_text_position,
     _fetch_bytes,
     _fetch_text,
     _attribute_display_items,
     _attribute_pill_box,
+    _trait_pill_box,
     _fit_name_lines_to_box,
     _fit_font_to_width,
     _fit_icon_text_font_to_box,
@@ -371,6 +373,20 @@ def test_trait_label_text_fits_inside_pill() -> None:
     assert bbox[2] - bbox[0] <= trait_box[2] - trait_box[0] - 20
 
 
+def test_trait_pill_box_width_tracks_trait_name() -> None:
+    image = Image.new("RGB", (700, 765))
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", size=20)
+
+    short_box = _trait_pill_box(draw, "破空", font)
+    long_box = _trait_pill_box(draw, "“国王”的威严", font)
+
+    assert short_box == (70, 164, 138, 198)
+    assert long_box[0] == 70
+    assert long_box[1:] == (164, 220, 198)
+    assert long_box[2] - long_box[0] > short_box[2] - short_box[0]
+
+
 def test_trait_label_and_description_boxes_do_not_overlap() -> None:
     trait_box = (70, 164, 220, 198)
     description_text_box = (78, 204, 625, 256)
@@ -480,6 +496,49 @@ def test_evolution_chain_layout_uses_dynamic_box_and_arrow_width() -> None:
     assert box[2] < 574
     assert [placement[0] for placement in placements] == ["name", "arrow", "name", "arrow", "name"]
     assert [placement[2] for placement in placements if placement[0] == "arrow"] == [48, 48]
+
+
+def test_evolution_chain_layout_reserves_individual_name_boxes() -> None:
+    image = Image.new("RGB", (700, 765))
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", size=20)
+    record = PetRecord(
+        name="魔力猫",
+        aliases=[],
+        number="004",
+        attributes=["草"],
+        stage="最终形态",
+        evolution_chain=["喵喵", "喵呜", "魔力猫"],
+        evolution_condition="由喵呜32级进化；常规图鉴形态为最终形态。",
+        source_url="https://wiki.biligame.com/rocom/魔力猫",
+    )
+
+    _, placements = _evolution_chain_layout(draw, record, font, max_width=448)
+
+    for kind, text, width, _, _ in placements:
+        if kind == "arrow":
+            assert width == 48
+        else:
+            text_width = draw.textbbox((0, 0), text, font=font)[2]
+            assert width >= text_width + 24
+
+
+def test_evolution_name_text_position_centers_text_in_box() -> None:
+    image = Image.new("RGB", (700, 765))
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", size=20)
+    box = (300, 286, 400, 320)
+    text = "魔力猫"
+
+    x, y = _evolution_name_text_position(draw, box, text, font)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    rendered_left = x + bbox[0]
+    rendered_right = x + bbox[2]
+    rendered_top = y + bbox[1]
+    rendered_bottom = y + bbox[3]
+
+    assert abs(((rendered_left + rendered_right) / 2) - ((box[0] + box[2]) / 2)) < 1
+    assert abs(((rendered_top + rendered_bottom) / 2) - ((box[1] + box[3]) / 2)) < 1
 
 
 def test_evolution_tokens_keep_full_names_when_chain_is_wide() -> None:
