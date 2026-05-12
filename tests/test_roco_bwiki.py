@@ -73,7 +73,7 @@ def test_parse_pet_detail_extracts_profile_stats_and_skill_groups() -> None:
             ],
         },
     ]
-    assert detail["metadata"]["parser_version"] == 3
+    assert detail["metadata"]["parser_version"] == 4
 
 
 def test_parse_pet_detail_uses_empty_values_for_missing_fields() -> None:
@@ -132,6 +132,20 @@ def test_parse_pet_detail_extracts_real_page_component_layout() -> None:
             <span class="rocom_sprite_info_qualification_value">80</span>
           </div>
         </div>
+        <div class="rocom_sprite_info_physique">
+          <li>
+            <div class="rocom_sprite_info_physique_icon">
+              <img alt="图标 宠物 体质 身高.png" />
+            </div>
+            <p>0.54~0.78</p><p class="font-runeregular">M</p>
+          </li>
+          <li>
+            <div class="rocom_sprite_info_physique_icon">
+              <img alt="图标 宠物 体质 体重.png" />
+            </div>
+            <p>5.5~7</p><p class="font-runeregular">KG</p>
+          </li>
+        </div>
         <div class="rocom_sprite_skill_box">
           <span class="rocom_sprite_skill_level">初始</span>
           <span class="rocom_sprite_skillName">闪光冲击</span>
@@ -150,7 +164,9 @@ def test_parse_pet_detail_extracts_real_page_component_layout() -> None:
     assert detail["evolution_condition"] == "无法进化"
     assert detail["profile"]["编号"] == "001"
     assert detail["profile"]["系别"] == "光"
-    assert detail["profile"]["进化条件"] == "无法进化"
+    assert "进化条件" not in detail["profile"]
+    assert detail["profile"]["体长"] == "0.54~0.78M"
+    assert detail["profile"]["体重"] == "5.5~7KG"
     assert detail["stats"] == {"生命": 120, "物攻": 80}
     assert detail["total_race_value"] == 582
     assert detail["skills"] == [
@@ -168,6 +184,35 @@ def test_parse_pet_detail_extracts_real_page_component_layout() -> None:
             ],
         }
     ]
+
+
+def test_parse_pet_detail_ignores_empty_component_physique_values() -> None:
+    html = """
+    <html>
+      <body>
+        <h1>圣光迪莫</h1>
+        <div class="rocom_sprite_info_physique">
+          <li>
+            <div class="rocom_sprite_info_physique_icon">
+              <img alt="图标 宠物 体质 身高.png" />
+            </div>
+            <p class="mw-empty-elt"></p><p class="font-runeregular">M</p>
+          </li>
+          <li>
+            <div class="rocom_sprite_info_physique_icon">
+              <img alt="图标 宠物 体质 体重.png" />
+            </div>
+            <p class="mw-empty-elt"></p><p class="font-runeregular">KG</p>
+          </li>
+        </div>
+      </body>
+    </html>
+    """
+
+    detail = parse_pet_detail("https://example.com/pet", html)
+
+    assert "体长" not in detail["profile"]
+    assert "体重" not in detail["profile"]
 
 
 def test_parse_pet_detail_extracts_multiple_component_attributes() -> None:
@@ -210,7 +255,7 @@ def test_parse_pet_detail_describes_level_evolution_from_component_chain() -> No
     detail = parse_pet_detail("https://example.com/pet", html)
 
     assert detail["evolution_condition"] == "由古钟蛇（本来的样子）等级38级进化"
-    assert detail["profile"]["进化条件"] == "由古钟蛇（本来的样子）等级38级进化"
+    assert "进化条件" not in detail["profile"]
 
 
 def test_parse_pet_detail_describes_battle_evolution_from_component_chain() -> None:
@@ -236,7 +281,7 @@ def test_parse_pet_detail_describes_battle_evolution_from_component_chain() -> N
     detail = parse_pet_detail("https://example.com/pet", html)
 
     assert detail["evolution_condition"] == "由墨鱿士击败3个恶系精灵进化"
-    assert detail["profile"]["进化条件"] == "由墨鱿士击败3个恶系精灵进化"
+    assert "进化条件" not in detail["profile"]
 
 
 def test_parse_pet_detail_preserves_non_level_evolution_text_from_component_chain() -> None:
@@ -262,7 +307,7 @@ def test_parse_pet_detail_preserves_non_level_evolution_text_from_component_chai
     detail = parse_pet_detail("https://example.com/pet", html)
 
     assert detail["evolution_condition"] == "由雪绒鸟（夏天的样子）亲密度进化"
-    assert detail["profile"]["进化条件"] == "由雪绒鸟（夏天的样子）亲密度进化"
+    assert "进化条件" not in detail["profile"]
 
 
 def test_parse_pet_detail_sums_stats_when_total_race_value_is_missing() -> None:
@@ -527,7 +572,7 @@ def test_fetch_pet_details_skips_existing_files_unless_force_is_enabled(tmp_path
 
     existing_path = tmp_path / "002-喵喵.json"
     existing_path.write_text(
-        json.dumps({"name": "old", "metadata": {"parser_version": 3}}, ensure_ascii=False),
+        json.dumps({"name": "old", "metadata": {"parser_version": 4}}, ensure_ascii=False),
         encoding="utf-8",
     )
 
