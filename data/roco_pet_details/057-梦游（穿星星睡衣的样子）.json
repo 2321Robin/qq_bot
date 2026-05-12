@@ -1,0 +1,27 @@
+{
+  "name": "梦游（穿星星睡衣的样子）",
+  "source_url": "https://wiki.biligame.com/rocom/%E6%A2%A6%E6%B8%B8%EF%BC%88%E7%A9%BF%E6%98%9F%E6%98%9F%E7%9D%A1%E8%A1%A3%E7%9A%84%E6%A0%B7%E5%AD%90%EF%BC%89",
+  "attributes": [
+    "幽",
+    "光"
+  ],
+  "evolution_condition": "",
+  "total_race_value": 0,
+  "profile": {
+    "编号": "057",
+    "系别": "幽、光"
+  },
+  "stats": {
+    "生命": 0,
+    "物攻": 0,
+    "魔攻": 0,
+    "物防": 0,
+    "魔防": 0,
+    "速度": 0
+  },
+  "skills": [],
+  "metadata": {
+    "parser_version": 3,
+    "generated_at": "2026-05-12T05:51:13.782541+00:00"
+  }
+}

@@ -17,6 +17,7 @@ CAPTURE_CLASSES = {
     "rocom_sprite_info_qualification_name",
     "rocom_sprite_info_qualification_value",
     "rocom_evolution_data",
+    "rocom_spirit_evolution_level_num",
     "rocom_sprite_skill_level",
     "rocom_sprite_skillName",
     "rocom_sprite_skillDamage",
@@ -32,6 +33,7 @@ SKILL_FIELD_CLASSES = {
     "rocom_sprite_skill_power": "威力",
     "rocom_sprite_skillContent": "效果",
 }
+PARSER_VERSION = 3
 
 
 class _BwikiParser(HTMLParser):
@@ -42,6 +44,8 @@ class _BwikiParser(HTMLParser):
         self.tables: list[dict[str, Any]] = []
         self.class_texts: dict[str, list[str]] = {class_name: [] for class_name in CAPTURE_CLASSES}
         self.skill_rows: list[dict[str, str]] = []
+        self.evolution_sources: list[str] = []
+        self.evolution_targets: list[str] = []
         self._current_tag = ""
         self._text_parts: list[str] = []
         self._current_heading = ""
@@ -58,10 +62,18 @@ class _BwikiParser(HTMLParser):
         self._element_stack.append(
             {
                 "tag": tag,
+                "classes": class_names,
                 "captures": [{"class": class_name, "text_parts": []} for class_name in captures],
                 "skill_box": skill_box,
             }
         )
+        if tag == "a":
+            title = _attr_value(attrs, "title")
+            if title:
+                if any("rocom_spirit_evolution_1" in element["classes"] for element in self._element_stack):
+                    self.evolution_sources.append(title)
+                if any("rocom_spirit_evolution_2" in element["classes"] for element in self._element_stack):
+                    self.evolution_targets.append(title)
         if skill_box:
             self._skill_stack.append({})
 
@@ -146,7 +158,8 @@ def parse_pet_detail(source_url: str, html: str) -> dict[str, Any]:
             profile.update(_parse_profile_table(rows))
 
     div_attributes = _parse_component_attributes(parser)
-    div_evolution_condition = _first_class_text(parser, "rocom_evolution_data")
+    component_evolution_condition = _parse_component_evolution_condition(parser, _extract_name(parser))
+    div_evolution_condition = _first_class_text(parser, "rocom_evolution_data") or component_evolution_condition
     for key, value in _parse_component_profile(parser, div_attributes, div_evolution_condition).items():
         profile.setdefault(key, value)
     if not stats:
@@ -168,7 +181,7 @@ def parse_pet_detail(source_url: str, html: str) -> dict[str, Any]:
         "stats": stats,
         "skills": skills,
         "metadata": {
-            "parser_version": 1,
+            "parser_version": PARSER_VERSION,
             "generated_at": datetime.now(UTC).isoformat(),
         },
     }
@@ -183,6 +196,13 @@ def _class_names(attrs: list[tuple[str, str | None]]) -> set[str]:
         if name == "class" and value:
             return set(value.split())
     return set()
+
+
+def _attr_value(attrs: list[tuple[str, str | None]], key: str) -> str:
+    for name, value in attrs:
+        if name == key and value:
+            return value
+    return ""
 
 
 def _extract_name(parser: _BwikiParser) -> str:
@@ -266,7 +286,57 @@ def _first_class_text(parser: _BwikiParser, class_name: str) -> str:
 
 
 def _parse_component_attributes(parser: _BwikiParser) -> list[str]:
-    return _split_values(_first_class_text(parser, "rocom_sprite_grament_attributes_text"))
+    attributes: list[str] = []
+    for value in parser.class_texts["rocom_sprite_grament_attributes_text"]:
+        attributes.extend(_split_values(value))
+    return _dedupe_values(attributes)
+
+
+def _parse_component_evolution_condition(parser: _BwikiParser, current_name: str) -> str:
+    levels = parser.class_texts["rocom_spirit_evolution_level_num"]
+    for source, level, target in zip(
+        parser.evolution_sources,
+        levels,
+        parser.evolution_targets,
+        strict=False,
+    ):
+        if target != current_name:
+            continue
+        battle_condition = _format_battle_evolution_condition(level)
+        if source and battle_condition:
+            return f"由{source}{battle_condition}进化"
+        normalized_level = level.removesuffix("级")
+        if source and normalized_level.isdigit():
+            return f"由{source}等级{normalized_level}级进化"
+        if source and level:
+            return f"由{source}{level}"
+    return ""
+
+
+def _format_battle_evolution_condition(condition: str) -> str:
+    match = re.search(r"(?:打败|击败)([一二两三四五六七八九十\d]+)只(.+?系)(?:精灵|宠物)?$", condition)
+    if not match:
+        return ""
+    count = _chinese_count_to_digit(match.group(1))
+    pet_type = match.group(2)
+    return f"击败{count}个{pet_type}精灵"
+
+
+def _chinese_count_to_digit(value: str) -> str:
+    numbers = {
+        "一": "1",
+        "二": "2",
+        "两": "2",
+        "三": "3",
+        "四": "4",
+        "五": "5",
+        "六": "6",
+        "七": "7",
+        "八": "8",
+        "九": "9",
+        "十": "10",
+    }
+    return numbers.get(value, value)
 
 
 def _parse_component_profile(
@@ -332,3 +402,14 @@ def _split_values(value: str) -> list[str]:
         return []
     normalized = value.replace("/", "、").replace(",", "、").replace("，", "、")
     return [part.strip() for part in normalized.split("、") if part.strip()]
+
+
+def _dedupe_values(values: list[str]) -> list[str]:
+    unique_values: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        unique_values.append(value)
+    return unique_values

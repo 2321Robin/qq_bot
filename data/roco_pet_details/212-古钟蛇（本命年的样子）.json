@@ -1,0 +1,27 @@
+{
+  "name": "古钟蛇（本命年的样子）",
+  "source_url": "https://wiki.biligame.com/rocom/%E5%8F%A4%E9%92%9F%E8%9B%87%EF%BC%88%E6%9C%AC%E5%91%BD%E5%B9%B4%E7%9A%84%E6%A0%B7%E5%AD%90%EF%BC%89",
+  "attributes": [
+    "萌",
+    "毒"
+  ],
+  "evolution_condition": "",
+  "total_race_value": 0,
+  "profile": {
+    "编号": "212",
+    "系别": "萌、毒"
+  },
+  "stats": {
+    "生命": 0,
+    "物攻": 0,
+    "魔攻": 0,
+    "物防": 0,
+    "魔防": 0,
+    "速度": 0
+  },
+  "skills": [],
+  "metadata": {
+    "parser_version": 3,
+    "generated_at": "2026-05-12T05:28:03.870828+00:00"
+  }
+}
