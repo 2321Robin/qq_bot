@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+import json
 import re
+import sys
+import time
+from dataclasses import replace
+from html.parser import HTMLParser
 from io import BytesIO
 from pathlib import Path
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urljoin
+from urllib.request import Request, urlopen
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -11,6 +20,7 @@ from qq_bot.services.roco_pets import PetRecord
 
 DEFAULT_CARD_DIR = Path("data/roco_pet_cards")
 DEFAULT_ASSET_DIR = Path("data/roco_assets")
+DEFAULT_DETAIL_DIR = Path("data/roco_pet_details")
 CARD_WIDTH = 700
 CARD_HEIGHT = 765
 BACKGROUND = "#2c2f33"
@@ -22,6 +32,16 @@ ORANGE = "#d8742b"
 GOLD = "#ffad2f"
 BAR_BG = "#1c1f22"
 FOOTER = "QQ 群机器人生成 · 数据来源：BWiki"
+BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+}
+FETCH_ATTEMPTS = 3
+FETCH_RETRY_DELAYS = (0.25, 0.75)
 
 STAT_ROWS = [
     ("hp", "生命"),
@@ -54,15 +74,189 @@ def pet_art_path(record: PetRecord, directory: Path = DEFAULT_ASSET_DIR) -> Path
 
 def generate_pet_card_files(
     records: list[PetRecord],
-    directory: Path = DEFAULT_CARD_DIR,
+    directory: Path | None = None,
+    *,
+    output_directory: Path | None = None,
+    asset_directory: Path = DEFAULT_ASSET_DIR,
 ) -> list[Path]:
+    if directory is not None and output_directory is not None:
+        raise ValueError("directory and output_directory cannot both be provided")
+    directory = output_directory or directory or DEFAULT_CARD_DIR
     directory.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
     for record in records:
         path = pet_card_path(record, directory)
-        path.write_bytes(render_pet_card_png(record))
+        path.write_bytes(render_pet_card_png(record, asset_directory=asset_directory))
         paths.append(path)
     return paths
+
+
+def load_pet_records_from_details(directory: Path = DEFAULT_DETAIL_DIR) -> list[PetRecord]:
+    records: list[PetRecord] = []
+    explicit_chain_names: set[str] = set()
+    for path in sorted(directory.glob("*.json")):
+        try:
+            detail = json.loads(path.read_text(encoding="utf-8"))
+            detail = _dict_value(detail)
+            record = _pet_record_from_detail(detail)
+            if _string_detail_list(detail.get("evolution_chain")):
+                explicit_chain_names.add(record.name)
+            records.append(record)
+        except (OSError, json.JSONDecodeError, ValueError, TypeError) as exc:
+            print(f"Skipped {path}: {exc}", file=sys.stderr)
+    return _derive_detail_evolution_data(records, explicit_chain_names)
+
+
+def _pet_record_from_detail(detail: dict[str, Any]) -> PetRecord:
+    profile = _dict_value(detail.get("profile"))
+    name = _string_detail_value(detail.get("name"))
+    number = _string_detail_value(profile.get("编号"))
+    attributes = _string_detail_list(detail.get("attributes")) or _split_detail_values(profile.get("系别"))
+    stats = _card_stats_from_detail_stats(_dict_value(detail.get("stats")))
+    evolution_chain = _string_detail_list(detail.get("evolution_chain")) or [name]
+
+    return PetRecord(
+        name=name,
+        aliases=_string_detail_list(detail.get("aliases")),
+        number=number,
+        attributes=attributes,
+        stage=_first_string(profile, "阶段", "形态"),
+        evolution_chain=[part for part in evolution_chain if part],
+        evolution_condition=_string_detail_value(detail.get("evolution_condition")),
+        source_url=_string_detail_value(detail.get("source_url")),
+        height_weight=_first_string(profile, "体重", "重量"),
+        body_length=_first_string(profile, "体长", "身高", "长度"),
+        favorite_partner=_first_string(profile, "最佳拍档", "推荐搭档", "拍档"),
+        description=_first_string(profile, "简介", "描述", "精灵介绍"),
+        race_value=_optional_detail_int(detail.get("total_race_value")),
+        stats=stats,
+    )
+
+
+def _dict_value(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("detail field must be an object")
+    return value
+
+
+def _string_detail_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        return str(value).strip()
+    return value.strip()
+
+
+def _string_detail_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        return []
+    return [_string_detail_value(part) for part in value if _string_detail_value(part)]
+
+
+def _split_detail_values(value: Any) -> list[str]:
+    text = _string_detail_value(value)
+    if not text:
+        return []
+    return [part for part in re.split(r"[、,，/ ]+", text) if part]
+
+
+def _first_string(profile: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = _string_detail_value(profile.get(key))
+        if value:
+            return value
+    return ""
+
+
+def _optional_detail_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, int):
+        return value
+    text = _string_detail_value(value)
+    return int(text) if text.isdigit() else None
+
+
+def _card_stats_from_detail_stats(stats: dict[str, Any]) -> dict[str, int] | None:
+    mapped: dict[str, int] = {}
+    for source_key, target_key in {
+        "生命": "hp",
+        "精力": "hp",
+        "HP": "hp",
+        "hp": "hp",
+        "物攻": "physical_attack",
+        "魔攻": "magic_attack",
+        "物防": "physical_defense",
+        "魔防": "magic_defense",
+        "速度": "speed",
+    }.items():
+        value = _optional_detail_int(stats.get(source_key))
+        if value is not None:
+            mapped[target_key] = value
+    return mapped or None
+
+
+def _derive_detail_evolution_data(records: list[PetRecord], explicit_chain_names: set[str]) -> list[PetRecord]:
+    names = [record.name for record in records if record.name]
+    predecessors: dict[str, str] = {}
+    outgoing: dict[str, list[str]] = {}
+    for record in records:
+        predecessor = _evolution_predecessor_from_condition(record.evolution_condition, record.name, names)
+        if predecessor is not None:
+            predecessors[record.name] = predecessor
+            outgoing.setdefault(predecessor, []).append(record.name)
+
+    derived_records: list[PetRecord] = []
+    for record in records:
+        chain = record.evolution_chain
+        if record.name not in explicit_chain_names:
+            chain = _derived_evolution_chain(record.name, predecessors, outgoing) or [record.name]
+        stage = record.stage or _stage_from_chain(record.name, chain, outgoing)
+        derived_records.append(replace(record, evolution_chain=chain, stage=stage))
+    return derived_records
+
+
+def _evolution_predecessor_from_condition(condition: str, record_name: str, names: list[str]) -> str | None:
+    if "由" not in condition or "进化" not in condition:
+        return None
+    for name in sorted(names, key=len, reverse=True):
+        if name != record_name and f"由{name}" in condition:
+            return name
+    return None
+
+
+def _derived_evolution_chain(name: str, predecessors: dict[str, str], outgoing: dict[str, list[str]]) -> list[str]:
+    chain = [name]
+    seen = {name}
+    while chain[0] in predecessors and predecessors[chain[0]] not in seen:
+        predecessor = predecessors[chain[0]]
+        chain.insert(0, predecessor)
+        seen.add(predecessor)
+    while chain[-1] in outgoing and len(outgoing[chain[-1]]) == 1 and outgoing[chain[-1]][0] not in seen:
+        next_name = outgoing[chain[-1]][0]
+        chain.append(next_name)
+        seen.add(next_name)
+    return chain if len(chain) > 1 else []
+
+
+def _stage_from_chain(name: str, chain: list[str], outgoing: dict[str, list[str]]) -> str:
+    if len(chain) <= 1:
+        return ""
+    try:
+        index = chain.index(name)
+    except ValueError:
+        return ""
+    if name not in outgoing and index == len(chain) - 1:
+        return "最终形态"
+    if index == 0:
+        return "Ⅰ阶"
+    if index == 1:
+        return "Ⅱ阶"
+    return "Ⅲ阶" if name in outgoing else "最终形态"
 
 
 def render_pet_card_png(record: PetRecord, asset_directory: Path = DEFAULT_ASSET_DIR) -> bytes:
@@ -90,6 +284,191 @@ def render_pet_card_png(record: PetRecord, asset_directory: Path = DEFAULT_ASSET
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def ensure_pet_art_assets(
+    records: list[PetRecord] | tuple[PetRecord, ...],
+    asset_directory: Path = DEFAULT_ASSET_DIR,
+    fetch_html_func=None,
+    fetch_bytes_func=None,
+) -> dict[str, int]:
+    fetch_html = fetch_html_func or _fetch_text
+    fetch_bytes = fetch_bytes_func or _fetch_bytes
+    asset_directory.mkdir(parents=True, exist_ok=True)
+    result = {"existing": 0, "fetched": 0, "failed": 0}
+
+    for record in records:
+        path = pet_art_path(record, asset_directory)
+        if path.exists():
+            result["existing"] += 1
+            continue
+        try:
+            html = fetch_html(record.source_url)
+            image_url = _find_pet_art_url(record, html)
+            if not image_url:
+                raise ValueError("no pet image URL found")
+            image_bytes = fetch_bytes(image_url)
+            _validate_image_bytes(image_bytes)
+            path.write_bytes(image_bytes)
+            result["fetched"] += 1
+        except Exception as exc:  # noqa: BLE001 - report per-record failures and continue.
+            result["failed"] += 1
+            print(f"Failed to fetch art for {record.name}: {exc}", file=sys.stderr)
+
+    return result
+
+
+def ensure_attribute_icon_assets(
+    records: list[PetRecord] | tuple[PetRecord, ...],
+    asset_directory: Path = DEFAULT_ASSET_DIR,
+    fetch_html_func=None,
+    fetch_bytes_func=None,
+) -> dict[str, int]:
+    fetch_html = fetch_html_func or _fetch_text
+    fetch_bytes = fetch_bytes_func or _fetch_bytes
+    icon_directory = asset_directory / "icons"
+    icon_directory.mkdir(parents=True, exist_ok=True)
+    result = {"existing": 0, "fetched": 0, "failed": 0}
+
+    missing_attributes = _missing_attributes(records, icon_directory)
+    source_urls = _source_urls_by_attribute(records)
+    for attribute in missing_attributes:
+        path = icon_directory / f"attribute-{attribute}.png"
+        if path.exists():
+            result["existing"] += 1
+            continue
+        try:
+            html = fetch_html(source_urls[attribute])
+            image_url = _find_attribute_icon_url(attribute, source_urls[attribute], html)
+            if not image_url:
+                raise ValueError("no attribute icon URL found")
+            image_bytes = fetch_bytes(image_url)
+            _validate_image_bytes(image_bytes)
+            path.write_bytes(image_bytes)
+            result["fetched"] += 1
+        except Exception as exc:  # noqa: BLE001 - report per-attribute failures and continue.
+            result["failed"] += 1
+            print(f"Failed to fetch attribute icon for {attribute}: {exc}", file=sys.stderr)
+
+    return result
+
+
+def _missing_attributes(records: list[PetRecord] | tuple[PetRecord, ...], icon_directory: Path) -> list[str]:
+    attributes: list[str] = []
+    for record in records:
+        for attribute in record.attributes:
+            for value in _attribute_values(attribute):
+                if value not in attributes and not (icon_directory / f"attribute-{value}.png").exists():
+                    attributes.append(value)
+    return attributes
+
+
+def _source_urls_by_attribute(records: list[PetRecord] | tuple[PetRecord, ...]) -> dict[str, str]:
+    urls: dict[str, str] = {}
+    for record in records:
+        for attribute in record.attributes:
+            for value in _attribute_values(attribute):
+                urls.setdefault(value, record.source_url)
+    return urls
+
+
+def _find_attribute_icon_url(attribute: str, base_url: str, html: str) -> str:
+    parser = _AttributeIconParser(attribute, base_url)
+    parser.feed(html)
+    return parser.best_url
+
+
+class _AttributeIconParser(HTMLParser):
+    def __init__(self, attribute: str, base_url: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.attribute = attribute
+        self.base_url = base_url
+        self.best_url = ""
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "img" or self.best_url:
+            return
+        values = {key: value or "" for key, value in attrs}
+        searchable = " ".join([values.get("alt", ""), values.get("title", ""), values.get("src", "")])
+        if "属性" not in searchable or self.attribute not in searchable:
+            return
+        src = values.get("src") or values.get("data-src") or values.get("data-original")
+        if src:
+            self.best_url = urljoin(self.base_url, src)
+
+
+def _fetch_text(url: str) -> str:
+    request = Request(url, headers=BROWSER_HEADERS)
+    with _urlopen_with_retries(request, url) as response:
+        charset = response.headers.get_content_charset() or "utf-8"
+        return response.read().decode(charset, errors="replace")
+
+
+def _fetch_bytes(url: str) -> bytes:
+    request = Request(url, headers=BROWSER_HEADERS)
+    with _urlopen_with_retries(request, url) as response:
+        return response.read()
+
+
+def _urlopen_with_retries(request: Request, url: str):
+    last_error: Exception | None = None
+    for attempt in range(FETCH_ATTEMPTS):
+        try:
+            return urlopen(request, timeout=30)
+        except (HTTPError, URLError, OSError) as exc:
+            last_error = exc
+            if attempt == FETCH_ATTEMPTS - 1:
+                break
+            _retry_sleep(FETCH_RETRY_DELAYS[min(attempt, len(FETCH_RETRY_DELAYS) - 1)])
+    raise RuntimeError(f"failed to fetch {url} after {FETCH_ATTEMPTS} attempts: {last_error}") from last_error
+
+
+def _retry_sleep(seconds: float) -> None:
+    time.sleep(seconds)
+
+
+def _validate_image_bytes(image_bytes: bytes) -> None:
+    with Image.open(BytesIO(image_bytes)) as image:
+        image.verify()
+
+
+def _find_pet_art_url(record: PetRecord, html: str) -> str:
+    parser = _PetArtParser(record.name, record.source_url)
+    parser.feed(html)
+    return parser.best_url
+
+
+class _PetArtParser(HTMLParser):
+    def __init__(self, pet_name: str, base_url: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.pet_name = pet_name
+        self.base_url = base_url
+        self.best_url = ""
+        self._best_score = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "img":
+            return
+        values = {key: value or "" for key, value in attrs}
+        src = values.get("src") or values.get("data-src") or values.get("data-original")
+        if not src:
+            return
+        alt = values.get("alt", "")
+        title = values.get("title", "")
+        class_name = values.get("class", "")
+        searchable = " ".join([alt, title, class_name, src])
+        score = 0
+        if "宠物" in searchable:
+            score += 2
+        if "立绘" in searchable:
+            score += 2
+        if "页面" in searchable:
+            score += 1
+        if self.pet_name and self.pet_name in searchable:
+            score += 1
+        if score > self._best_score:
+            self._best_score = score
+            self.best_url = urljoin(self.base_url, src)
 
 
 def _draw_avatar(
@@ -128,17 +507,17 @@ def _draw_top_info(
     small_bold_font: ImageFont.ImageFont,
     asset_directory: Path,
 ) -> None:
-    _rounded(draw, (186, 68, 279, 101), 16, ORANGE)
+    _rounded(draw, (196, 69, 270, 99), 15, ORANGE)
     _center_text(draw, _value(record.number), (233, 84), small_bold_font, "#202326")
-    name_box = (292, 63, 420, 105)
-    fitted_title_font = _fit_font_to_width(draw, record.name or "未知", title_font, name_box[2] - name_box[0])
-    _vcenter_text(draw, name_box, record.name or "未知", fitted_title_font, TEXT)
+    name_box = (292, 57, 444, 111)
+    name_font = title_font.font_variant(size=20) if isinstance(title_font, ImageFont.FreeTypeFont) else title_font
+    fitted_title_font, name_lines = _fit_name_lines_to_box(draw, record.name or "未知", name_font, name_box)
+    _draw_name_lines(draw, name_box, name_lines, fitted_title_font)
 
-    attr_text = "、".join(record.attributes) if record.attributes else "未知"
-    attr_box = (438, 72, 518, 100)
+    attr_text = _format_attribute_text(record.attributes)
+    attr_box = _attribute_pill_box(draw, record.attributes, small_bold_font)
     _rounded(draw, attr_box, 14, "#34383d")
-    attr_icon = _load_icon(asset_directory, f"attribute-{record.attributes[0]}.png") if record.attributes else None
-    _draw_icon_text(image, draw, attr_box, attr_icon, attr_text[:2], small_bold_font, TEXT, icon_size=(24, 24), gap=7)
+    _draw_attribute_icons_text(image, draw, attr_box, record.attributes, attr_text, small_bold_font, asset_directory)
 
     weight_box = (185, 112, 335, 142)
     _rounded(draw, weight_box, 15, PILL)
@@ -181,19 +560,156 @@ def _draw_description(
     _rounded(draw, (46, 190, 654, 256), 33, PILL)
     trait_box = (70, 164, 220, 198)
     _rounded(draw, trait_box, 17, GOLD)
-    trait_icon = _load_icon(asset_directory, "trait-best-partner.png")
     _draw_icon_text(
         image,
         draw,
         trait_box,
-        trait_icon,
+        None,
         _value(record.favorite_partner),
         small_bold_font,
         "#202326",
         icon_size=(24, 24),
     )
-    _draw_wrapped_vcenter_text(draw, (78, 190, 625, 256), _value(record.description), normal_font, TEXT, line_spacing=4)
+    _draw_wrapped_vcenter_text(draw, (78, 204, 625, 256), _value(record.description), normal_font, TEXT, line_spacing=4)
     _draw_evolution_chain(draw, record, small_font, small_bold_font)
+
+
+def _draw_attribute_icons_text(
+    image: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    attributes: list[str],
+    text: str,
+    font: ImageFont.ImageFont,
+    asset_directory: Path,
+) -> None:
+    values = _attribute_display_items(attributes)
+    icon_size = (26, 26)
+    text_gap = 5
+    group_gap = 10
+    fitted_font = _fit_attribute_group_font(draw, values, font, box, icon_size[0], text_gap, group_gap)
+    text_boxes = [draw.textbbox((0, 0), value, font=fitted_font) for value in values]
+    text_widths = [bbox[2] - bbox[0] for bbox in text_boxes]
+    content_width = sum(icon_size[0] + text_gap + width for width in text_widths) + group_gap * max(0, len(values) - 1)
+    x = box[0] + (box[2] - box[0] - content_width) / 2
+    center_y = box[1] + (box[3] - box[1]) / 2
+
+    for value, text_bbox, text_width in zip(values, text_boxes, text_widths, strict=True):
+        icon = _load_icon(asset_directory, f"attribute-{value}.png")
+        if icon is not None:
+            _paste_icon(image, icon, (int(x), int(center_y - icon_size[1] / 2)), icon_size)
+        else:
+            _center_text(draw, value[:1], (int(x + icon_size[0] / 2), int(center_y)), fitted_font, ORANGE)
+        x += icon_size[0] + text_gap
+        text_height = text_bbox[3] - text_bbox[1]
+        text_y = center_y - text_height / 2 - text_bbox[1]
+        draw.text((x - text_bbox[0], text_y), value, fill=TEXT, font=fitted_font)
+        x += text_width + group_gap
+
+
+def _fit_name_lines_to_box(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.ImageFont,
+    box: tuple[int, int, int, int],
+    *,
+    min_size: int = 16,
+) -> tuple[ImageFont.ImageFont, list[str]]:
+    max_width = box[2] - box[0]
+    return font, _balanced_name_lines(draw, text, font, max_width)
+
+
+def _balanced_name_lines(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, max_width: int) -> list[str]:
+    if _text_width(draw, text, font) <= max_width:
+        return [text]
+    breakpoints = [index for index, char in enumerate(text) if char in "（(】]」』"]
+    candidates: list[list[str]] = []
+    for breakpoint in breakpoints:
+        left = text[:breakpoint]
+        right = text[breakpoint:]
+        if left and right:
+            candidates.append([left, right])
+    candidates.append(_wrap_text(draw, text, font, max_width))
+    fitting = [lines for lines in candidates if all(_text_width(draw, line, font) <= max_width for line in lines)]
+    if fitting:
+        return min(fitting, key=lambda lines: (len(lines), max(_text_width(draw, line, font) for line in lines)))
+    return candidates[-1]
+
+
+def _draw_name_lines(
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    lines: list[str],
+    font: ImageFont.ImageFont,
+) -> None:
+    line_spacing = 1
+    line_boxes = [draw.textbbox((0, 0), line, font=font) for line in lines]
+    line_heights = [bbox[3] - bbox[1] for bbox in line_boxes]
+    total_height = sum(line_heights) + line_spacing * max(0, len(lines) - 1)
+    y = box[1] + (box[3] - box[1] - total_height) / 2
+    for line, bbox, height in zip(lines, line_boxes, line_heights, strict=True):
+        draw.text((box[0] - bbox[0], y - bbox[1]), line, fill=TEXT, font=font)
+        y += height + line_spacing
+
+
+def _text_lines_height(
+    draw: ImageDraw.ImageDraw,
+    lines: list[str],
+    font: ImageFont.ImageFont,
+    *,
+    line_spacing: int,
+) -> int:
+    return sum(draw.textbbox((0, 0), line, font=font)[3] - draw.textbbox((0, 0), line, font=font)[1] for line in lines) + line_spacing * max(0, len(lines) - 1)
+
+
+def _attribute_pill_box(
+    draw: ImageDraw.ImageDraw,
+    attributes: list[str],
+    font: ImageFont.ImageFont,
+) -> tuple[int, int, int, int]:
+    values = _attribute_display_items(attributes)
+    width = _attribute_group_content_width(draw, values, font, icon_width=26, text_gap=5, group_gap=10) + 16
+    width = max(76, min(178, width))
+    return (454, 70, 454 + width, 102)
+
+
+def _attribute_display_items(attributes: list[str]) -> list[str]:
+    values = _attribute_values(*attributes)
+    return values or ["未知"]
+
+
+def _fit_attribute_group_font(
+    draw: ImageDraw.ImageDraw,
+    values: list[str],
+    font: ImageFont.ImageFont,
+    box: tuple[int, int, int, int],
+    icon_width: int,
+    text_gap: int,
+    group_gap: int,
+    *,
+    min_size: int = 10,
+) -> ImageFont.ImageFont:
+    max_width = box[2] - box[0] - 12
+    if not isinstance(font, ImageFont.FreeTypeFont):
+        return font
+    for size in range(font.size, min_size - 1, -1):
+        candidate = font.font_variant(size=size)
+        width = _attribute_group_content_width(draw, values, candidate, icon_width, text_gap, group_gap)
+        if width <= max_width:
+            return candidate
+    return font.font_variant(size=min_size)
+
+
+def _attribute_group_content_width(
+    draw: ImageDraw.ImageDraw,
+    values: list[str],
+    font: ImageFont.ImageFont,
+    icon_width: int,
+    text_gap: int,
+    group_gap: int,
+) -> int:
+    text_width = sum(_text_width(draw, value, font) for value in values)
+    return len(values) * (icon_width + text_gap) + text_width + group_gap * max(0, len(values) - 1)
 
 
 def _draw_stats(
@@ -235,8 +751,8 @@ def _draw_evolution_chain(
     name_font: ImageFont.ImageFont,
     condition_font: ImageFont.ImageFont,
 ) -> None:
-    chain_font = _fit_chain_font(draw, record, name_font, 448 - EVOLUTION_BOX_PADDING * 2)
-    chain_box, placements = _evolution_chain_layout(draw, record, chain_font, max_width=448)
+    chain_font = _fit_chain_font(draw, record, name_font, 560 - EVOLUTION_BOX_PADDING * 2)
+    chain_box, placements = _evolution_chain_layout(draw, record, chain_font, max_width=560)
 
     _rounded(draw, chain_box, 17, PILL, outline=ORANGE)
 
@@ -297,13 +813,13 @@ def _fit_chain_font(
 ) -> ImageFont.ImageFont:
     if not isinstance(font, ImageFont.FreeTypeFont):
         return font
-    for size in range(font.size, 13, -1):
+    for size in range(font.size, 9, -1):
         candidate = font.font_variant(size=size)
         tokens = _evolution_tokens(draw, record, candidate, max_width=max_width)
         widths = [_evolution_token_width(draw, token, candidate) for token in tokens]
         if sum(widths) + EVOLUTION_TOKEN_GAP * max(0, len(tokens) - 1) <= max_width:
             return candidate
-    return font.font_variant(size=14)
+    return font.font_variant(size=10)
 
 
 def _draw_evolution_arrow(draw: ImageDraw.ImageDraw, center_x: int, center_y: int) -> None:
@@ -338,26 +854,7 @@ def _evolution_tokens(
             continue
         tokens.append(("arrow", "→", steps[index][2]))
 
-    return _compact_evolution_tokens(draw, tokens, font, max_width)
-
-
-def _compact_evolution_tokens(
-    draw: ImageDraw.ImageDraw,
-    tokens: list[tuple[str, str, str]],
-    font: ImageFont.ImageFont,
-    max_width: int,
-) -> list[tuple[str, str, str]]:
-    widths = [_evolution_token_width(draw, token, font) for token in tokens]
-    if sum(widths) + EVOLUTION_TOKEN_GAP * max(0, len(tokens) - 1) <= max_width:
-        return tokens
-
-    compacted = []
-    for kind, text, condition in tokens:
-        if kind == "name" and len(text) > 3:
-            compacted.append((kind, f"{text[:2]}…", condition))
-        else:
-            compacted.append((kind, text, condition))
-    return compacted
+    return tokens
 
 
 def _evolution_token_width(
@@ -417,7 +914,7 @@ def _draw_wrapped_vcenter_text(
     *,
     line_spacing: int = 4,
 ) -> None:
-    lines = _wrap_text(draw, text, font, box[2] - box[0])
+    font, lines = _fit_wrapped_text_to_box(draw, text, font, box, line_spacing=line_spacing)
     line_boxes = [draw.textbbox((0, 0), line, font=font) for line in lines]
     line_heights = [bbox[3] - bbox[1] for bbox in line_boxes]
     total_height = sum(line_heights) + line_spacing * max(0, len(lines) - 1)
@@ -425,6 +922,32 @@ def _draw_wrapped_vcenter_text(
     for line, bbox, height in zip(lines, line_boxes, line_heights, strict=True):
         draw.text((box[0] - bbox[0], y - bbox[1]), line, fill=fill, font=font)
         y += height + line_spacing
+
+
+def _fit_wrapped_text_to_box(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.ImageFont,
+    box: tuple[int, int, int, int],
+    *,
+    line_spacing: int = 4,
+    min_size: int = 16,
+) -> tuple[ImageFont.ImageFont, list[str]]:
+    max_width = box[2] - box[0]
+    max_height = box[3] - box[1]
+    if not isinstance(font, ImageFont.FreeTypeFont):
+        return font, _wrap_text(draw, text, font, max_width)
+
+    for size in range(font.size, min_size - 1, -1):
+        candidate = font.font_variant(size=size)
+        lines = _wrap_text(draw, text, candidate, max_width)
+        line_boxes = [draw.textbbox((0, 0), line, font=candidate) for line in lines]
+        line_heights = [bbox[3] - bbox[1] for bbox in line_boxes]
+        total_height = sum(line_heights) + line_spacing * max(0, len(lines) - 1)
+        if total_height <= max_height:
+            return candidate, lines
+    fitted = font.font_variant(size=min_size)
+    return fitted, _wrap_text(draw, text, fitted, max_width)
 
 
 def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, max_width: int) -> list[str]:
@@ -441,6 +964,18 @@ def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, 
     if current:
         lines.append(current)
     return lines or ["未知"]
+
+
+def _format_attribute_text(attributes: list[str]) -> str:
+    values = _attribute_values(*attributes)
+    return "、".join(values) if values else "未知"
+
+
+def _attribute_values(*attributes: str) -> list[str]:
+    values: list[str] = []
+    for attribute in attributes:
+        values.extend(part for part in re.split(r"[、,，/ ]+", attribute.strip("、,，/ ")) if part)
+    return values
 
 
 def _fit_font_to_width(
@@ -484,6 +1019,7 @@ def _draw_icon_text(
     align: str = "center",
     fallback_icon_text: str | None = None,
 ) -> None:
+    font = _fit_icon_text_font_to_box(draw, text, font, box, icon_width=icon_size[0] if icon is not None or fallback_icon_text else 0, gap=gap)
     text_bbox = draw.textbbox((0, 0), text, font=font)
     text_width = text_bbox[2] - text_bbox[0]
     text_height = text_bbox[3] - text_bbox[1]
@@ -500,6 +1036,28 @@ def _draw_icon_text(
     text_x = x + icon_width + (gap if icon_width else 0)
     text_y = center_y - text_height / 2 - text_bbox[1]
     draw.text((text_x, text_y), text, fill=fill, font=font)
+
+
+def _fit_icon_text_font_to_box(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.ImageFont,
+    box: tuple[int, int, int, int],
+    *,
+    icon_width: int,
+    gap: int,
+    padding: int = 20,
+    min_size: int = 14,
+) -> ImageFont.ImageFont:
+    max_width = box[2] - box[0] - padding - icon_width - (gap if icon_width else 0)
+    if not isinstance(font, ImageFont.FreeTypeFont):
+        return font
+    for size in range(font.size, min_size - 1, -1):
+        candidate = font.font_variant(size=size)
+        bbox = draw.textbbox((0, 0), text, font=candidate)
+        if bbox[2] - bbox[0] <= max_width:
+            return candidate
+    return font.font_variant(size=min_size)
 
 
 def _value(value: str | None) -> str:

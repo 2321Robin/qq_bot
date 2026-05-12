@@ -1,5 +1,6 @@
 import json
 from http.client import RemoteDisconnected
+from urllib.error import HTTPError
 
 from scripts.fetch_roco_pet_detail import (
     fetch_pet_details,
@@ -73,7 +74,7 @@ def test_parse_pet_detail_extracts_profile_stats_and_skill_groups() -> None:
             ],
         },
     ]
-    assert detail["metadata"]["parser_version"] == 4
+    assert detail["metadata"]["parser_version"] == 5
 
 
 def test_parse_pet_detail_uses_empty_values_for_missing_fields() -> None:
@@ -184,6 +185,49 @@ def test_parse_pet_detail_extracts_real_page_component_layout() -> None:
             ],
         }
     ]
+
+
+def test_parse_pet_detail_extracts_component_trait() -> None:
+    html = """
+    <html>
+      <body>
+        <h1>迪莫</h1>
+        <div class="rocom_sprite_trait">
+          <p>特性</p>
+          <p>最好的伙伴</p>
+          <p>造成克制伤害后，获得攻防速+20%，并回复2能量</p>
+        </div>
+        <div>精灵属性</div>
+      </body>
+    </html>
+    """
+
+    detail = parse_pet_detail("https://example.com/dimo", html)
+
+    assert detail["profile"]["最佳拍档"] == "最好的伙伴"
+    assert detail["profile"]["简介"] == "造成克制伤害后，获得攻防速+20%，并回复2能量"
+
+
+def test_parse_pet_detail_skips_repeated_component_trait_name() -> None:
+    html = """
+    <html>
+      <body>
+        <h1>霜翼领主</h1>
+        <div class="rocom_sprite_trait">
+          <p>特性</p>
+          <p>破空</p>
+          <p>破空</p>
+          <p>若先于敌方攻击，本次技能威力+75%。</p>
+        </div>
+        <div>精灵属性</div>
+      </body>
+    </html>
+    """
+
+    detail = parse_pet_detail("https://example.com/frostwing", html)
+
+    assert detail["profile"]["最佳拍档"] == "破空"
+    assert detail["profile"]["简介"] == "若先于敌方攻击，本次技能威力+75%。"
 
 
 def test_parse_pet_detail_ignores_empty_component_physique_values() -> None:
@@ -441,6 +485,34 @@ def test_fetch_html_uses_browser_headers(monkeypatch) -> None:
     assert "zh-CN" in captured_headers["Accept-language"]
 
 
+def test_fetch_html_falls_back_to_curl_when_urlopen_is_blocked(monkeypatch) -> None:
+    captured_command: list[str] = []
+
+    def fake_urlopen(request, timeout):
+        raise HTTPError(request.full_url, 567, "Unknown Status", {}, None)
+
+    class FakeCompletedProcess:
+        returncode = 0
+        stdout = "<html>备用抓取成功</html>"
+        stderr = ""
+
+    def fake_run(command, capture_output, text, timeout, encoding, errors):
+        captured_command.extend(command)
+        assert capture_output is True
+        assert text is True
+        assert timeout == 30
+        assert encoding == "utf-8"
+        assert errors == "replace"
+        return FakeCompletedProcess()
+
+    monkeypatch.setattr("scripts.fetch_roco_pet_detail.urlopen", fake_urlopen)
+    monkeypatch.setattr("scripts.fetch_roco_pet_detail.subprocess.run", fake_run)
+
+    assert fetch_html("https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB") == "<html>备用抓取成功</html>"
+    assert captured_command[:4] == ["curl.exe", "-L", "--retry", "2"]
+    assert captured_command[-1] == "https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB"
+
+
 def test_load_fetch_targets_uses_only_bwiki_source_urls(tmp_path) -> None:
     pets_path = tmp_path / "roco_pets.json"
     pets_path.write_text(
@@ -572,7 +644,7 @@ def test_fetch_pet_details_skips_existing_files_unless_force_is_enabled(tmp_path
 
     existing_path = tmp_path / "002-喵喵.json"
     existing_path.write_text(
-        json.dumps({"name": "old", "metadata": {"parser_version": 4}}, ensure_ascii=False),
+        json.dumps({"name": "old", "metadata": {"parser_version": 5}}, ensure_ascii=False),
         encoding="utf-8",
     )
 
