@@ -16,6 +16,7 @@ from qq_bot.services.roco_pet_cards import (
     _attribute_display_items,
     _attribute_pill_box,
     _trait_pill_box,
+    _trait_description_text_box,
     _fit_name_lines_to_box,
     _fit_font_to_width,
     _fit_icon_text_font_to_box,
@@ -352,12 +353,19 @@ def test_fit_wrapped_text_to_box_keeps_long_trait_description_inside_box() -> No
     font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", size=24)
     text = "鸭吉吉国王的种族资质大幅增加，能耗为1的技能威力+50%。"
 
-    fitted_font, lines = _fit_wrapped_text_to_box(draw, text, font, (78, 204, 625, 256), line_spacing=4)
+    fitted_font, lines = _fit_wrapped_text_to_box(draw, text, font, (78, 204, 625, 250), line_spacing=4)
     total_height = sum(draw.textbbox((0, 0), line, font=fitted_font)[3] - draw.textbbox((0, 0), line, font=fitted_font)[1] for line in lines)
     total_height += 4 * max(0, len(lines) - 1)
 
-    assert total_height <= 52
+    assert total_height <= 46
     assert all(draw.textbbox((0, 0), line, font=fitted_font)[2] <= 547 for line in lines)
+
+
+def test_trait_description_box_keeps_bottom_padding_for_two_lines() -> None:
+    outer_box = (46, 190, 654, 256)
+    description_text_box = _trait_description_text_box()
+
+    assert outer_box[3] - description_text_box[3] >= 6
 
 
 def test_trait_label_text_fits_inside_pill() -> None:
