@@ -1,0 +1,26 @@
+{
+  "name": "圣光迪莫",
+  "source_url": "https://wiki.biligame.com/rocom/%E5%9C%A3%E5%85%89%E8%BF%AA%E8%8E%AB",
+  "attributes": [
+    "光"
+  ],
+  "evolution_condition": "",
+  "total_race_value": 531,
+  "profile": {
+    "编号": "001",
+    "系别": "光"
+  },
+  "stats": {
+    "生命": 97,
+    "物攻": 71,
+    "魔攻": 71,
+    "物防": 86,
+    "魔防": 86,
+    "速度": 120
+  },
+  "skills": [],
+  "metadata": {
+    "parser_version": 3,
+    "generated_at": "2026-05-12T05:48:39.541585+00:00"
+  }
+}

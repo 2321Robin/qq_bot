@@ -1,6 +1,13 @@
 import json
+from http.client import RemoteDisconnected
 
-from scripts.fetch_roco_pet_detail import write_pet_detail
+from scripts.fetch_roco_pet_detail import (
+    fetch_pet_details,
+    fetch_html,
+    load_bwiki_index_targets,
+    load_fetch_targets,
+    write_pet_detail,
+)
 from qq_bot.services.roco_bwiki import parse_pet_detail
 
 
@@ -66,7 +73,7 @@ def test_parse_pet_detail_extracts_profile_stats_and_skill_groups() -> None:
             ],
         },
     ]
-    assert detail["metadata"]["parser_version"] == 1
+    assert detail["metadata"]["parser_version"] == 3
 
 
 def test_parse_pet_detail_uses_empty_values_for_missing_fields() -> None:
@@ -161,6 +168,101 @@ def test_parse_pet_detail_extracts_real_page_component_layout() -> None:
             ],
         }
     ]
+
+
+def test_parse_pet_detail_extracts_multiple_component_attributes() -> None:
+    html = """
+    <html>
+      <body>
+        <h1>寒音蛇（本来的样子）</h1>
+        <div class="rocom_sprite_grament_attributes_text"><p>萌</p></div>
+        <div class="rocom_sprite_grament_attributes_text"><p>毒</p></div>
+      </body>
+    </html>
+    """
+
+    detail = parse_pet_detail("https://example.com/pet", html)
+
+    assert detail["attributes"] == ["萌", "毒"]
+    assert detail["profile"]["系别"] == "萌、毒"
+
+
+def test_parse_pet_detail_describes_level_evolution_from_component_chain() -> None:
+    html = """
+    <html>
+      <body>
+        <h1>寒音蛇（本来的样子）</h1>
+        <div class="rocom_spirit_evolution_box">
+          <div class="rocom_spirit_evolution_1">
+            <a href="/rocom/source" title="古钟蛇（本来的样子）">source</a>
+          </div>
+          <div class="rocom_spirit_evolution_level">
+            <p class="rocom_spirit_evolution_level_num">38</p>
+          </div>
+          <div class="rocom_spirit_evolution_2">
+            <a href="/rocom/current" title="寒音蛇（本来的样子）">target</a>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+
+    detail = parse_pet_detail("https://example.com/pet", html)
+
+    assert detail["evolution_condition"] == "由古钟蛇（本来的样子）等级38级进化"
+    assert detail["profile"]["进化条件"] == "由古钟蛇（本来的样子）等级38级进化"
+
+
+def test_parse_pet_detail_describes_battle_evolution_from_component_chain() -> None:
+    html = """
+    <html>
+      <body>
+        <h1>秩序鱿墨</h1>
+        <div class="rocom_spirit_evolution_box">
+          <div class="rocom_spirit_evolution_1">
+            <a href="/rocom/source" title="墨鱿士">source</a>
+          </div>
+          <div class="rocom_spirit_evolution_level">
+            <p class="rocom_spirit_evolution_level_num">打败三只恶系精灵</p>
+          </div>
+          <div class="rocom_spirit_evolution_2">
+            <a href="/rocom/current" title="秩序鱿墨">target</a>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+
+    detail = parse_pet_detail("https://example.com/pet", html)
+
+    assert detail["evolution_condition"] == "由墨鱿士击败3个恶系精灵进化"
+    assert detail["profile"]["进化条件"] == "由墨鱿士击败3个恶系精灵进化"
+
+
+def test_parse_pet_detail_preserves_non_level_evolution_text_from_component_chain() -> None:
+    html = """
+    <html>
+      <body>
+        <h1>冬羽雀（夏天的样子）</h1>
+        <div class="rocom_spirit_evolution_box">
+          <div class="rocom_spirit_evolution_1">
+            <a href="/rocom/source" title="雪绒鸟（夏天的样子）">source</a>
+          </div>
+          <div class="rocom_spirit_evolution_level">
+            <p class="rocom_spirit_evolution_level_num">亲密度进化</p>
+          </div>
+          <div class="rocom_spirit_evolution_2">
+            <a href="/rocom/current" title="冬羽雀（夏天的样子）">target</a>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+
+    detail = parse_pet_detail("https://example.com/pet", html)
+
+    assert detail["evolution_condition"] == "由雪绒鸟（夏天的样子）亲密度进化"
+    assert detail["profile"]["进化条件"] == "由雪绒鸟（夏天的样子）亲密度进化"
 
 
 def test_parse_pet_detail_sums_stats_when_total_race_value_is_missing() -> None:
@@ -261,3 +363,240 @@ def test_write_pet_detail_creates_parent_and_writes_utf8_json(tmp_path) -> None:
     assert saved["name"] == "迪莫"
     assert saved["attributes"] == ["光"]
     assert saved["total_race_value"] == 582
+
+
+def test_fetch_html_uses_browser_headers(monkeypatch) -> None:
+    captured_headers: dict[str, str] = {}
+
+    class FakeHeaders:
+        def get_content_charset(self) -> str:
+            return "utf-8"
+
+    class FakeResponse:
+        headers = FakeHeaders()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b"<html></html>"
+
+    def fake_urlopen(request, timeout):
+        assert timeout == 30
+        captured_headers.update(dict(request.header_items()))
+        return FakeResponse()
+
+    monkeypatch.setattr("scripts.fetch_roco_pet_detail.urlopen", fake_urlopen)
+
+    assert fetch_html("https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB") == "<html></html>"
+    assert "Mozilla/5.0" in captured_headers["User-agent"]
+    assert "zh-CN" in captured_headers["Accept-language"]
+
+
+def test_load_fetch_targets_uses_only_bwiki_source_urls(tmp_path) -> None:
+    pets_path = tmp_path / "roco_pets.json"
+    pets_path.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "迪莫",
+                    "source_url": "https://lokewangguoshijie.com/",
+                },
+                {
+                    "name": "喵喵",
+                    "source_url": "https://wiki.biligame.com/rocom/喵喵",
+                },
+                {
+                    "name": "火花",
+                    "source_url": "https://wiki.biligame.com/rocom/%E7%81%AB%E8%8A%B1",
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    targets = load_fetch_targets(pets_path)
+
+    assert targets == [
+        ("喵喵", "https://wiki.biligame.com/rocom/%E5%96%B5%E5%96%B5"),
+        ("火花", "https://wiki.biligame.com/rocom/%E7%81%AB%E8%8A%B1"),
+    ]
+
+
+def test_fetch_pet_details_writes_successes_and_continues_after_failure(tmp_path) -> None:
+    def fake_fetch_html(url: str) -> str:
+        if url.endswith("fail"):
+            raise TimeoutError("slow page")
+        pet_name = url.rsplit("/", maxsplit=1)[-1]
+        return f"<html><body><h1>{pet_name}</h1></body></html>"
+
+    errors = fetch_pet_details(
+        [
+            ("喵喵", "https://wiki.biligame.com/rocom/喵喵"),
+            ("失败宠物", "https://wiki.biligame.com/rocom/fail"),
+            ("火花", "https://wiki.biligame.com/rocom/火花"),
+        ],
+        tmp_path,
+        fetch_html_func=fake_fetch_html,
+    )
+
+    assert [error[0] for error in errors] == ["失败宠物"]
+    assert "slow page" in errors[0][2]
+    assert json.loads((tmp_path / "喵喵.json").read_text(encoding="utf-8"))["name"] == "喵喵"
+    assert json.loads((tmp_path / "火花.json").read_text(encoding="utf-8"))["name"] == "火花"
+    assert not (tmp_path / "失败宠物.json").exists()
+
+
+def test_fetch_pet_details_writes_numbered_filename_when_number_is_available(tmp_path) -> None:
+    def fake_fetch_html(url: str) -> str:
+        assert url == "https://wiki.biligame.com/rocom/喵喵"
+        return """
+        <html><body>
+          <h1>喵喵</h1>
+          <div class="rocom_sprite_grament_name">002 喵喵</div>
+        </body></html>
+        """
+
+    errors = fetch_pet_details(
+        [("喵喵", "https://wiki.biligame.com/rocom/喵喵")],
+        tmp_path,
+        fetch_html_func=fake_fetch_html,
+    )
+
+    assert errors == []
+    assert json.loads((tmp_path / "002-喵喵.json").read_text(encoding="utf-8"))["name"] == "喵喵"
+    assert not (tmp_path / "喵喵.json").exists()
+
+
+def test_fetch_pet_details_continues_after_remote_disconnect(tmp_path) -> None:
+    def fake_fetch_html(url: str) -> str:
+        if url.endswith("disconnect"):
+            raise RemoteDisconnected("remote closed")
+        return "<html><body><h1>喵喵</h1></body></html>"
+
+    errors = fetch_pet_details(
+        [
+            ("断开宠物", "https://wiki.biligame.com/rocom/disconnect"),
+            ("喵喵", "https://wiki.biligame.com/rocom/喵喵"),
+        ],
+        tmp_path,
+        fetch_html_func=fake_fetch_html,
+    )
+
+    assert [error[0] for error in errors] == ["断开宠物"]
+    assert json.loads((tmp_path / "喵喵.json").read_text(encoding="utf-8"))["name"] == "喵喵"
+    assert not (tmp_path / "断开宠物.json").exists()
+
+
+def test_load_bwiki_index_targets_extracts_all_pet_names() -> None:
+    html = """
+    <html><body>
+      <table>
+        <tr>
+          <th>精灵</th><th>精灵名称</th><th>属性</th><th>精灵编号</th><th>总种族值</th>
+        </tr>
+        <tr><td></td><td>迪莫</td><td>光</td><td>001</td><td>582</td></tr>
+        <tr><td></td><td>圣光迪莫</td><td>光</td><td>001</td><td>531</td></tr>
+        <tr><td></td><td>鸭吉吉（蓬松的样子）</td><td>普通</td><td>011</td><td>471</td></tr>
+      </table>
+    </body></html>
+    """
+
+    targets = load_bwiki_index_targets(html)
+
+    assert targets == [
+        ("迪莫", "https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB"),
+        ("圣光迪莫", "https://wiki.biligame.com/rocom/%E5%9C%A3%E5%85%89%E8%BF%AA%E8%8E%AB"),
+        (
+            "鸭吉吉（蓬松的样子）",
+            "https://wiki.biligame.com/rocom/%E9%B8%AD%E5%90%89%E5%90%89%EF%BC%88%E8%93%AC%E6%9D%BE%E7%9A%84%E6%A0%B7%E5%AD%90%EF%BC%89",
+        ),
+    ]
+
+
+def test_fetch_pet_details_skips_existing_files_unless_force_is_enabled(tmp_path) -> None:
+    calls: list[str] = []
+
+    def fake_fetch_html(url: str) -> str:
+        calls.append(url)
+        return "<html><body><h1>喵喵</h1></body></html>"
+
+    existing_path = tmp_path / "002-喵喵.json"
+    existing_path.write_text(
+        json.dumps({"name": "old", "metadata": {"parser_version": 3}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    errors = fetch_pet_details(
+        [("喵喵", "https://wiki.biligame.com/rocom/喵喵")],
+        tmp_path,
+        fetch_html_func=fake_fetch_html,
+    )
+
+    assert errors == []
+    assert calls == []
+    assert json.loads(existing_path.read_text(encoding="utf-8"))["name"] == "old"
+
+    fetch_pet_details(
+        [("喵喵", "https://wiki.biligame.com/rocom/喵喵")],
+        tmp_path,
+        fetch_html_func=fake_fetch_html,
+        force=True,
+    )
+
+    assert calls == ["https://wiki.biligame.com/rocom/喵喵"]
+    assert json.loads(existing_path.read_text(encoding="utf-8"))["name"] == "喵喵"
+
+
+def test_fetch_pet_details_refreshes_outdated_parser_version(tmp_path) -> None:
+    calls: list[str] = []
+
+    def fake_fetch_html(url: str) -> str:
+        calls.append(url)
+        return "<html><body><h1>喵喵</h1></body></html>"
+
+    existing_path = tmp_path / "喵喵.json"
+    existing_path.write_text(
+        json.dumps({"name": "old", "metadata": {"parser_version": 1}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    errors = fetch_pet_details(
+        [("喵喵", "https://wiki.biligame.com/rocom/喵喵")],
+        tmp_path,
+        fetch_html_func=fake_fetch_html,
+        min_parser_version=3,
+    )
+
+    assert errors == []
+    assert calls == ["https://wiki.biligame.com/rocom/喵喵"]
+    saved = json.loads(existing_path.read_text(encoding="utf-8"))
+    assert saved["name"] == "喵喵"
+
+
+def test_fetch_pet_details_retries_transient_failures(tmp_path) -> None:
+    attempts: list[str] = []
+
+    def fake_fetch_html(url: str) -> str:
+        attempts.append(url)
+        if len(attempts) == 1:
+            raise TimeoutError("temporary")
+        return "<html><body><h1>喵喵</h1></body></html>"
+
+    errors = fetch_pet_details(
+        [("喵喵", "https://wiki.biligame.com/rocom/喵喵")],
+        tmp_path,
+        fetch_html_func=fake_fetch_html,
+        retries=1,
+    )
+
+    assert errors == []
+    assert attempts == [
+        "https://wiki.biligame.com/rocom/喵喵",
+        "https://wiki.biligame.com/rocom/喵喵",
+    ]
+    assert json.loads((tmp_path / "喵喵.json").read_text(encoding="utf-8"))["name"] == "喵喵"
