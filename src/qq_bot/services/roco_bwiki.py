@@ -33,7 +33,7 @@ SKILL_FIELD_CLASSES = {
     "rocom_sprite_skill_power": "威力",
     "rocom_sprite_skillContent": "效果",
 }
-PARSER_VERSION = 3
+PARSER_VERSION = 4
 
 
 class _BwikiParser(HTMLParser):
@@ -44,6 +44,7 @@ class _BwikiParser(HTMLParser):
         self.tables: list[dict[str, Any]] = []
         self.class_texts: dict[str, list[str]] = {class_name: [] for class_name in CAPTURE_CLASSES}
         self.skill_rows: list[dict[str, str]] = []
+        self.physique_items: list[dict[str, str]] = []
         self.evolution_sources: list[str] = []
         self.evolution_targets: list[str] = []
         self._current_tag = ""
@@ -54,19 +55,26 @@ class _BwikiParser(HTMLParser):
         self._cell_stack: list[dict[str, Any]] = []
         self._element_stack: list[dict[str, Any]] = []
         self._skill_stack: list[dict[str, str]] = []
+        self._physique_stack: list[dict[str, Any]] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         class_names = _class_names(attrs)
         captures = [class_name for class_name in class_names if class_name in CAPTURE_CLASSES]
         skill_box = "rocom_sprite_skill_box" in class_names
+        physique_item = tag == "li" and any(
+            "rocom_sprite_info_physique" in element["classes"] for element in self._element_stack
+        )
         self._element_stack.append(
             {
                 "tag": tag,
                 "classes": class_names,
                 "captures": [{"class": class_name, "text_parts": []} for class_name in captures],
                 "skill_box": skill_box,
+                "physique_item": physique_item,
             }
         )
+        if physique_item:
+            self._physique_stack.append({"label": "", "text_parts": []})
         if tag == "a":
             title = _attr_value(attrs, "title")
             if title:
@@ -74,6 +82,10 @@ class _BwikiParser(HTMLParser):
                     self.evolution_sources.append(title)
                 if any("rocom_spirit_evolution_2" in element["classes"] for element in self._element_stack):
                     self.evolution_targets.append(title)
+        elif tag == "img" and self._physique_stack:
+            label = _attr_value(attrs, "alt")
+            if label:
+                self._physique_stack[-1]["label"] = label
         if skill_box:
             self._skill_stack.append({})
 
@@ -124,6 +136,11 @@ class _BwikiParser(HTMLParser):
                 skill_row = self._skill_stack.pop()
                 if skill_row:
                     self.skill_rows.append(skill_row)
+            if element["physique_item"] and self._physique_stack:
+                physique_item = self._physique_stack.pop()
+                text = _normalize_text("".join(physique_item["text_parts"]))
+                if text:
+                    self.physique_items.append({"label": physique_item["label"], "value": text})
 
     def handle_data(self, data: str) -> None:
         for element in self._element_stack:
@@ -133,6 +150,8 @@ class _BwikiParser(HTMLParser):
             self._cell_stack[-1]["text_parts"].append(data)
         elif self._current_tag:
             self._text_parts.append(data)
+        if self._physique_stack:
+            self._physique_stack[-1]["text_parts"].append(data)
 
 
 def parse_pet_detail(source_url: str, html: str) -> dict[str, Any]:
@@ -158,17 +177,20 @@ def parse_pet_detail(source_url: str, html: str) -> dict[str, Any]:
             profile.update(_parse_profile_table(rows))
 
     div_attributes = _parse_component_attributes(parser)
+    physique = _parse_component_physique(parser)
     component_evolution_condition = _parse_component_evolution_condition(parser, _extract_name(parser))
     div_evolution_condition = _first_class_text(parser, "rocom_evolution_data") or component_evolution_condition
-    for key, value in _parse_component_profile(parser, div_attributes, div_evolution_condition).items():
+    for key, value in _parse_component_profile(parser, div_attributes, physique).items():
         profile.setdefault(key, value)
+    table_evolution_condition = profile.get("进化条件", "")
+    profile.pop("进化条件", None)
     if not stats:
         stats.update(_parse_component_stats(parser))
     if not skills:
         skills.extend(_parse_component_skills(parser))
 
     attributes = _split_values(profile.get("系别", "")) or div_attributes
-    evolution_condition = profile.get("进化条件", "") or div_evolution_condition
+    evolution_condition = table_evolution_condition or div_evolution_condition
     total_race_value = _parse_total_race_value(parser, stats)
 
     return {
@@ -340,7 +362,9 @@ def _chinese_count_to_digit(value: str) -> str:
 
 
 def _parse_component_profile(
-    parser: _BwikiParser, attributes: list[str], evolution_condition: str
+    parser: _BwikiParser,
+    attributes: list[str],
+    physique: dict[str, str],
 ) -> dict[str, str]:
     profile: dict[str, str] = {}
     grament_name = _first_class_text(parser, "rocom_sprite_grament_name")
@@ -350,9 +374,22 @@ def _parse_component_profile(
             profile["编号"] = number
     if attributes:
         profile["系别"] = "、".join(attributes)
-    if evolution_condition:
-        profile["进化条件"] = evolution_condition
+    profile.update(physique)
     return profile
+
+
+def _parse_component_physique(parser: _BwikiParser) -> dict[str, str]:
+    physique: dict[str, str] = {}
+    for item in parser.physique_items:
+        label = item["label"]
+        value = item["value"].replace(" ", "")
+        if not re.search(r"\d", value):
+            continue
+        if ("身高" in label or "体长" in label) and value:
+            physique["体长"] = value
+        elif "体重" in label and value:
+            physique["体重"] = value
+    return physique
 
 
 def _parse_component_stats(parser: _BwikiParser) -> dict[str, int]:
