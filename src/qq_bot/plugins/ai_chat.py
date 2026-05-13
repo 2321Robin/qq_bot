@@ -97,14 +97,8 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
                     keyword=memory_reference.keyword,
                     limit=limit,
                 )
-            elif memory_reference.limit is not None:
-                rows = memory_store.recent_group_messages(group_id=event.group_id, limit=limit)
             else:
-                rows = memory_store.recent_user_turns(
-                    group_id=event.group_id,
-                    user_id=event.user_id,
-                    limit=limit,
-                )
+                rows = memory_store.recent_group_messages(group_id=event.group_id, limit=limit)
             chat_context = format_chat_context(rows)
         except Exception:
             logger.exception("Chat memory read failed; continuing without chat context")
