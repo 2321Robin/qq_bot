@@ -5,9 +5,11 @@ from nonebot.params import CommandArg
 from qq_bot.config import get_settings
 from qq_bot.services.roco_pet_cards import pet_card_path
 from qq_bot.services.roco_pets import PetRecord, find_pet, format_pet_query_result, format_pet_record, get_pet_records
+from qq_bot.services.roco_skills import format_skill_query_result, get_skill_records
 
 
 roco_pet_command = on_command("精灵", aliases={"洛克"}, priority=5, block=True)
+roco_skill_command = on_command("技能", priority=5, block=True)
 roco_mention_pet = on_message(priority=10, block=False)
 
 
@@ -22,6 +24,16 @@ async def handle_roco_pet(event: GroupMessageEvent, args: Message = CommandArg()
     if record is None:
         await roco_pet_command.finish(format_pet_query_result(query, get_pet_records()))
     await roco_pet_command.finish(_format_pet_card_message(record))
+
+
+@roco_skill_command.handle()
+async def handle_roco_skill(event: GroupMessageEvent, args: Message = CommandArg()) -> None:
+    settings = get_settings()
+    if not settings.group_allowed(event.group_id):
+        return
+
+    query = args.extract_plain_text().strip()
+    await roco_skill_command.finish(format_skill_query_result(query, get_skill_records()))
 
 
 @roco_mention_pet.handle()
