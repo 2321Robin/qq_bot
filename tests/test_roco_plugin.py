@@ -105,6 +105,12 @@ async def test_roco_mention_lookup_replies_when_pet_exists(
     async def fake_finish(message: object) -> None:
         raise FinishCalled(message)
 
+    stopped_propagation = False
+
+    def fake_stop_propagation() -> None:
+        nonlocal stopped_propagation
+        stopped_propagation = True
+
     def fake_card_path(record: PetRecord) -> object:
         assert record.name == "迪莫"
         path = tmp_path / "001.png"
@@ -113,6 +119,7 @@ async def test_roco_mention_lookup_replies_when_pet_exists(
 
     monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
     monkeypatch.setattr(roco_plugin, "pet_card_path", fake_card_path)
+    monkeypatch.setattr(roco_plugin, "_stop_roco_mention_propagation", fake_stop_propagation)
     monkeypatch.setattr(roco_plugin.roco_mention_pet, "finish", fake_finish)
 
     with pytest.raises(FinishCalled) as exc_info:
@@ -121,6 +128,7 @@ async def test_roco_mention_lookup_replies_when_pet_exists(
     message = exc_info.value.message
     assert "image" in str(message)
     assert (tmp_path / "001.png").resolve().as_posix() in str(message)
+    assert stopped_propagation
 
 
 @pytest.mark.asyncio
@@ -225,6 +233,12 @@ async def test_roco_mention_lookup_replies_when_skill_exists(
     async def fake_finish(message: object) -> None:
         raise FinishCalled(message)
 
+    stopped_propagation = False
+
+    def fake_stop_propagation() -> None:
+        nonlocal stopped_propagation
+        stopped_propagation = True
+
     skill_records = (
         SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "迪莫"),
         SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "圣光迪莫"),
@@ -233,6 +247,7 @@ async def test_roco_mention_lookup_replies_when_skill_exists(
     monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
     monkeypatch.setattr(roco_plugin, "get_pet_records", lambda: ())
     monkeypatch.setattr(roco_plugin, "get_skill_records", lambda: skill_records)
+    monkeypatch.setattr(roco_plugin, "_stop_roco_mention_propagation", fake_stop_propagation)
     monkeypatch.setattr(roco_plugin.roco_mention_pet, "finish", fake_finish)
 
     with pytest.raises(FinishCalled) as exc_info:
@@ -242,6 +257,7 @@ async def test_roco_mention_lookup_replies_when_skill_exists(
     assert "技能：闪光" in message
     assert "效果：造成魔法伤害。" in message
     assert "可用精灵：迪莫、圣光迪莫" in message
+    assert stopped_propagation
 
 
 @pytest.mark.asyncio

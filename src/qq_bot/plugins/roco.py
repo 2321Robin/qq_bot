@@ -1,5 +1,6 @@
 from nonebot import on_command, on_message
 from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message, MessageSegment
+from nonebot.matcher import current_matcher
 from nonebot.params import CommandArg
 
 from qq_bot.config import get_settings
@@ -48,9 +49,11 @@ async def handle_roco_mention_pet(event: GroupMessageEvent) -> None:
     query = event.get_message().extract_plain_text().strip()
     record = find_pet(get_pet_records(), query)
     if record is not None:
+        _stop_roco_mention_propagation()
         await roco_mention_pet.finish(_format_pet_card_message(record))
 
     if find_skills(get_skill_records(), query):
+        _stop_roco_mention_propagation()
         await roco_mention_pet.finish(format_skill_query_result(query, get_skill_records()))
 
 
@@ -59,3 +62,11 @@ def _format_pet_card_message(record: PetRecord) -> MessageSegment | str:
     if not path.exists():
         return format_pet_record(record)
     return MessageSegment.image(f"file:///{path.resolve().as_posix()}")
+
+
+def _stop_roco_mention_propagation() -> None:
+    try:
+        matcher = current_matcher.get()
+    except LookupError:
+        return
+    matcher.stop_propagation()
