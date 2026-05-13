@@ -86,17 +86,16 @@ def test_group_skill_variants_groups_identical_details_and_deduplicates_pets() -
     assert variants[0].pet_names == ["迪莫", "圣光迪莫"]
 
 
-def test_group_skill_variants_keeps_different_details_separate() -> None:
+def test_group_skill_variants_merges_matching_details_across_levels() -> None:
     records = [
         SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "迪莫"),
-        SkillRecord("闪光", "LV5", "2", "魔攻", "80", "造成更高魔法伤害。", "圣光迪莫"),
+        SkillRecord("闪光", "LV5", "1", "魔攻", "60", "造成魔法伤害。", "圣光迪莫"),
     ]
 
     variants = group_skill_variants(records)
 
-    assert len(variants) == 2
-    assert variants[0].pet_names == ["迪莫"]
-    assert variants[1].pet_names == ["圣光迪莫"]
+    assert len(variants) == 1
+    assert variants[0].pet_names == ["迪莫", "圣光迪莫"]
 
 
 def test_format_skill_query_result_handles_usage_and_missing_skill() -> None:
@@ -113,7 +112,7 @@ def test_format_skill_query_result_includes_details_and_pet_names() -> None:
     text = format_skill_query_result("闪光", records)
 
     assert "技能：闪光" in text
-    assert "等级：LV1" in text
+    assert "等级：" not in text
     assert "耗能：1" in text
     assert "类型：魔攻" in text
     assert "威力：60" in text
