@@ -28,6 +28,8 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
     settings = get_settings()
     if not settings.group_allowed(event.group_id):
         return
+    if event.user_id in settings.ai_ignored_user_id_list:
+        return
 
     memory_store: ChatMemoryStore | None = None
     try:
