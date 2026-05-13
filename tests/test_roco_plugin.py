@@ -219,6 +219,74 @@ async def test_roco_skill_command_returns_for_disallowed_group(
 
 
 @pytest.mark.asyncio
+async def test_roco_mention_lookup_replies_when_skill_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    skill_records = (
+        SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "迪莫"),
+        SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "圣光迪莫"),
+    )
+
+    monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
+    monkeypatch.setattr(roco_plugin, "get_pet_records", lambda: ())
+    monkeypatch.setattr(roco_plugin, "get_skill_records", lambda: skill_records)
+    monkeypatch.setattr(roco_plugin.roco_mention_pet, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled) as exc_info:
+        await roco_plugin.handle_roco_mention_pet(FakeEvent("闪光"))  # type: ignore[arg-type]
+
+    message = str(exc_info.value.message)
+    assert "技能：闪光" in message
+    assert "效果：造成魔法伤害。" in message
+    assert "可用精灵：迪莫、圣光迪莫" in message
+
+
+@pytest.mark.asyncio
+async def test_roco_mention_lookup_prefers_pet_when_pet_and_skill_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    pet_records = (
+        PetRecord(
+            name="闪光",
+            number="999",
+            attributes=["光"],
+            aliases=[],
+            stage="未知",
+            evolution_chain=["闪光"],
+            evolution_condition="无法进化",
+            source_url="https://example.com/pet",
+        ),
+    )
+    skill_records = (
+        SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "迪莫"),
+    )
+
+    def fake_card_path(record: PetRecord) -> object:
+        assert record.name == "闪光"
+        return type("FakePath", (), {"exists": lambda self: False})()
+
+    monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
+    monkeypatch.setattr(roco_plugin, "get_pet_records", lambda: pet_records)
+    monkeypatch.setattr(roco_plugin, "get_skill_records", lambda: skill_records)
+    monkeypatch.setattr(roco_plugin, "pet_card_path", fake_card_path)
+    monkeypatch.setattr(roco_plugin.roco_mention_pet, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled) as exc_info:
+        await roco_plugin.handle_roco_mention_pet(FakeEvent("闪光"))  # type: ignore[arg-type]
+
+    message = str(exc_info.value.message)
+    assert "闪光" in message
+    assert "编号：999" in message
+    assert "技能：闪光" not in message
+
+
+@pytest.mark.asyncio
 async def test_roco_mention_lookup_returns_when_pet_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
