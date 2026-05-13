@@ -68,6 +68,9 @@ class EmptyMemoryStore:
     def recent_user_turns(self, *, group_id: int, user_id: int, limit: int):
         return []
 
+    def recent_group_messages(self, *, group_id: int, limit: int):
+        return []
+
 
 def memory_row(
     *,
@@ -422,7 +425,7 @@ async def test_ai_chat_falls_back_when_search_fails(
 
 
 @pytest.mark.asyncio
-async def test_ai_chat_passes_default_group_user_memory_context(
+async def test_ai_chat_passes_default_group_memory_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeStore:
@@ -433,11 +436,10 @@ async def test_ai_chat_passes_default_group_user_memory_context(
             assert message_id == 123
             assert ai_reply == "带记忆回复"
 
-        def recent_user_turns(self, *, group_id: int, user_id: int, limit: int):
+        def recent_group_messages(self, *, group_id: int, limit: int):
             assert group_id == 1001
-            assert user_id == 2001
             assert limit == 10
-            return [memory_row(message_text="之前的问题", ai_reply="之前的回答")]
+            return [memory_row(message_text="之前的问题", ai_reply="之前的回答", user_id=2002)]
 
     async def fake_request_ai_reply(
         prompt: str,
@@ -447,7 +449,7 @@ async def test_ai_chat_passes_default_group_user_memory_context(
         chat_context: str = "",
     ) -> str:
         assert prompt == "继续"
-        assert "用户2001：之前的问题" in chat_context
+        assert "用户2002：之前的问题" in chat_context
         assert "机器人：之前的回答" in chat_context
         return "带记忆回复"
 
@@ -469,6 +471,70 @@ async def test_ai_chat_passes_default_group_user_memory_context(
 
     with pytest.raises(FinishCalled):
         await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 继续"))  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_ai_chat_uses_recent_group_messages_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = {"recent_group_messages": False, "recent_user_turns": False}
+
+    class FakeStore:
+        def add_message(self, *args, **kwargs) -> int:
+            return 123
+
+        def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
+            return None
+
+        def recent_group_messages(self, *, group_id: int, limit: int):
+            calls["recent_group_messages"] = True
+            assert group_id == 1001
+            assert limit == 10
+            return [
+                memory_row(message_text="普通群友发言", user_id=2002),
+                memory_row(message_text="另一个群友发言", row_id=2, user_id=2003),
+            ]
+
+        def recent_user_turns(self, *, group_id: int, user_id: int, limit: int):
+            calls["recent_user_turns"] = True
+            return []
+
+    async def fake_request_ai_reply(
+        prompt: str,
+        *,
+        settings: BotSettings,
+        search_context: str = "",
+        chat_context: str = "",
+    ) -> str:
+        assert prompt == "刚才大家在说什么"
+        assert "用户2002：普通群友发言" in chat_context
+        assert "用户2003：另一个群友发言" in chat_context
+        return "他们在聊天"
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+    )
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "ChatMemoryStore",
+        lambda path, retention_days: FakeStore(),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled) as exc_info:
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 刚才大家在说什么"))  # type: ignore[arg-type]
+
+    message = exc_info.value.message
+    assert isinstance(message, Message)
+    assert message.extract_plain_text() == "他们在聊天"
+    assert calls["recent_group_messages"] is True
+    assert calls["recent_user_turns"] is False
 
 
 @pytest.mark.asyncio
@@ -723,7 +789,7 @@ async def test_ai_chat_memory_failure_does_not_block_reply(
         def add_message(self, *args, **kwargs) -> int:
             raise OSError("database locked")
 
-        def recent_user_turns(self, *args, **kwargs):
+        def recent_group_messages(self, *args, **kwargs):
             raise OSError("database locked")
 
     async def fake_request_ai_reply(
@@ -792,6 +858,56 @@ async def test_ai_chat_memory_store_construction_failure_does_not_block_reply(
 
 
 @pytest.mark.asyncio
+async def test_ai_chat_records_ordinary_group_message_without_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded: list[dict[str, object]] = []
+    request_ai_reply_called = False
+    finish_called = False
+
+    class FakeStore:
+        def add_message(self, **kwargs) -> int:
+            recorded.append(kwargs)
+            return 123
+
+    async def fake_request_ai_reply(*args, **kwargs) -> str:
+        nonlocal request_ai_reply_called
+        request_ai_reply_called = True
+        raise AssertionError("AI should not be called for ordinary group messages")
+
+    async def fake_finish(message: object) -> None:
+        nonlocal finish_called
+        finish_called = True
+        raise AssertionError("finish should not be called for ordinary group messages")
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+    )
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "ChatMemoryStore",
+        lambda path, retention_days: FakeStore(),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    await ai_chat_plugin.handle_ai_chat(FakeEvent("普通聊天内容"))  # type: ignore[arg-type]
+
+    assert recorded == [
+        {
+            "group_id": 1001,
+            "user_id": 2001,
+            "message_text": "普通聊天内容",
+            "is_ai_prompt": False,
+        }
+    ]
+    assert request_ai_reply_called is False
+    assert finish_called is False
+
+
+@pytest.mark.asyncio
 async def test_ai_chat_records_non_ai_group_messages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -840,7 +956,7 @@ async def test_ai_chat_excludes_current_prompt_from_memory_context(
         def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
             return None
 
-        def recent_user_turns(self, *, group_id: int, user_id: int, limit: int):
+        def recent_group_messages(self, *, group_id: int, limit: int):
             return self.rows[-limit:]
 
     store = FakeStore()
