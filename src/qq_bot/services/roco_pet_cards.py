@@ -1102,6 +1102,8 @@ def _evolution_steps(record: PetRecord) -> list[tuple[str, str, str]]:
     if len(chain) < 2:
         return []
     levels = [f"{level}级" for level in re.findall(r"(\d+)级", record.evolution_condition)]
+    if "亲密度" in record.evolution_condition:
+        levels = ["亲密度", *levels]
     if len(chain) == 3 and len(levels) == 1:
         levels = ["16级", levels[0]]
     return [(source, target, levels[index] if index < len(levels) else "") for index, (source, target) in enumerate(zip(chain, chain[1:], strict=False))]

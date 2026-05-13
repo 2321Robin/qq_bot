@@ -462,6 +462,21 @@ def test_evolution_steps_extracts_conditions_for_arrows() -> None:
     assert _evolution_steps(record) == [("喵喵", "喵呜", "16级"), ("喵呜", "魔力猫", "32级")]
 
 
+def test_evolution_steps_keeps_intimacy_condition_for_arrows() -> None:
+    record = PetRecord(
+        name="岚鸟",
+        aliases=[],
+        number="020",
+        attributes=["翼"],
+        stage="最终形态",
+        evolution_chain=["雪绒鸟", "冬羽雀", "岚鸟"],
+        evolution_condition="亲密度进化为冬羽雀，30级进化为岚鸟。",
+        source_url="https://wiki.biligame.com/rocom/岚鸟（本来的样子）",
+    )
+
+    assert _evolution_steps(record) == [("雪绒鸟", "冬羽雀", "亲密度"), ("冬羽雀", "岚鸟", "30级")]
+
+
 def test_evolution_tokens_put_conditions_on_matching_arrows() -> None:
     image = Image.new("RGB", (700, 765))
     draw = ImageDraw.Draw(image)
