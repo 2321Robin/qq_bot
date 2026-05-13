@@ -88,11 +88,10 @@ def group_skill_variants(
     records: list[SkillRecord] | tuple[SkillRecord, ...]
 ) -> list[SkillVariant]:
     variants: list[SkillVariant] = []
-    variant_by_key: dict[tuple[str, str, str, str, str, str], SkillVariant] = {}
+    variant_by_key: dict[tuple[str, str, str, str, str], SkillVariant] = {}
     for record in records:
         key = (
             record.name,
-            record.level,
             record.energy,
             record.category,
             record.power,
@@ -100,7 +99,7 @@ def group_skill_variants(
         )
         variant = variant_by_key.get(key)
         if variant is None:
-            variant = SkillVariant(*key, pet_names=[])
+            variant = SkillVariant(record.name, "", record.energy, record.category, record.power, record.effect, pet_names=[])
             variant_by_key[key] = variant
             variants.append(variant)
         if record.pet_name and record.pet_name not in variant.pet_names:
@@ -149,7 +148,6 @@ def _format_variant(variant: SkillVariant) -> str:
     return "\n".join(
         [
             f"技能：{variant.name}",
-            f"等级：{_value_or_unknown(variant.level)}",
             f"耗能：{_value_or_unknown(variant.energy)}",
             f"类型：{_value_or_unknown(variant.category)}",
             f"威力：{_value_or_unknown(variant.power)}",
