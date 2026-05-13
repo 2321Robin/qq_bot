@@ -313,3 +313,35 @@ async def test_roco_mention_lookup_returns_when_pet_missing(
     monkeypatch.setattr(roco_plugin.roco_mention_pet, "finish", fake_finish)
 
     await roco_plugin.handle_roco_mention_pet(FakeEvent("今天有什么新闻"))  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_roco_mention_lookup_ignores_sentences_containing_pet_or_skill_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    pet_records = (
+        PetRecord(
+            name="雪影娃娃",
+            number="144",
+            attributes=["冰"],
+            aliases=[],
+            stage="未知",
+            evolution_chain=["雪影娃娃"],
+            evolution_condition="未知",
+            source_url="https://example.com/pet",
+        ),
+    )
+    skill_records = (
+        SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "迪莫"),
+    )
+
+    monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
+    monkeypatch.setattr(roco_plugin, "get_pet_records", lambda: pet_records)
+    monkeypatch.setattr(roco_plugin, "get_skill_records", lambda: skill_records)
+    monkeypatch.setattr(roco_plugin.roco_mention_pet, "finish", fake_finish)
+
+    await roco_plugin.handle_roco_mention_pet(FakeEvent("你发送雪影娃娃，注意一个字都不要多"))  # type: ignore[arg-type]
+    await roco_plugin.handle_roco_mention_pet(FakeEvent("请查询闪光"))  # type: ignore[arg-type]

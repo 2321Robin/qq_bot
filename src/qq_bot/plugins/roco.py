@@ -6,7 +6,7 @@ from nonebot.params import CommandArg
 from qq_bot.config import get_settings
 from qq_bot.services.roco_pet_cards import pet_card_path
 from qq_bot.services.roco_pets import PetRecord, find_pet, format_pet_query_result, format_pet_record, get_pet_records
-from qq_bot.services.roco_skills import find_skills, format_skill_query_result, get_skill_records
+from qq_bot.services.roco_skills import SkillRecord, format_skill_query_result, get_skill_records
 
 
 roco_pet_command = on_command("精灵", aliases={"洛克"}, priority=5, block=True)
@@ -47,14 +47,16 @@ async def handle_roco_mention_pet(event: GroupMessageEvent) -> None:
         return
 
     query = event.get_message().extract_plain_text().strip()
-    record = find_pet(get_pet_records(), query)
+    pet_records = get_pet_records()
+    record = _find_exact_mention_pet(pet_records, query)
     if record is not None:
         _stop_roco_mention_propagation()
         await roco_mention_pet.finish(_format_pet_card_message(record))
 
-    if find_skills(get_skill_records(), query):
+    skill_records = get_skill_records()
+    if _find_exact_mention_skills(skill_records, query):
         _stop_roco_mention_propagation()
-        await roco_mention_pet.finish(format_skill_query_result(query, get_skill_records()))
+        await roco_mention_pet.finish(format_skill_query_result(query, skill_records))
 
 
 def _format_pet_card_message(record: PetRecord) -> MessageSegment | str:
@@ -62,6 +64,24 @@ def _format_pet_card_message(record: PetRecord) -> MessageSegment | str:
     if not path.exists():
         return format_pet_record(record)
     return MessageSegment.image(f"file:///{path.resolve().as_posix()}")
+
+
+def _find_exact_mention_pet(records: tuple[PetRecord, ...], query: str) -> PetRecord | None:
+    cleaned_query = query.strip()
+    if not cleaned_query:
+        return None
+
+    for record in records:
+        if cleaned_query == record.name or cleaned_query in record.aliases:
+            return record
+    return None
+
+
+def _find_exact_mention_skills(records: tuple[SkillRecord, ...], query: str) -> list[SkillRecord]:
+    cleaned_query = query.strip()
+    if not cleaned_query:
+        return []
+    return [record for record in records if record.name == cleaned_query]
 
 
 def _stop_roco_mention_propagation() -> None:
