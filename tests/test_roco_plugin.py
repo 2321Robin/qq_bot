@@ -5,6 +5,7 @@ import bot  # noqa: F401  # Initialize NoneBot before importing command plugins.
 from qq_bot.config import BotSettings
 from qq_bot.plugins import roco as roco_plugin
 from qq_bot.services.roco_pets import PetRecord, load_pet_records
+from qq_bot.services.roco_skills import SkillRecord
 
 
 def test_roco_mention_matcher_does_not_block_ai_chat() -> None:
@@ -142,6 +143,79 @@ async def test_roco_pet_command_falls_back_to_text_when_card_file_is_missing(
 
     assert "迪莫" in str(exc_info.value.message)
     assert "进化条件" in str(exc_info.value.message)
+
+
+@pytest.mark.asyncio
+async def test_roco_skill_command_replies_with_skill_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    records = (
+        SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "迪莫"),
+        SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "圣光迪莫"),
+    )
+
+    monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
+    monkeypatch.setattr(roco_plugin, "get_skill_records", lambda: records)
+    monkeypatch.setattr(roco_plugin.roco_skill_command, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled) as exc_info:
+        await roco_plugin.handle_roco_skill(FakeEvent(), FakeArgs("闪光"))  # type: ignore[arg-type]
+
+    message = str(exc_info.value.message)
+    assert "技能：闪光" in message
+    assert "效果：造成魔法伤害。" in message
+    assert "可用精灵：迪莫、圣光迪莫" in message
+
+
+@pytest.mark.asyncio
+async def test_roco_skill_command_returns_usage_for_empty_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
+    monkeypatch.setattr(roco_plugin, "get_skill_records", lambda: ())
+    monkeypatch.setattr(roco_plugin.roco_skill_command, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled) as exc_info:
+        await roco_plugin.handle_roco_skill(FakeEvent(), FakeArgs("   "))  # type: ignore[arg-type]
+
+    assert exc_info.value.message == "用法：/技能 闪光"
+
+
+@pytest.mark.asyncio
+async def test_roco_skill_command_returns_not_found_for_unknown_skill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
+    monkeypatch.setattr(roco_plugin, "get_skill_records", lambda: ())
+    monkeypatch.setattr(roco_plugin.roco_skill_command, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled) as exc_info:
+        await roco_plugin.handle_roco_skill(FakeEvent(), FakeArgs("不存在"))  # type: ignore[arg-type]
+
+    assert exc_info.value.message == "本地技能表暂时没有收录“不存在”。"
+
+
+@pytest.mark.asyncio
+async def test_roco_skill_command_returns_for_disallowed_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_finish(message: object) -> None:
+        raise AssertionError("finish should not be called")
+
+    monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="2002"))
+    monkeypatch.setattr(roco_plugin, "get_skill_records", lambda: ())
+    monkeypatch.setattr(roco_plugin.roco_skill_command, "finish", fake_finish)
+
+    await roco_plugin.handle_roco_skill(FakeEvent(), FakeArgs("闪光"))  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
