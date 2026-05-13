@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from http.client import RemoteDisconnected
 from pathlib import Path
+import subprocess
 import sys
 import time
 from html.parser import HTMLParser
@@ -31,9 +32,41 @@ BROWSER_HEADERS = {
 
 def fetch_html(url: str) -> str:
     request = Request(url, headers=BROWSER_HEADERS)
-    with urlopen(request, timeout=30) as response:
-        charset = response.headers.get_content_charset() or "utf-8"
-        return response.read().decode(charset, errors="replace")
+    try:
+        with urlopen(request, timeout=30) as response:
+            charset = response.headers.get_content_charset() or "utf-8"
+            return response.read().decode(charset, errors="replace")
+    except (HTTPError, URLError, TimeoutError, OSError):
+        return _fetch_html_with_curl(url)
+
+
+def _fetch_html_with_curl(url: str) -> str:
+    command = [
+        "curl.exe",
+        "-L",
+        "--retry",
+        "2",
+        "--max-time",
+        "30",
+        "-A",
+        BROWSER_HEADERS["User-Agent"],
+        "-H",
+        f"Accept: {BROWSER_HEADERS['Accept']}",
+        "-H",
+        f"Accept-Language: {BROWSER_HEADERS['Accept-Language']}",
+        url,
+    ]
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        raise URLError(result.stderr.strip() or f"curl.exe exited with {result.returncode}")
+    return result.stdout
 
 
 def write_pet_detail(detail: dict, output_path: Path) -> None:

@@ -33,7 +33,7 @@ SKILL_FIELD_CLASSES = {
     "rocom_sprite_skill_power": "威力",
     "rocom_sprite_skillContent": "效果",
 }
-PARSER_VERSION = 4
+PARSER_VERSION = 5
 
 
 class _BwikiParser(HTMLParser):
@@ -47,6 +47,7 @@ class _BwikiParser(HTMLParser):
         self.physique_items: list[dict[str, str]] = []
         self.evolution_sources: list[str] = []
         self.evolution_targets: list[str] = []
+        self.visible_texts: list[str] = []
         self._current_tag = ""
         self._text_parts: list[str] = []
         self._current_heading = ""
@@ -143,6 +144,9 @@ class _BwikiParser(HTMLParser):
                     self.physique_items.append({"label": physique_item["label"], "value": text})
 
     def handle_data(self, data: str) -> None:
+        text = _normalize_text(data)
+        if text:
+            self.visible_texts.append(text)
         for element in self._element_stack:
             for capture in element["captures"]:
                 capture["text_parts"].append(data)
@@ -181,6 +185,8 @@ def parse_pet_detail(source_url: str, html: str) -> dict[str, Any]:
     component_evolution_condition = _parse_component_evolution_condition(parser, _extract_name(parser))
     div_evolution_condition = _first_class_text(parser, "rocom_evolution_data") or component_evolution_condition
     for key, value in _parse_component_profile(parser, div_attributes, physique).items():
+        profile.setdefault(key, value)
+    for key, value in _parse_component_trait(parser).items():
         profile.setdefault(key, value)
     table_evolution_condition = profile.get("进化条件", "")
     profile.pop("进化条件", None)
@@ -408,6 +414,23 @@ def _parse_component_skills(parser: _BwikiParser) -> list[dict[str, Any]]:
     if not parser.skill_rows:
         return []
     return [{"source": "技能", "rows": _dedupe_records(parser.skill_rows)}]
+
+
+def _parse_component_trait(parser: _BwikiParser) -> dict[str, str]:
+    for index, text in enumerate(parser.visible_texts):
+        if text != "特性":
+            continue
+        values: list[str] = []
+        for candidate in parser.visible_texts[index + 1 :]:
+            if candidate in {"精灵属性", "进化链", "克制表"}:
+                break
+            if candidate.startswith("等级:") or candidate in {"选择性格", "生命:", "速度:", "物攻:", "物防:", "魔攻:", "魔防:"}:
+                break
+            values.append(candidate)
+        if len(values) >= 2:
+            description = values[2] if len(values) >= 3 and values[1] == values[0] else values[1]
+            return {"最佳拍档": values[0], "简介": description}
+    return {}
 
 
 def _parse_total_race_value(parser: _BwikiParser, stats: dict[str, int]) -> int | None:
