@@ -4,7 +4,7 @@ from pathlib import Path
 import bot  # noqa: F401  # Initialize NoneBot before importing command plugins.
 from qq_bot.config import BotSettings
 from qq_bot.plugins import roco as roco_plugin
-from qq_bot.services.roco_pets import PetRecord
+from qq_bot.services.roco_pets import PetRecord, load_pet_records
 
 
 def test_roco_mention_matcher_does_not_block_ai_chat() -> None:
@@ -64,6 +64,36 @@ async def test_roco_pet_command_replies_with_local_pet(
     message = exc_info.value.message
     assert "image" in str(message)
     assert (tmp_path / "001.png").resolve().as_posix() in str(message)
+
+
+@pytest.mark.asyncio
+async def test_roco_pet_command_replies_with_detail_derived_card(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    records = tuple(load_pet_records(Path("data/roco_pet_details")))
+
+    def fake_card_path(record: PetRecord) -> object:
+        assert record.name == "迪莫"
+        assert record.number == "001"
+        path = tmp_path / "001-迪莫.png"
+        path.write_bytes(b"png")
+        return path
+
+    monkeypatch.setattr(roco_plugin, "get_pet_records", lambda: records)
+    monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
+    monkeypatch.setattr(roco_plugin, "pet_card_path", fake_card_path)
+    monkeypatch.setattr(roco_plugin.roco_pet_command, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled) as exc_info:
+        await roco_plugin.handle_roco_pet(FakeEvent(), FakeArgs("迪莫"))  # type: ignore[arg-type]
+
+    message = exc_info.value.message
+    assert "image" in str(message)
+    assert (tmp_path / "001-迪莫.png").resolve().as_posix() in str(message)
 
 
 @pytest.mark.asyncio

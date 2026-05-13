@@ -442,7 +442,7 @@ def test_fetch_html_uses_browser_headers(monkeypatch) -> None:
 
 
 def test_load_fetch_targets_uses_only_bwiki_source_urls(tmp_path) -> None:
-    pets_path = tmp_path / "roco_pets.json"
+    pets_path = tmp_path / "fetch_targets.json"
     pets_path.write_text(
         json.dumps(
             [
