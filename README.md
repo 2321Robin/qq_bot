@@ -8,7 +8,7 @@
 
 - `/help`：查看当前可用功能。
 - `/ping`：检查机器人是否在线，正常时回复 `pong`。
-- `/精灵 迪莫` 或 `/洛克 迪莫`：查询本地洛克王国世界精灵数据库，并返回静态精灵卡片图片。
+- `/精灵 迪莫` 或 `/洛克 迪莫`：查询本地洛克王国世界精灵详细数据，并返回静态精灵介绍图。
 - `ai 你好`：显式向配置的 AI 模型提问。
 - AI 群聊记忆：自动记录近期群消息，AI 可在同一群聊和用户上下文中引用近期对话。
 - AI 搜索增强：启用 Tavily 后，可对新闻、当前事件或搜索类问题自动补充联网搜索结果。
@@ -35,15 +35,15 @@ qq_bot/
 ├── start_all.ps1                  # Windows 一键启动脚本
 ├── 一键启动.bat                    # Windows 批处理启动入口
 ├── scripts/
-│   └── generate_roco_pet_cards.py # 生成洛克王国精灵卡片图片
+│   └── generate_roco_pet_cards.py # 生成洛克王国精灵介绍图
 ├── src/qq_bot/
 │   ├── config.py                  # 配置读取与校验
 │   ├── plugins/                   # NoneBot 插件
 │   └── services/                  # AI、搜索、记忆、精灵数据等服务
 ├── data/
-│   ├── roco_pets.json             # 本地精灵数据
+│   ├── roco_pet_details/          # 本地精灵详细数据
 │   ├── roco_assets/               # 精灵素材
-│   └── roco_pet_cards/            # 生成后的精灵卡片
+│   └── roco_pet_cards/            # 生成后的精灵介绍图
 └── tests/                         # 自动化测试
 ```
 
@@ -250,7 +250,7 @@ start_all.ps1
 
 这些脚本用于在本机同时启动机器人后端和 NapCatQQ。使用前请检查 `start_all.ps1` 中的本机路径、QQ 账号、端口和 NapCatQQ WebUI 地址是否符合你的环境。
 
-## 洛克王国精灵卡片
+## 洛克王国精灵介绍图
 
 精灵查询命令示例：
 
@@ -259,11 +259,11 @@ start_all.ps1
 /洛克 迪莫
 ```
 
-命中本地精灵数据时，机器人会优先发送静态精灵卡片图片。如果对应卡片图片不存在，则回退为文字结果。
+命中本地精灵详细数据时，机器人会优先发送静态精灵介绍图。如果对应介绍图不存在，则回退为文字结果。
 
-现有 `/精灵 <名称>` 与 `/洛克 <名称>` 查询仍使用本地 `data/roco_pets.json`，不会在 QQ 机器人运行时抓取 BWiki。
+现有 `/精灵 <名称>` 与 `/洛克 <名称>` 查询使用本地 `data/roco_pet_details/` 详情数据，不会在 QQ 机器人运行时抓取 BWiki。
 
-启动前可生成或刷新精灵卡片：
+启动前可生成或刷新精灵介绍图：
 
 ```powershell
 .\.venv\Scripts\python scripts\generate_roco_pet_cards.py
@@ -281,13 +281,13 @@ data/roco_pet_cards/
 data/roco_assets/
 ```
 
-迪莫素材和卡片数据来源于洛克王国手游 BWiki 页面：
+迪莫素材和详情数据来源于洛克王国手游 BWiki 页面：
 
 ```text
 https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB
 ```
 
-生成卡片中会标注来源。BWiki 页面文本数据标注为 CC BY-NC-SA 4.0。
+生成介绍图中会标注来源。BWiki 页面文本数据标注为 CC BY-NC-SA 4.0。
 
 ### 洛克王国 BWiki 详情数据
 
@@ -300,7 +300,7 @@ https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB
 当前生成的详情文件路径为：
 
 ```text
-data/roco_pet_details/迪莫.json
+data/roco_pet_details/001-迪莫.json
 ```
 
 ## 测试
@@ -317,7 +317,7 @@ data/roco_pet_details/迪莫.json
 
 - 在允许的群中发送 `/ping`，期望回复 `pong`。
 - 发送 `/help`，期望看到功能列表。
-- 发送 `/精灵 迪莫`，期望收到静态精灵卡片图片。
+- 发送 `/精灵 迪莫`，期望收到静态精灵介绍图。
 - 发送 `/精灵 不存在`，期望收到未找到提示。
 - 配置 `AI_API_KEY` 后发送 `ai 你好`，期望收到 AI 回复。
 - 配置 `AI_FALLBACK_API_KEY` 后，将 `AI_BASE_URL` 临时改成无效地址并重启，再发送 `ai 你好`，期望仍能通过备用模型收到回复。

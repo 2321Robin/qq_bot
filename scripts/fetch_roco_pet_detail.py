@@ -18,7 +18,6 @@ from qq_bot.services.roco_bwiki import PARSER_VERSION, parse_pet_detail  # noqa:
 
 DIMO_URL = "https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB"
 BWIKI_INDEX_URL = "https://wiki.biligame.com/rocom/%E7%B2%BE%E7%81%B5%E7%AD%9B%E9%80%89"
-PETS_PATH = ROOT / "data" / "roco_pets.json"
 DEFAULT_OUTPUT_DIR = ROOT / "data" / "roco_pet_details"
 BROWSER_HEADERS = {
     "User-Agent": (
@@ -45,7 +44,7 @@ def write_pet_detail(detail: dict, output_path: Path) -> None:
     )
 
 
-def load_fetch_targets(pets_path: Path = PETS_PATH) -> list[tuple[str, str]]:
+def load_fetch_targets(pets_path: Path) -> list[tuple[str, str]]:
     pets = json.loads(pets_path.read_text(encoding="utf-8"))
     targets: list[tuple[str, str]] = []
     for pet in pets:
