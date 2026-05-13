@@ -1,5 +1,6 @@
 import pytest
 from nonebot.adapters.onebot.v11 import Message
+from nonebot.adapters.onebot.v11.exception import NetworkError
 
 from qq_bot.config import BotSettings
 from qq_bot.services.scheduled_sender import (
@@ -20,6 +21,15 @@ class FakeBot:
         if group_id in self.failing_group_ids:
             raise RuntimeError("send failed")
         self.sent.append((group_id, message))
+
+
+class TimeoutBot:
+    def __init__(self):
+        self.sent: list[tuple[int, object]] = []
+
+    async def send_group_msg(self, *, group_id: int, message: object) -> None:
+        self.sent.append((group_id, message))
+        raise NetworkError("WebSocket call api send_group_msg timeout")
 
 
 def test_build_scheduler_job_kwargs_uses_configured_time() -> None:
@@ -143,3 +153,13 @@ async def test_send_group_messages_continues_after_failure() -> None:
     assert bot.sent[1][0] == 1003
     assert isinstance(bot.sent[1][1], Message)
     assert bot.sent[1][1].extract_plain_text() == "早上好"
+
+
+@pytest.mark.asyncio
+async def test_send_group_messages_does_not_mark_send_timeout_as_failure() -> None:
+    bot = TimeoutBot()
+
+    failures = await send_group_messages(bot, [1001], "早上好")
+
+    assert failures == []
+    assert bot.sent[0][0] == 1001

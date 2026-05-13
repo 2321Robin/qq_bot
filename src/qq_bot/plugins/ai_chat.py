@@ -11,6 +11,7 @@ from qq_bot.services.memory_prompt import (
     parse_memory_reference,
 )
 from qq_bot.services.message_formatting import replace_named_mentions
+from qq_bot.services.onebot_send import finish_with_send_timeout_handled
 from qq_bot.services.prompt import extract_ai_prompt
 from qq_bot.services.search import (
     SearchError,
@@ -65,10 +66,13 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
         return
 
     if not prompt:
-        await ai_chat.finish(f"请在 {settings.ai_prefix} 后面输入要问的问题。")
+        await finish_with_send_timeout_handled(
+            ai_chat,
+            f"请在 {settings.ai_prefix} 后面输入要问的问题。",
+        )
 
     if not settings.has_ai_config():
-        await ai_chat.finish("AI 功能还没有配置 API Key。")
+        await finish_with_send_timeout_handled(ai_chat, "AI 功能还没有配置 API Key。")
 
     mentioned_user_ids = _without_self_mentions(
         extract_at_user_ids_before_separator(event.get_message()),
@@ -81,7 +85,7 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
     prompt = memory_reference.question
 
     if not prompt:
-        await ai_chat.finish("请输入要问的问题")
+        await finish_with_send_timeout_handled(ai_chat, "请输入要问的问题")
 
     chat_context = ""
     if memory_store is not None:
@@ -116,14 +120,24 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
             logger.exception("Chat memory write failed; continuing without storing message")
 
     search_context = ""
-    if prompt_needs_search(prompt) and settings.has_search_config():
+    needs_search = prompt_needs_search(prompt)
+    if needs_search and not settings.has_search_config():
+        await finish_with_send_timeout_handled(
+            ai_chat,
+            "这个问题需要联网搜索才能可靠回答，但搜索功能还没有配置。",
+        )
+
+    if needs_search:
         try:
             search_results = await search_web(prompt, settings=settings)
         except SearchError:
-            logger.exception("Web search failed; falling back to direct AI reply")
+            logger.exception("Web search failed for current-event prompt")
+            await finish_with_send_timeout_handled(ai_chat, "联网搜索失败了，先不乱编；稍后再问我试试。")
         else:
             if search_results:
                 search_context = format_search_context(search_results)
+            else:
+                await finish_with_send_timeout_handled(ai_chat, "联网搜索没有找到可靠结果，先不乱编。")
 
     try:
         reply = await request_ai_reply(
@@ -133,7 +147,7 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
             chat_context=chat_context,
         )
     except AIReplyError:
-        await ai_chat.finish("AI 服务暂时不可用，请稍后再试。")
+        await finish_with_send_timeout_handled(ai_chat, "AI 服务暂时不可用，请稍后再试。")
 
     if memory_message_id is not None:
         try:
@@ -141,7 +155,7 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
         except Exception:
             logger.exception("Chat memory reply update failed")
 
-    await ai_chat.finish(replace_named_mentions(reply))
+    await finish_with_send_timeout_handled(ai_chat, replace_named_mentions(reply))
 
 
 def _mentions_self(event: GroupMessageEvent) -> bool:

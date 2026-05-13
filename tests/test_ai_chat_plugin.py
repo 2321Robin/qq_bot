@@ -425,6 +425,80 @@ async def test_ai_chat_falls_back_when_search_fails(
 
 
 @pytest.mark.asyncio
+async def test_ai_chat_refuses_current_events_without_search_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_request_ai_reply(*args, **kwargs) -> str:
+        raise AssertionError("AI should not answer current-event prompts without search")
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(
+            allowed_group_ids="1001",
+            ai_api_key="secret",
+            search_enabled=False,
+            tavily_api_key="",
+        ),
+    )
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "ChatMemoryStore",
+        lambda path, retention_days: EmptyMemoryStore(),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled) as exc_info:
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 今天有什么新闻"))  # type: ignore[arg-type]
+
+    assert "需要联网搜索" in str(exc_info.value.message)
+
+
+@pytest.mark.asyncio
+async def test_ai_chat_refuses_current_events_when_search_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from qq_bot.services.search import SearchError
+
+    async def fake_search_web(prompt: str, *, settings: BotSettings):
+        raise SearchError("search down")
+
+    async def fake_request_ai_reply(*args, **kwargs) -> str:
+        raise AssertionError("AI should not answer current-event prompts when search fails")
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(
+            allowed_group_ids="1001",
+            ai_api_key="secret",
+            search_enabled=True,
+            tavily_api_key="tvly-secret",
+        ),
+    )
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "ChatMemoryStore",
+        lambda path, retention_days: EmptyMemoryStore(),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "search_web", fake_search_web)
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled) as exc_info:
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 今天 DeepSeek 有什么新闻"))  # type: ignore[arg-type]
+
+    assert "联网搜索失败" in str(exc_info.value.message)
+
+
+@pytest.mark.asyncio
 async def test_ai_chat_passes_default_group_memory_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

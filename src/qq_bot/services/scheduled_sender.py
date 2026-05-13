@@ -6,6 +6,7 @@ from nonebot import logger
 
 from qq_bot.config import BotSettings
 from qq_bot.services.message_formatting import replace_named_mentions
+from qq_bot.services.onebot_send import is_send_timeout_error
 
 
 class GroupMessageBot(Protocol):
@@ -54,7 +55,13 @@ async def send_group_messages(
     for group_id in group_ids:
         try:
             await bot.send_group_msg(group_id=group_id, message=formatted_message)
-        except Exception:
+        except Exception as exc:
+            if is_send_timeout_error(exc):
+                logger.warning(
+                    f"Scheduled message send timed out after dispatch for group {group_id}; "
+                    "not retrying to avoid duplicate messages."
+                )
+                continue
             logger.exception(f"Scheduled message send failed for group {group_id}.")
             failed_group_ids.append(group_id)
     return failed_group_ids

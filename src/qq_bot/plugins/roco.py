@@ -4,6 +4,7 @@ from nonebot.matcher import current_matcher
 from nonebot.params import CommandArg
 
 from qq_bot.config import get_settings
+from qq_bot.services.onebot_send import finish_with_send_timeout_handled
 from qq_bot.services.roco_pet_cards import pet_card_path
 from qq_bot.services.roco_pets import PetRecord, find_pet, format_pet_query_result, format_pet_record, get_pet_records
 from qq_bot.services.roco_skills import SkillRecord, format_skill_query_result, get_skill_records
@@ -23,8 +24,11 @@ async def handle_roco_pet(event: GroupMessageEvent, args: Message = CommandArg()
     query = args.extract_plain_text().strip()
     record = find_pet(get_pet_records(), query)
     if record is None:
-        await roco_pet_command.finish(format_pet_query_result(query, get_pet_records()))
-    await roco_pet_command.finish(_format_pet_card_message(record))
+        await finish_with_send_timeout_handled(
+            roco_pet_command,
+            format_pet_query_result(query, get_pet_records()),
+        )
+    await finish_with_send_timeout_handled(roco_pet_command, _format_pet_card_message(record))
 
 
 @roco_skill_command.handle()
@@ -34,7 +38,10 @@ async def handle_roco_skill(event: GroupMessageEvent, args: Message = CommandArg
         return
 
     query = args.extract_plain_text().strip()
-    await roco_skill_command.finish(format_skill_query_result(query, get_skill_records()))
+    await finish_with_send_timeout_handled(
+        roco_skill_command,
+        format_skill_query_result(query, get_skill_records()),
+    )
 
 
 @roco_mention_pet.handle()
@@ -51,12 +58,15 @@ async def handle_roco_mention_pet(event: GroupMessageEvent) -> None:
     record = _find_exact_mention_pet(pet_records, query)
     if record is not None:
         _stop_roco_mention_propagation()
-        await roco_mention_pet.finish(_format_pet_card_message(record))
+        await finish_with_send_timeout_handled(roco_mention_pet, _format_pet_card_message(record))
 
     skill_records = get_skill_records()
     if _find_exact_mention_skills(skill_records, query):
         _stop_roco_mention_propagation()
-        await roco_mention_pet.finish(format_skill_query_result(query, skill_records))
+        await finish_with_send_timeout_handled(
+            roco_mention_pet,
+            format_skill_query_result(query, skill_records),
+        )
 
 
 def _format_pet_card_message(record: PetRecord) -> MessageSegment | str:
