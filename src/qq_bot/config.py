@@ -66,6 +66,7 @@ class BotSettings(BaseSettings):
     ai_base_url: str = "https://api.openai.com/v1"
     ai_model: str = "gpt-4o-mini"
     ai_prefix: str = "ai"
+    ai_ignored_user_ids: str = ""
     ai_timeout_seconds: float = 30.0
     ai_fallback_api_key: str = Field(default="", repr=False)
     ai_fallback_base_url: str = "https://open.bigmodel.cn/api/paas/v4"
@@ -87,7 +88,7 @@ class BotSettings(BaseSettings):
         extra="ignore",
     )
 
-    @field_validator("allowed_group_ids", "admin_user_ids", "scheduled_group_ids")
+    @field_validator("allowed_group_ids", "admin_user_ids", "scheduled_group_ids", "ai_ignored_user_ids")
     @classmethod
     def validate_id_list(cls, value: str) -> str:
         parse_id_list(value)
@@ -155,6 +156,10 @@ class BotSettings(BaseSettings):
     @property
     def admin_user_id_list(self) -> list[int]:
         return parse_id_list(self.admin_user_ids)
+
+    @property
+    def ai_ignored_user_id_list(self) -> list[int]:
+        return parse_id_list(self.ai_ignored_user_ids)
 
     @property
     def scheduled_group_id_list(self) -> list[int]:

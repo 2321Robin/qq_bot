@@ -17,11 +17,14 @@ class FakeEvent:
         *,
         to_me: bool = False,
         self_id: int = 2854203313,
+        user_id: int | None = None,
     ):
         self.text = text
         self.segments = segments or []
         self.to_me = to_me
         self.self_id = self_id
+        if user_id is not None:
+            self.user_id = user_id
 
     def get_message(self) -> "FakeEvent":
         return self
@@ -172,6 +175,44 @@ async def test_ai_chat_replies_when_group_message_mentions_bot_without_to_me(
     message = exc_info.value.message
     assert isinstance(message, Message)
     assert message.extract_plain_text() == "你好呀"
+
+
+@pytest.mark.asyncio
+async def test_ai_chat_ignores_configured_sender_even_when_message_mentions_bot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeStore:
+        def add_message(self, *args, **kwargs) -> int:
+            raise AssertionError("ignored sender should not be recorded")
+
+    async def fake_request_ai_reply(*args, **kwargs) -> str:
+        raise AssertionError("AI should not be called for ignored sender")
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(
+            allowed_group_ids="1001",
+            ai_api_key="secret",
+            ai_ignored_user_ids="2854203313",
+        ),
+    )
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "ChatMemoryStore",
+        lambda path, retention_days: FakeStore(),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+
+    await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
+        FakeEvent(
+            "投票成功\n今日票数：81\n总票数：7196",
+            [FakeAtSegment(2381444078), FakeTextSegment(" 投票成功")],
+            to_me=True,
+            self_id=2381444078,
+            user_id=2854203313,
+        )
+    )
 
 
 @pytest.mark.asyncio
