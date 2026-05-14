@@ -2,7 +2,7 @@ import pytest
 from nonebot.adapters.onebot.v11.exception import ActionFailed, NetworkError
 from nonebot.exception import FinishedException
 
-from qq_bot.services.onebot_send import finish_with_send_timeout_handled, is_send_timeout_error
+from qq_bot.services.onebot_send import finish_with_send_errors_logged, is_send_timeout_error
 
 
 class FakeMatcher:
@@ -39,18 +39,18 @@ def test_is_send_timeout_error_ignores_non_send_timeout() -> None:
 
 
 @pytest.mark.asyncio
-async def test_finish_with_send_timeout_handled_finishes_after_send_timeout() -> None:
+async def test_finish_with_send_errors_logged_reraises_send_timeout() -> None:
     matcher = FakeMatcher(NetworkError("WebSocket call api send_msg timeout"))
 
-    with pytest.raises(FinishedException):
-        await finish_with_send_timeout_handled(matcher, "hello")
+    with pytest.raises(NetworkError):
+        await finish_with_send_errors_logged(matcher, "hello")
 
     assert matcher.messages == ["hello"]
 
 
 @pytest.mark.asyncio
-async def test_finish_with_send_timeout_handled_reraises_other_errors() -> None:
+async def test_finish_with_send_errors_logged_reraises_other_errors() -> None:
     matcher = FakeMatcher(RuntimeError("send failed"))
 
     with pytest.raises(RuntimeError, match="send failed"):
-        await finish_with_send_timeout_handled(matcher, "hello")
+        await finish_with_send_errors_logged(matcher, "hello")

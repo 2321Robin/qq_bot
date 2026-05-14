@@ -156,10 +156,10 @@ async def test_send_group_messages_continues_after_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_send_group_messages_does_not_mark_send_timeout_as_failure() -> None:
+async def test_send_group_messages_marks_send_timeout_as_failure() -> None:
     bot = TimeoutBot()
 
     failures = await send_group_messages(bot, [1001], "早上好")
 
-    assert failures == []
+    assert failures == [1001]
     assert bot.sent[0][0] == 1001
