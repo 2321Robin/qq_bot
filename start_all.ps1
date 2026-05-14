@@ -62,6 +62,21 @@ function Get-BotConnection {
     return @($localConnections + $remoteConnections)
 }
 
+function Start-BotBackend {
+    Write-Host "Starting bot backend on port $BotPort..."
+    $botCommand = "chcp 65001 > `$null; [Console]::InputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; `$OutputEncoding = [System.Text.Encoding]::UTF8; Set-Location -LiteralPath '$ProjectDir'; & '$PythonExe' '$BotScript'"
+    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $botCommand -WorkingDirectory $ProjectDir
+    Start-Sleep -Seconds 5
+}
+
+function Stop-BotProcesses {
+    param([object[]]$Processes)
+
+    foreach ($process in $Processes) {
+        Stop-Process -Id $process.ProcessId -Force
+    }
+}
+
 function Test-NapCatRunning {
     param([string]$Directory)
 
@@ -79,8 +94,14 @@ Assert-DirectoryExists -Path $NapCatDir -Label "NapCat directory"
 Assert-FileExists -Path $NapCatExe -Label "NapCat executable"
 
 $botProcesses = @(Get-BotProcess -ScriptPath $BotScript)
-if (Test-PortListening -Port $BotPort) {
-    Write-Host "Bot backend is already listening on port $BotPort."
+if ($botProcesses.Count -gt 1) {
+    Write-Host "Restarting bot backend because multiple bot.py processes exist."
+    Stop-BotProcesses -Processes $botProcesses
+    Start-BotBackend
+} elseif (Test-PortListening -Port $BotPort) {
+    Write-Host "Restarting bot backend to load current code."
+    Stop-BotProcesses -Processes $botProcesses
+    Start-BotBackend
 } elseif ($botProcesses.Count -gt 0) {
     Write-Host "Bot backend process already exists. Waiting for port $BotPort..."
     for ($i = 1; $i -le 6; $i++) {
@@ -92,20 +113,11 @@ if (Test-PortListening -Port $BotPort) {
 
     if (-not (Test-PortListening -Port $BotPort)) {
         Write-Host "Restarting bot backend because existing bot.py process is not listening on port $BotPort."
-        foreach ($process in $botProcesses) {
-            Stop-Process -Id $process.ProcessId -Force
-        }
-
-        Write-Host "Starting bot backend on port $BotPort..."
-        $botCommand = "chcp 65001 > `$null; [Console]::InputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; `$OutputEncoding = [System.Text.Encoding]::UTF8; Set-Location -LiteralPath '$ProjectDir'; & '$PythonExe' '$BotScript'"
-        Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $botCommand -WorkingDirectory $ProjectDir
-        Start-Sleep -Seconds 5
+        Stop-BotProcesses -Processes $botProcesses
+        Start-BotBackend
     }
 } else {
-    Write-Host "Starting bot backend on port $BotPort..."
-    $botCommand = "chcp 65001 > `$null; [Console]::InputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; `$OutputEncoding = [System.Text.Encoding]::UTF8; Set-Location -LiteralPath '$ProjectDir'; & '$PythonExe' '$BotScript'"
-    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $botCommand -WorkingDirectory $ProjectDir
-    Start-Sleep -Seconds 5
+    Start-BotBackend
 }
 
 if (Test-NapCatRunning -Directory $NapCatDir) {

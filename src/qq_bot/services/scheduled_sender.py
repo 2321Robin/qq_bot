@@ -58,10 +58,9 @@ async def send_group_messages(
         except Exception as exc:
             if is_send_timeout_error(exc):
                 logger.warning(
-                    f"Scheduled message send timed out after dispatch for group {group_id}; "
-                    "not retrying to avoid duplicate messages."
+                    f"Scheduled message send timed out and may not be visible in QQ for group {group_id}."
                 )
-                continue
-            logger.exception(f"Scheduled message send failed for group {group_id}.")
+            else:
+                logger.exception(f"Scheduled message send failed for group {group_id}.")
             failed_group_ids.append(group_id)
     return failed_group_ids

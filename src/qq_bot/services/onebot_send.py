@@ -4,7 +4,6 @@ from typing import Any, Protocol, NoReturn
 
 from nonebot import logger
 from nonebot.adapters.onebot.v11.exception import ActionFailed, NetworkError
-from nonebot.exception import FinishedException
 
 
 class FinishableMatcher(Protocol):
@@ -23,7 +22,7 @@ def is_send_timeout_error(error: Exception) -> bool:
     return False
 
 
-async def finish_with_send_timeout_handled(
+async def finish_with_send_errors_logged(
     matcher: FinishableMatcher,
     message: object,
     **kwargs: Any,
@@ -32,11 +31,10 @@ async def finish_with_send_timeout_handled(
         await matcher.finish(message, **kwargs)
     except Exception as exc:
         if is_send_timeout_error(exc):
-            logger.warning(f"Message send timed out after dispatch; suppressing duplicate retry: {exc!r}")
-            raise FinishedException from None
+            logger.warning(f"Message send timed out and may not be visible in QQ: {exc!r}")
         raise
 
-    raise FinishedException
+    raise RuntimeError("matcher.finish returned unexpectedly")
 
 
 def _error_text(error: Exception) -> str:

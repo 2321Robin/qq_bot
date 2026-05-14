@@ -30,8 +30,21 @@ def test_start_all_script_does_not_keep_stale_backend_process() -> None:
 
     stale_process_branch = script[script.index("} elseif ($botProcesses.Count -gt 0) {") : script.index("} else {")]
     assert "Warning: bot.py is running but port $BotPort is not listening." not in stale_process_branch
-    assert "Stop-Process -Id" in stale_process_branch
-    assert "Starting bot backend" in stale_process_branch
+    assert "Stop-BotProcesses -Processes $botProcesses" in stale_process_branch
+    assert "Start-BotBackend" in stale_process_branch
+
+
+def test_start_all_script_restarts_when_multiple_bot_processes_exist() -> None:
+    script = (ROOT / "start_all.ps1").read_text(encoding="utf-8")
+
+    assert "$botProcesses.Count -gt 1" in script
+    assert "Restarting bot backend because multiple bot.py processes exist." in script
+
+
+def test_start_all_script_restarts_bot_after_code_changes() -> None:
+    script = (ROOT / "start_all.ps1").read_text(encoding="utf-8")
+
+    assert "Restarting bot backend to load current code." in script
 
 
 def test_batch_entrypoint_invokes_powershell_script() -> None:
