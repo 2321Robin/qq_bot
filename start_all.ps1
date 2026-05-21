@@ -12,6 +12,11 @@ $NapCatDir = "C:\Users\Robin\Documents\NapCatQQ\NapCat.44498.Shell"
 $NapCatExe = Join-Path $NapCatDir "NapCatWinBootMain.exe"
 $NapCatAccount = "2381444078"
 $WebUiUrl = "http://127.0.0.1:6099/webui?token=8ebcfb93900e"
+$StartupLogDir = Join-Path $ProjectDir "logs\startup"
+$BotStdoutLog = Join-Path $StartupLogDir "bot.out.log"
+$BotStderrLog = Join-Path $StartupLogDir "bot.err.log"
+$NapCatStdoutLog = Join-Path $StartupLogDir "napcat.out.log"
+$NapCatStderrLog = Join-Path $StartupLogDir "napcat.err.log"
 
 function Assert-FileExists {
     param(
@@ -48,9 +53,10 @@ function Test-PortListening {
 function Get-BotProcess {
     param([string]$ScriptPath)
 
-    $normalizedScriptPath = $ScriptPath.ToLowerInvariant()
+    $escapedScriptPath = [regex]::Escape($ScriptPath)
+    $scriptPattern = '(^|\s)"?' + $escapedScriptPath + '"?(\s|$)'
     return @(Get-CimInstance Win32_Process -Filter "Name = 'python.exe' OR Name = 'pythonw.exe'" | Where-Object {
-        $_.CommandLine -and $_.CommandLine.ToLowerInvariant().Contains($normalizedScriptPath)
+        $_.CommandLine -and $_.CommandLine -match $scriptPattern
     })
 }
 
@@ -62,28 +68,51 @@ function Get-BotConnection {
     return @($localConnections + $remoteConnections)
 }
 
+function Get-NapCatProcess {
+    param([string]$Directory)
+
+    $directoryPrefix = [System.IO.Path]::GetFullPath($Directory).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    return @(Get-Process -Name NapCatWinBootMain,QQ -ErrorAction SilentlyContinue | Where-Object {
+        $_.Path -and [System.IO.Path]::GetFullPath($_.Path).StartsWith($directoryPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+    })
+}
+
 function Start-BotBackend {
     Write-Host "Starting bot backend on port $BotPort..."
     $botCommand = "chcp 65001 > `$null; [Console]::InputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; `$OutputEncoding = [System.Text.Encoding]::UTF8; Set-Location -LiteralPath '$ProjectDir'; & '$PythonExe' '$BotScript'"
-    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $botCommand -WorkingDirectory $ProjectDir
+    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $botCommand -WorkingDirectory $ProjectDir -WindowStyle Hidden -RedirectStandardOutput $BotStdoutLog -RedirectStandardError $BotStderrLog
     Start-Sleep -Seconds 5
+}
+
+function Start-NapCat {
+    Write-Host "Starting NapCat for account $NapCatAccount..."
+    $napCatCommand = "chcp 65001 > `$null; [Console]::InputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; `$OutputEncoding = [System.Text.Encoding]::UTF8; Set-Location -LiteralPath '$NapCatDir'; & '$NapCatExe' $NapCatAccount"
+    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $napCatCommand -WorkingDirectory $NapCatDir -WindowStyle Hidden -RedirectStandardOutput $NapCatStdoutLog -RedirectStandardError $NapCatStderrLog
+    Start-Sleep -Seconds 8
 }
 
 function Stop-BotProcesses {
     param([object[]]$Processes)
 
     foreach ($process in $Processes) {
-        Stop-Process -Id $process.ProcessId -Force
+        try {
+            Stop-Process -Id $process.ProcessId -Force
+        } catch {
+            Write-Host "Warning: failed to stop bot process $($process.ProcessId): $($_.Exception.Message)"
+        }
     }
 }
 
-function Test-NapCatRunning {
-    param([string]$Directory)
+function Stop-NapCatProcesses {
+    param([object[]]$Processes)
 
-    $processes = @(Get-Process -Name NapCatWinBootMain,QQ -ErrorAction SilentlyContinue | Where-Object {
-        $_.Path -like "$Directory*"
-    })
-    return $processes.Count -gt 0
+    foreach ($process in $Processes) {
+        try {
+            Stop-Process -Id $process.Id -Force
+        } catch {
+            Write-Host "Warning: failed to stop NapCat process $($process.Id): $($_.Exception.Message)"
+        }
+    }
 }
 
 Write-Host "Checking startup files..."
@@ -93,41 +122,30 @@ Assert-FileExists -Path $BotScript -Label "Bot script"
 Assert-DirectoryExists -Path $NapCatDir -Label "NapCat directory"
 Assert-FileExists -Path $NapCatExe -Label "NapCat executable"
 
+New-Item -ItemType Directory -Path $StartupLogDir -Force | Out-Null
+
 $botProcesses = @(Get-BotProcess -ScriptPath $BotScript)
-if ($botProcesses.Count -gt 1) {
-    Write-Host "Restarting bot backend because multiple bot.py processes exist."
+if ($botProcesses.Count -gt 0) {
+    Write-Host "Stopping existing bot backend before fresh startup."
     Stop-BotProcesses -Processes $botProcesses
-    Start-BotBackend
-} elseif (Test-PortListening -Port $BotPort) {
-    Write-Host "Restarting bot backend to load current code."
-    Stop-BotProcesses -Processes $botProcesses
-    Start-BotBackend
-} elseif ($botProcesses.Count -gt 0) {
-    Write-Host "Bot backend process already exists. Waiting for port $BotPort..."
-    for ($i = 1; $i -le 6; $i++) {
-        if (Test-PortListening -Port $BotPort) {
-            break
-        }
-        Start-Sleep -Seconds 5
-    }
-
-    if (-not (Test-PortListening -Port $BotPort)) {
-        Write-Host "Restarting bot backend because existing bot.py process is not listening on port $BotPort."
-        Stop-BotProcesses -Processes $botProcesses
-        Start-BotBackend
-    }
-} else {
-    Start-BotBackend
+    Start-Sleep -Seconds 2
 }
 
-if (Test-NapCatRunning -Directory $NapCatDir) {
-    Write-Host "NapCat is already running."
-} else {
-    Write-Host "Starting NapCat for account $NapCatAccount..."
-    $napCatCommand = "chcp 65001 > `$null; [Console]::InputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; `$OutputEncoding = [System.Text.Encoding]::UTF8; Set-Location -LiteralPath '$NapCatDir'; & '$NapCatExe' $NapCatAccount"
-    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $napCatCommand -WorkingDirectory $NapCatDir
-    Start-Sleep -Seconds 8
+$napCatProcesses = @(Get-NapCatProcess -Directory $NapCatDir)
+if ($napCatProcesses.Count -gt 0) {
+    Write-Host "Stopping existing NapCat before fresh startup."
+    Stop-NapCatProcesses -Processes $napCatProcesses
+    Start-Sleep -Seconds 2
 }
+
+if (Test-PortListening -Port $BotPort) {
+    Write-Host "Restarting bot backend because port $BotPort is still listening."
+}
+
+Write-Host "Restarting bot backend to load current code."
+Start-BotBackend
+
+Start-NapCat
 
 Write-Host "NapCat WebUI: $WebUiUrl"
 

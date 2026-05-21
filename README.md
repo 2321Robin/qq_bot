@@ -242,14 +242,27 @@ ws://127.0.0.1:8081/onebot/v11/ws
 
 ## Windows 一键启动
 
-仓库包含 Windows 启动脚本：
+仓库包含 Windows 启动和停止脚本：
 
 ```text
 一键启动.bat
 start_all.ps1
+停止.bat
+stop_all.ps1
 ```
 
-这些脚本用于在本机同时启动机器人后端和 NapCatQQ。使用前请检查 `start_all.ps1` 中的本机路径、QQ 账号、端口和 NapCatQQ WebUI 地址是否符合你的环境。
+这些脚本用于在本机启动或停止机器人后端和 NapCatQQ。使用前请检查配置是否符合你的环境：`start_all.ps1` 包含本机路径、QQ 账号、端口和 NapCatQQ WebUI 地址；`stop_all.ps1` 包含项目路径和 NapCat 目录。
+
+双击 `一键启动.bat` 会通过隐藏的 PowerShell 启动后台进程，批处理窗口可能短暂闪现；启动前会自动关闭已有的机器人后端和当前 NapCat 目录下的 NapCat/QQ 进程，然后重新启动。双击 `停止.bat` 可手动关闭这些进程。
+
+后台启动日志写入 `logs/startup/`：
+
+```text
+bot.out.log
+bot.err.log
+napcat.out.log
+napcat.err.log
+```
 
 ## 洛克王国精灵介绍图
 
