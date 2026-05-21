@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -40,20 +41,21 @@ class RocoCounterStore:
         timestamp = self._to_utc_iso(now or datetime.now(UTC))
         normal_delta = 0 if shiny else 1
         shiny_delta = 1 if shiny else 0
-        with self._connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO roco_counter (
-                    group_id, user_id, season, pet_name, normal_count, shiny_count, updated_at
+        with closing(self._connect()) as connection:
+            with connection:
+                connection.execute(
+                    """
+                    INSERT INTO roco_counter (
+                        group_id, user_id, season, pet_name, normal_count, shiny_count, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(group_id, user_id, season, pet_name) DO UPDATE SET
+                        normal_count = normal_count + excluded.normal_count,
+                        shiny_count = shiny_count + excluded.shiny_count,
+                        updated_at = excluded.updated_at
+                    """,
+                    (group_id, user_id, season, pet_name, normal_delta, shiny_delta, timestamp),
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(group_id, user_id, season, pet_name) DO UPDATE SET
-                    normal_count = normal_count + excluded.normal_count,
-                    shiny_count = shiny_count + excluded.shiny_count,
-                    updated_at = excluded.updated_at
-                """,
-                (group_id, user_id, season, pet_name, normal_delta, shiny_delta, timestamp),
-            )
         row = self.get_pet_count(
             group_id=group_id,
             user_id=user_id,
@@ -72,7 +74,7 @@ class RocoCounterStore:
         season: str,
         pet_name: str,
     ) -> RocoCounterRow | None:
-        with self._connect() as connection:
+        with closing(self._connect()) as connection:
             row = connection.execute(
                 """
                 SELECT group_id, user_id, season, pet_name, normal_count, shiny_count, updated_at
@@ -86,27 +88,28 @@ class RocoCounterStore:
         return self._row_from_sqlite(row)
 
     def _initialize_database(self) -> None:
-        with self._connect() as connection:
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS roco_counter (
-                    group_id INTEGER NOT NULL,
-                    user_id INTEGER NOT NULL,
-                    season TEXT NOT NULL,
-                    pet_name TEXT NOT NULL,
-                    normal_count INTEGER NOT NULL DEFAULT 0,
-                    shiny_count INTEGER NOT NULL DEFAULT 0,
-                    updated_at TEXT NOT NULL,
-                    PRIMARY KEY (group_id, user_id, season, pet_name)
+        with closing(self._connect()) as connection:
+            with connection:
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS roco_counter (
+                        group_id INTEGER NOT NULL,
+                        user_id INTEGER NOT NULL,
+                        season TEXT NOT NULL,
+                        pet_name TEXT NOT NULL,
+                        normal_count INTEGER NOT NULL DEFAULT 0,
+                        shiny_count INTEGER NOT NULL DEFAULT 0,
+                        updated_at TEXT NOT NULL,
+                        PRIMARY KEY (group_id, user_id, season, pet_name)
+                    )
+                    """
                 )
-                """
-            )
-            connection.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_roco_counter_scope_total
-                ON roco_counter (group_id, user_id, season, normal_count, shiny_count)
-                """
-            )
+                connection.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_roco_counter_scope_total
+                    ON roco_counter (group_id, user_id, season, normal_count, shiny_count)
+                    """
+                )
 
     def _connect(self) -> sqlite3.Connection:
         return sqlite3.connect(self.path)
