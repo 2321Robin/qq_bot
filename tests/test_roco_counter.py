@@ -40,6 +40,26 @@ def test_add_shiny_capture_increments_shiny_and_total(tmp_path: Path) -> None:
     assert row.total_count == 2
 
 
+def test_shiny_capture_records_total_index(tmp_path: Path) -> None:
+    store = RocoCounterStore(tmp_path / "counter.sqlite3")
+
+    store.add_capture(group_id=1001, user_id=2002, season="S2", pet_name="迪莫", shiny=False)
+    store.add_capture(group_id=1001, user_id=2002, season="S2", pet_name="迪莫", shiny=False)
+    store.add_capture(group_id=1001, user_id=2002, season="S2", pet_name="迪莫", shiny=True)
+    store.add_capture(group_id=1001, user_id=2002, season="S2", pet_name="迪莫", shiny=False)
+    store.add_capture(group_id=1001, user_id=2002, season="S2", pet_name="迪莫", shiny=True)
+
+    assert store.get_shiny_indexes(group_id=1001, user_id=2002, season="S2", pet_name="迪莫") == [3, 5]
+
+
+def test_normal_capture_does_not_record_shiny_index(tmp_path: Path) -> None:
+    store = RocoCounterStore(tmp_path / "counter.sqlite3")
+
+    store.add_capture(group_id=1001, user_id=2002, season="S2", pet_name="迪莫", shiny=False)
+
+    assert store.get_shiny_indexes(group_id=1001, user_id=2002, season="S2", pet_name="迪莫") == []
+
+
 def test_store_closes_sqlite_connections(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     connections: list[ClosingConnection] = []
     original_connect = sqlite3.connect
@@ -100,9 +120,25 @@ def test_format_counter_summary() -> None:
         RocoCounterRow(1001, 2002, "S2", "喵喵", 1, 0, "2026-05-21T00:00:00+00:00"),
     ]
 
+    text = format_counter_summary(season="S2", rows=rows, shiny_indexes={"迪莫": [3]})
+
+    assert text == "S2 捕捉计数器\n总捕捉：4 | 异色：1\n迪莫：3（异色 1：第 3 只）\n喵喵：1（异色 0）"
+
+
+def test_format_counter_summary_lists_multiple_shiny_indexes() -> None:
+    rows = [RocoCounterRow(1001, 2002, "S2", "迪莫", 3, 2, "2026-05-21T00:00:00+00:00")]
+
+    text = format_counter_summary(season="S2", rows=rows, shiny_indexes={"迪莫": [3, 5]})
+
+    assert text == "S2 捕捉计数器\n总捕捉：5 | 异色：2\n迪莫：5（异色 2：第 3、5 只）"
+
+
+def test_format_counter_summary_keeps_legacy_shiny_count_without_indexes() -> None:
+    rows = [RocoCounterRow(1001, 2002, "S2", "迪莫", 3, 2, "2026-05-21T00:00:00+00:00")]
+
     text = format_counter_summary(season="S2", rows=rows)
 
-    assert text == "S2 捕捉计数器\n总捕捉：4 | 异色：1\n迪莫：3（异色 1）\n喵喵：1（异色 0）"
+    assert text == "S2 捕捉计数器\n总捕捉：5 | 异色：2\n迪莫：5（异色 2）"
 
 
 def test_format_capture_result() -> None:
@@ -112,9 +148,9 @@ def test_format_capture_result() -> None:
         RocoCounterRow(1001, 2002, "S2", "喵喵", 1, 0, "2026-05-21T00:00:00+00:00"),
     ]
 
-    text = format_capture_result(season="S2", row=row, rows=rows, shiny=True)
+    text = format_capture_result(season="S2", row=row, rows=rows, shiny=True, shiny_index=3)
 
-    assert text == "S2 异色 迪莫 +1\n当前：3 | 异色：1\n总捕捉：4 | 总异色：1"
+    assert text == "S2 异色 迪莫 +1（第 3 只是异色）\n当前：3 | 异色：1\n总捕捉：4 | 总异色：1"
 
 
 def test_parse_empty_counter_args_means_summary() -> None:

@@ -7,7 +7,6 @@ from qq_bot.services.onebot_send import finish_with_send_errors_logged
 
 
 help_command = on_command("help", aliases={"帮助"}, priority=5, block=True)
-ping_command = on_command("ping", aliases={"状态"}, priority=5, block=True)
 
 
 @help_command.handle()
@@ -18,11 +17,3 @@ async def handle_help(event: GroupMessageEvent) -> None:
 
     await finish_with_send_errors_logged(help_command, build_help_text(settings.ai_prefix))
 
-
-@ping_command.handle()
-async def handle_ping(event: GroupMessageEvent) -> None:
-    settings = get_settings()
-    if not settings.group_allowed(event.group_id):
-        return
-
-    await finish_with_send_errors_logged(ping_command, "pong")

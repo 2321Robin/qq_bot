@@ -32,9 +32,18 @@ async def handle_roco_counter(event: GroupMessageEvent, args: Message = CommandA
             user_id=event.user_id,
             season=settings.roco_counter_season,
         )
+        shiny_indexes = store.get_summary_shiny_indexes(
+            group_id=event.group_id,
+            user_id=event.user_id,
+            season=settings.roco_counter_season,
+        )
         await finish_with_send_errors_logged(
             roco_counter_command,
-            format_counter_summary(season=settings.roco_counter_season, rows=rows),
+            format_counter_summary(
+                season=settings.roco_counter_season,
+                rows=rows,
+                shiny_indexes=shiny_indexes,
+            ),
         )
 
     row = store.add_capture(
@@ -49,6 +58,12 @@ async def handle_roco_counter(event: GroupMessageEvent, args: Message = CommandA
         user_id=event.user_id,
         season=settings.roco_counter_season,
     )
+    shiny_indexes = store.get_shiny_indexes(
+        group_id=event.group_id,
+        user_id=event.user_id,
+        season=settings.roco_counter_season,
+        pet_name=action.pet_name,
+    )
     await finish_with_send_errors_logged(
         roco_counter_command,
         format_capture_result(
@@ -56,5 +71,6 @@ async def handle_roco_counter(event: GroupMessageEvent, args: Message = CommandA
             row=row,
             rows=rows,
             shiny=action.shiny,
+            shiny_index=shiny_indexes[-1] if action.shiny and shiny_indexes else None,
         ),
     )
