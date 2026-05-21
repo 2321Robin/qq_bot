@@ -25,7 +25,7 @@ async def handle_roco_counter(event: GroupMessageEvent, args: Message = CommandA
     if action.error:
         await finish_with_send_errors_logged(roco_counter_command, action.error)
 
-    store = RocoCounterStore(settings.roco_counter_path)
+    store = RocoCounterStore(settings.resolved_roco_counter_path)
     if action.show_summary:
         rows = store.get_summary(
             group_id=event.group_id,
