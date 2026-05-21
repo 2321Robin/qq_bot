@@ -87,6 +87,25 @@ class RocoCounterStore:
             return None
         return self._row_from_sqlite(row)
 
+    def get_summary(
+        self,
+        *,
+        group_id: int,
+        user_id: int,
+        season: str,
+    ) -> list[RocoCounterRow]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT group_id, user_id, season, pet_name, normal_count, shiny_count, updated_at
+                FROM roco_counter
+                WHERE group_id = ? AND user_id = ? AND season = ?
+                ORDER BY (normal_count + shiny_count) DESC, pet_name ASC
+                """,
+                (group_id, user_id, season),
+            ).fetchall()
+        return [self._row_from_sqlite(row) for row in rows]
+
     def _initialize_database(self) -> None:
         with closing(self._connect()) as connection:
             with connection:
@@ -131,3 +150,33 @@ class RocoCounterStore:
             shiny_count=int(row[5]),
             updated_at=str(row[6]),
         )
+
+
+def format_counter_summary(*, season: str, rows: list[RocoCounterRow]) -> str:
+    if not rows:
+        return f"{season} 捕捉计数器\n暂无记录。发送 /计数 迪莫 开始记录。"
+
+    total_count = sum(row.total_count for row in rows)
+    shiny_count = sum(row.shiny_count for row in rows)
+    lines = [f"{season} 捕捉计数器", f"总捕捉：{total_count} | 异色：{shiny_count}"]
+    lines.extend(f"{row.pet_name}：{row.total_count}（异色 {row.shiny_count}）" for row in rows)
+    return "\n".join(lines)
+
+
+def format_capture_result(
+    *,
+    season: str,
+    row: RocoCounterRow,
+    rows: list[RocoCounterRow],
+    shiny: bool,
+) -> str:
+    total_count = sum(summary_row.total_count for summary_row in rows)
+    shiny_count = sum(summary_row.shiny_count for summary_row in rows)
+    title = f"{season} 异色 {row.pet_name} +1" if shiny else f"{season} {row.pet_name} +1"
+    return "\n".join(
+        [
+            title,
+            f"当前：{row.total_count} | 异色：{row.shiny_count}",
+            f"总捕捉：{total_count} | 总异色：{shiny_count}",
+        ]
+    )
