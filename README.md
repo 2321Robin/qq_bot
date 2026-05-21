@@ -10,6 +10,7 @@
 - `/ping`：检查机器人是否在线，正常时回复 `pong`。
 - `/精灵 迪莫` 或 `/洛克 迪莫`：查询本地洛克王国世界精灵详细数据，并返回静态精灵介绍图。
 - `/技能 闪光`：查询本地洛克王国世界技能效果，以及可使用该技能的精灵。
+- `/计数 迪莫` 或 `/计数 异色 迪莫`：记录当前用户当前赛季的精灵捕捉数量；发送 `/计数` 查看汇总。
 - `ai 你好`：显式向配置的 AI 模型提问。
 - AI 群聊记忆：自动记录近期群消息，AI 可在同一群聊和用户上下文中引用近期对话。
 - AI 搜索增强：启用 Tavily 后，可对新闻、当前事件或搜索类问题自动补充联网搜索结果。
@@ -99,6 +100,9 @@ CHAT_MEMORY_RETENTION_DAYS=3
 CHAT_MEMORY_DEFAULT_TURNS=10
 CHAT_MEMORY_MAX_RESULTS=20
 
+ROCO_COUNTER_PATH=data/roco_counter.sqlite3
+ROCO_COUNTER_SEASON=S2
+
 SEARCH_ENABLED=false
 TAVILY_API_KEY=
 SEARCH_MAX_RESULTS=5
@@ -185,6 +189,13 @@ TAVILY_API_KEY=你的 Tavily API Key
 ai 今天有什么新闻
 ai 搜索 DeepSeek 最新消息
 ```
+
+### 精灵捕捉计数器
+
+- `ROCO_COUNTER_PATH` 控制捕捉计数 SQLite 文件路径，默认 `data/roco_counter.sqlite3`。
+- `ROCO_COUNTER_SEASON` 控制当前计数赛季，默认 `S2`。
+- 发送 `/计数 迪莫` 记录普通捕捉，发送 `/计数 异色 迪莫` 记录异色捕捉。
+- 发送 `/计数` 查看当前群内当前用户的当前赛季汇总。
 
 ### 定时消息
 
@@ -330,6 +341,9 @@ data/roco_pet_details/001-迪莫.json
 - 发送 `/精灵 不存在`，期望收到未找到提示。
 - 发送 `/技能 闪光`，期望收到技能效果和可使用该技能的精灵列表。
 - 发送 `/技能 不存在`，期望收到技能未收录提示。
+- 发送 `/计数 迪莫`，期望收到 `S2 迪莫 +1`。
+- 发送 `/计数 异色 迪莫`，期望收到 `S2 异色 迪莫 +1`。
+- 发送 `/计数`，期望收到当前用户的 S2 捕捉汇总。
 - 配置 `AI_API_KEY` 后发送 `ai 你好`，期望收到 AI 回复。
 - 配置 `AI_FALLBACK_API_KEY` 后，将 `AI_BASE_URL` 临时改成无效地址并重启，再发送 `ai 你好`，期望仍能通过备用模型收到回复。
 - 设置 `SEARCH_ENABLED=true` 和 `TAVILY_API_KEY` 后重启，发送 `ai 搜索 DeepSeek 最新消息`，期望回复中使用联网搜索上下文。
