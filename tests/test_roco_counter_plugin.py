@@ -101,9 +101,67 @@ async def test_counter_command_records_shiny_capture(
         await roco_counter_plugin.handle_roco_counter(FakeEvent(), FakeArgs("异色 迪莫"))  # type: ignore[arg-type]
 
     message = str(exc_info.value.message)
-    assert "S2 异色 迪莫 +1" in message
+    assert "S2 异色 迪莫 +1（第 1 只是异色）" in message
     assert "当前：1 | 异色：1" in message
     assert "总捕捉：1 | 总异色：1" in message
+
+
+@pytest.mark.asyncio
+async def test_counter_command_records_later_shiny_index(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    messages: list[object] = []
+
+    async def fake_finish(message: object) -> None:
+        messages.append(message)
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        roco_counter_plugin,
+        "get_settings",
+        lambda: BotSettings(
+            allowed_group_ids="1001",
+            roco_counter_path=str(tmp_path / "counter.sqlite3"),
+            roco_counter_season="S2",
+        ),
+    )
+    monkeypatch.setattr(roco_counter_plugin.roco_counter_command, "finish", fake_finish)
+
+    for args in ["迪莫", "迪莫", "异色 迪莫"]:
+        with pytest.raises(FinishCalled):
+            await roco_counter_plugin.handle_roco_counter(FakeEvent(), FakeArgs(args))  # type: ignore[arg-type]
+
+    assert "S2 异色 迪莫 +1（第 3 只是异色）" in str(messages[-1])
+
+
+@pytest.mark.asyncio
+async def test_counter_command_summary_shows_shiny_indexes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    messages: list[object] = []
+
+    async def fake_finish(message: object) -> None:
+        messages.append(message)
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        roco_counter_plugin,
+        "get_settings",
+        lambda: BotSettings(
+            allowed_group_ids="1001",
+            roco_counter_path=str(tmp_path / "counter.sqlite3"),
+            roco_counter_season="S2",
+        ),
+    )
+    monkeypatch.setattr(roco_counter_plugin.roco_counter_command, "finish", fake_finish)
+
+    for args in ["迪莫", "迪莫", "异色 迪莫", "迪莫", "异色 迪莫", ""]:
+        with pytest.raises(FinishCalled):
+            await roco_counter_plugin.handle_roco_counter(FakeEvent(), FakeArgs(args))  # type: ignore[arg-type]
+
+    assert "迪莫：5（异色 2：第 3、5 只）" in str(messages[-1])
 
 
 @pytest.mark.asyncio

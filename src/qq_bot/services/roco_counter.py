@@ -81,6 +81,26 @@ class RocoCounterStore:
                     """,
                     (group_id, user_id, season, pet_name, normal_delta, shiny_delta, timestamp),
                 )
+                if shiny:
+                    row = connection.execute(
+                        """
+                        SELECT normal_count + shiny_count
+                        FROM roco_counter
+                        WHERE group_id = ? AND user_id = ? AND season = ? AND pet_name = ?
+                        """,
+                        (group_id, user_id, season, pet_name),
+                    ).fetchone()
+                    if row is None:
+                        raise RuntimeError("failed to read roco counter total after shiny update")
+                    connection.execute(
+                        """
+                        INSERT INTO roco_counter_shiny_marks (
+                            group_id, user_id, season, pet_name, total_index, created_at
+                        )
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (group_id, user_id, season, pet_name, int(row[0]), timestamp),
+                    )
         row = self.get_pet_count(
             group_id=group_id,
             user_id=user_id,
@@ -131,6 +151,48 @@ class RocoCounterStore:
             ).fetchall()
         return [self._row_from_sqlite(row) for row in rows]
 
+    def get_shiny_indexes(
+        self,
+        *,
+        group_id: int,
+        user_id: int,
+        season: str,
+        pet_name: str,
+    ) -> list[int]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT total_index
+                FROM roco_counter_shiny_marks
+                WHERE group_id = ? AND user_id = ? AND season = ? AND pet_name = ?
+                ORDER BY total_index ASC, id ASC
+                """,
+                (group_id, user_id, season, pet_name),
+            ).fetchall()
+        return [int(row[0]) for row in rows]
+
+    def get_summary_shiny_indexes(
+        self,
+        *,
+        group_id: int,
+        user_id: int,
+        season: str,
+    ) -> dict[str, list[int]]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT pet_name, total_index
+                FROM roco_counter_shiny_marks
+                WHERE group_id = ? AND user_id = ? AND season = ?
+                ORDER BY pet_name ASC, total_index ASC, id ASC
+                """,
+                (group_id, user_id, season),
+            ).fetchall()
+        indexes: dict[str, list[int]] = {}
+        for pet_name, total_index in rows:
+            indexes.setdefault(str(pet_name), []).append(int(total_index))
+        return indexes
+
     def _initialize_database(self) -> None:
         with closing(self._connect()) as connection:
             with connection:
@@ -152,6 +214,25 @@ class RocoCounterStore:
                     """
                     CREATE INDEX IF NOT EXISTS idx_roco_counter_scope_total
                     ON roco_counter (group_id, user_id, season, normal_count, shiny_count)
+                    """
+                )
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS roco_counter_shiny_marks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        group_id INTEGER NOT NULL,
+                        user_id INTEGER NOT NULL,
+                        season TEXT NOT NULL,
+                        pet_name TEXT NOT NULL,
+                        total_index INTEGER NOT NULL,
+                        created_at TEXT NOT NULL
+                    )
+                    """
+                )
+                connection.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_roco_counter_shiny_marks_scope
+                    ON roco_counter_shiny_marks (group_id, user_id, season, pet_name, total_index)
                     """
                 )
 
@@ -177,14 +258,19 @@ class RocoCounterStore:
         )
 
 
-def format_counter_summary(*, season: str, rows: list[RocoCounterRow]) -> str:
+def format_counter_summary(
+    *,
+    season: str,
+    rows: list[RocoCounterRow],
+    shiny_indexes: dict[str, list[int]] | None = None,
+) -> str:
     if not rows:
         return f"{season} 捕捉计数器\n暂无记录。发送 /计数 迪莫 开始记录。"
 
     total_count = sum(row.total_count for row in rows)
     shiny_count = sum(row.shiny_count for row in rows)
     lines = [f"{season} 捕捉计数器", f"总捕捉：{total_count} | 异色：{shiny_count}"]
-    lines.extend(f"{row.pet_name}：{row.total_count}（异色 {row.shiny_count}）" for row in rows)
+    lines.extend(_format_counter_summary_row(row, shiny_indexes or {}) for row in rows)
     return "\n".join(lines)
 
 
@@ -194,10 +280,14 @@ def format_capture_result(
     row: RocoCounterRow,
     rows: list[RocoCounterRow],
     shiny: bool,
+    shiny_index: int | None = None,
 ) -> str:
     total_count = sum(summary_row.total_count for summary_row in rows)
     shiny_count = sum(summary_row.shiny_count for summary_row in rows)
-    title = f"{season} 异色 {row.pet_name} +1" if shiny else f"{season} {row.pet_name} +1"
+    if shiny and shiny_index is not None:
+        title = f"{season} 异色 {row.pet_name} +1（第 {shiny_index} 只是异色）"
+    else:
+        title = f"{season} 异色 {row.pet_name} +1" if shiny else f"{season} {row.pet_name} +1"
     return "\n".join(
         [
             title,
@@ -205,3 +295,11 @@ def format_capture_result(
             f"总捕捉：{total_count} | 总异色：{shiny_count}",
         ]
     )
+
+
+def _format_counter_summary_row(row: RocoCounterRow, shiny_indexes: dict[str, list[int]]) -> str:
+    indexes = shiny_indexes.get(row.pet_name, [])
+    if row.shiny_count > 0 and indexes:
+        joined_indexes = "、".join(str(index) for index in indexes)
+        return f"{row.pet_name}：{row.total_count}（异色 {row.shiny_count}：第 {joined_indexes} 只）"
+    return f"{row.pet_name}：{row.total_count}（异色 {row.shiny_count}）"
