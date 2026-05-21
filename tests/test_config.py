@@ -1,7 +1,9 @@
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
-from qq_bot.config import BotSettings, get_settings, parse_id_list, parse_schedule_time_list
+from qq_bot.config import BotSettings, get_settings, parse_id_list, parse_schedule_time_list, resolve_project_path
 
 
 def test_parse_id_list_accepts_comma_separated_values() -> None:
@@ -202,6 +204,14 @@ def test_roco_counter_settings_have_defaults() -> None:
 
     assert settings.roco_counter_path == "data/roco_counter.sqlite3"
     assert settings.roco_counter_season == "S2"
+
+
+def test_roco_counter_path_resolves_from_project_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    settings = BotSettings()
+
+    assert settings.resolved_roco_counter_path == resolve_project_path("data/roco_counter.sqlite3")
+    assert settings.resolved_roco_counter_path != tmp_path / "data" / "roco_counter.sqlite3"
 
 
 def test_roco_counter_season_is_stripped() -> None:
