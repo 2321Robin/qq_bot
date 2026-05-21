@@ -5,10 +5,12 @@ from typing import Any
 import pytest
 
 from qq_bot.services.roco_counter import (
+    COUNTER_USAGE,
     RocoCounterRow,
     RocoCounterStore,
     format_capture_result,
     format_counter_summary,
+    parse_counter_args,
 )
 
 
@@ -113,6 +115,36 @@ def test_format_capture_result() -> None:
     text = format_capture_result(season="S2", row=row, rows=rows, shiny=True)
 
     assert text == "S2 异色 迪莫 +1\n当前：3 | 异色：1\n总捕捉：4 | 总异色：1"
+
+
+def test_parse_empty_counter_args_means_summary() -> None:
+    action = parse_counter_args("   ")
+
+    assert action.show_summary
+    assert not action.shiny
+    assert action.pet_name == ""
+
+
+def test_parse_normal_counter_args_collapses_whitespace() -> None:
+    action = parse_counter_args("  迪莫   ")
+
+    assert not action.show_summary
+    assert not action.shiny
+    assert action.pet_name == "迪莫"
+
+
+def test_parse_shiny_counter_args_collapses_whitespace() -> None:
+    action = parse_counter_args(" 异色   迪莫  ")
+
+    assert not action.show_summary
+    assert action.shiny
+    assert action.pet_name == "迪莫"
+
+
+def test_parse_shiny_without_pet_name_returns_error() -> None:
+    action = parse_counter_args("异色")
+
+    assert action.error == COUNTER_USAGE
 
 
 class ClosingConnection:

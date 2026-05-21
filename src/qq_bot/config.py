@@ -76,6 +76,8 @@ class BotSettings(BaseSettings):
     chat_memory_retention_days: int = 3
     chat_memory_default_turns: int = 10
     chat_memory_max_results: int = 20
+    roco_counter_path: str = "data/roco_counter.sqlite3"
+    roco_counter_season: str = "S2"
 
     search_enabled: bool = False
     tavily_api_key: str = Field(default="", repr=False)
@@ -148,6 +150,14 @@ class BotSettings(BaseSettings):
         if value <= 0:
             raise ValueError("chat_memory_max_results must be greater than 0")
         return value
+
+    @field_validator("roco_counter_season")
+    @classmethod
+    def validate_roco_counter_season(cls, value: str) -> str:
+        season = value.strip()
+        if not season:
+            raise ValueError("roco_counter_season must not be empty")
+        return season
 
     @property
     def allowed_group_id_list(self) -> list[int]:

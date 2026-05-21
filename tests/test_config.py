@@ -197,6 +197,19 @@ def test_chat_memory_settings_are_exposed() -> None:
     assert settings.chat_memory_max_results == 20
 
 
+def test_roco_counter_settings_have_defaults() -> None:
+    settings = BotSettings()
+
+    assert settings.roco_counter_path == "data/roco_counter.sqlite3"
+    assert settings.roco_counter_season == "S2"
+
+
+def test_roco_counter_season_is_stripped() -> None:
+    settings = BotSettings(roco_counter_season=" S3 ")
+
+    assert settings.roco_counter_season == "S3"
+
+
 def test_chat_memory_settings_validate_positive_limits() -> None:
     with pytest.raises(ValidationError, match="chat_memory_retention_days"):
         BotSettings(chat_memory_retention_days=0)

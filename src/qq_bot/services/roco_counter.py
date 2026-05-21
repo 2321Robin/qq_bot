@@ -22,6 +22,31 @@ class RocoCounterRow:
         return self.normal_count + self.shiny_count
 
 
+COUNTER_USAGE = "用法：/计数 迪莫 或 /计数 异色 迪莫；发送 /计数 查看汇总。"
+
+
+@dataclass(frozen=True)
+class CounterAction:
+    pet_name: str
+    shiny: bool = False
+    show_summary: bool = False
+    error: str = ""
+
+
+def parse_counter_args(text: str) -> CounterAction:
+    parts = text.split()
+    if not parts:
+        return CounterAction(pet_name="", show_summary=True)
+
+    if parts[0] == "异色":
+        pet_name = " ".join(parts[1:]).strip()
+        if not pet_name:
+            return CounterAction(pet_name="", shiny=True, error=COUNTER_USAGE)
+        return CounterAction(pet_name=pet_name, shiny=True)
+
+    return CounterAction(pet_name=" ".join(parts).strip())
+
+
 class RocoCounterStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
