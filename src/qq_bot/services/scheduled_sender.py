@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+
+from collections.abc import Awaitable, Callable
 from typing import Protocol
 
 from nonebot import logger
@@ -49,18 +52,37 @@ async def send_group_messages(
     bot: GroupMessageBot,
     group_ids: list[int],
     message: str,
+    *,
+    max_attempts: int = 3,
+    retry_delay_seconds: float = 30.0,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> list[int]:
     failed_group_ids: list[int] = []
     formatted_message = replace_named_mentions(message)
     for group_id in group_ids:
-        try:
-            await bot.send_group_msg(group_id=group_id, message=formatted_message)
-        except Exception as exc:
-            if is_send_timeout_error(exc):
+        for attempt in range(1, max_attempts + 1):
+            try:
+                await bot.send_group_msg(group_id=group_id, message=formatted_message)
+                break
+            except Exception as exc:
+                if is_send_timeout_error(exc):
+                    logger.warning(
+                        f"Scheduled message send timed out and may not be visible in QQ for group {group_id} "
+                        f"(attempt {attempt}/{max_attempts})."
+                    )
+                    failed_group_ids.append(group_id)
+                    break
+                final_attempt = attempt >= max_attempts
+                if final_attempt:
+                    logger.exception(
+                        f"Scheduled message send failed for group {group_id} "
+                        f"(attempt {attempt}/{max_attempts})."
+                    )
+                    failed_group_ids.append(group_id)
+                    break
                 logger.warning(
-                    f"Scheduled message send timed out and may not be visible in QQ for group {group_id}."
+                    f"Scheduled message send failed for group {group_id}; retrying in "
+                    f"{retry_delay_seconds:g}s (attempt {attempt}/{max_attempts}): {exc!r}"
                 )
-            else:
-                logger.exception(f"Scheduled message send failed for group {group_id}.")
-            failed_group_ids.append(group_id)
+                await sleep(retry_delay_seconds)
     return failed_group_ids
