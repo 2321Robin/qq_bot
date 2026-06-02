@@ -32,6 +32,25 @@ class TimeoutBot:
         raise NetworkError("WebSocket call api send_group_msg timeout")
 
 
+class FlakyBot:
+    def __init__(self, failures_before_success: int):
+        self.failures_before_success = failures_before_success
+        self.attempts: list[tuple[int, object]] = []
+
+    async def send_group_msg(self, *, group_id: int, message: object) -> None:
+        self.attempts.append((group_id, message))
+        if len(self.attempts) <= self.failures_before_success:
+            raise RuntimeError("send failed")
+
+
+class AlwaysFailingBot:
+    def __init__(self):
+        self.attempts: list[tuple[int, object]] = []
+
+    async def send_group_msg(self, *, group_id: int, message: object) -> None:
+        self.attempts.append((group_id, message))
+        raise RuntimeError("send failed")
+
 def test_build_scheduler_job_kwargs_uses_configured_time() -> None:
     settings = BotSettings(scheduled_cron_hour=8, scheduled_cron_minute=30)
 
@@ -145,7 +164,7 @@ async def test_send_group_messages_replaces_named_mentions() -> None:
 async def test_send_group_messages_continues_after_failure() -> None:
     bot = FakeBot(failing_group_ids={1002})
 
-    failures = await send_group_messages(bot, [1001, 1002, 1003], "早上好")
+    failures = await send_group_messages(bot, [1001, 1002, 1003], "早上好", max_attempts=1)
     assert failures == [1002]
     assert bot.sent[0][0] == 1001
     assert isinstance(bot.sent[0][1], Message)
@@ -159,7 +178,73 @@ async def test_send_group_messages_continues_after_failure() -> None:
 async def test_send_group_messages_marks_send_timeout_as_failure() -> None:
     bot = TimeoutBot()
 
-    failures = await send_group_messages(bot, [1001], "早上好")
+    failures = await send_group_messages(bot, [1001], "早上好", max_attempts=1)
 
     assert failures == [1001]
     assert bot.sent[0][0] == 1001
+
+
+@pytest.mark.asyncio
+async def test_send_group_messages_does_not_retry_timeout() -> None:
+    bot = TimeoutBot()
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    failures = await send_group_messages(
+        bot,
+        [1001],
+        "早上好",
+        max_attempts=3,
+        retry_delay_seconds=1.0,
+        sleep=fake_sleep,
+    )
+
+    assert failures == [1001]
+    assert [group_id for group_id, _ in bot.sent] == [1001]
+    assert sleep_calls == []
+
+
+@pytest.mark.asyncio
+async def test_send_group_messages_retries_failed_send() -> None:
+    bot = FlakyBot(failures_before_success=2)
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    failures = await send_group_messages(
+        bot,
+        [1001],
+        "早上好",
+        max_attempts=3,
+        retry_delay_seconds=0.5,
+        sleep=fake_sleep,
+    )
+
+    assert failures == []
+    assert [group_id for group_id, _ in bot.attempts] == [1001, 1001, 1001]
+    assert sleep_calls == [0.5, 0.5]
+
+
+@pytest.mark.asyncio
+async def test_send_group_messages_marks_failure_after_retries_exhausted() -> None:
+    bot = AlwaysFailingBot()
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    failures = await send_group_messages(
+        bot,
+        [1001],
+        "早上好",
+        max_attempts=2,
+        retry_delay_seconds=1.0,
+        sleep=fake_sleep,
+    )
+
+    assert failures == [1001]
+    assert [group_id for group_id, _ in bot.attempts] == [1001, 1001]
+    assert sleep_calls == [1.0]
