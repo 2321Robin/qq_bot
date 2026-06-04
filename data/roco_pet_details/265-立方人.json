@@ -4,7 +4,7 @@
   "attributes": [
     "机械"
   ],
-  "evolution_condition": "且处于联机情况下",
+  "evolution_condition": "可由多彩方方且处于联机情况下进化得",
   "total_race_value": 605,
   "profile": {
     "编号": "265",
@@ -353,5 +353,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:17:56.677179+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "多彩方方",
+        "target": "立方人",
+        "condition": "且处于联机情况下",
+        "raw_condition": "且处于联机情况下",
+        "forward_text": "且处于联机情况下可进化为立方人",
+        "backward_text": "可由多彩方方且处于联机情况下进化得",
+        "text": "可由多彩方方且处于联机情况下进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由多彩方方且处于联机情况下进化得"
   }
 }

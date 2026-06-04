@@ -4,7 +4,7 @@
   "attributes": [
     "电"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至40级可进化为酷拉",
   "total_race_value": 467,
   "profile": {
     "编号": "205",
@@ -389,5 +389,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:43:35.047438+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "拉特",
+        "target": "酷拉",
+        "condition": "升至40级",
+        "raw_condition": "等级40级",
+        "forward_text": "升至40级可进化为酷拉",
+        "backward_text": "可由拉特升至40级进化得",
+        "text": "升至40级可进化为酷拉"
+      }
+    ],
+    "evolution_condition": "升至40级可进化为酷拉"
   }
 }

@@ -4,7 +4,7 @@
   "attributes": [
     "普通"
   ],
-  "evolution_condition": "击败三只虫系精灵进化",
+  "evolution_condition": "可由伏地兽击败3个虫系精灵进化得",
   "total_race_value": 449,
   "profile": {
     "编号": "061",
@@ -360,5 +360,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:14:17.228454+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "伏地兽",
+        "target": "贪食鼹",
+        "condition": "击败3个虫系精灵",
+        "raw_condition": "击败三只虫系精灵进化",
+        "forward_text": "击败3个虫系精灵可进化为贪食鼹",
+        "backward_text": "可由伏地兽击败3个虫系精灵进化得",
+        "text": "可由伏地兽击败3个虫系精灵进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由伏地兽击败3个虫系精灵进化得"
   }
 }

@@ -4,7 +4,7 @@
   "attributes": [
     "幻"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至24级可进化为怖须菇",
   "total_race_value": 279,
   "profile": {
     "编号": "128",
@@ -390,5 +390,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:01.147824+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "哭哭菇",
+        "target": "怖须菇",
+        "condition": "升至24级",
+        "raw_condition": "等级24级",
+        "forward_text": "升至24级可进化为怖须菇",
+        "backward_text": "可由哭哭菇升至24级进化得",
+        "text": "升至24级可进化为怖须菇"
+      }
+    ],
+    "evolution_condition": "升至24级可进化为怖须菇"
   }
 }

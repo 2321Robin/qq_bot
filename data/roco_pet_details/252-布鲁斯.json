@@ -4,7 +4,7 @@
   "attributes": [
     "冰"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至26级可进化为雪顶布鲁斯",
   "total_race_value": 295,
   "profile": {
     "编号": "252",
@@ -360,5 +360,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:17:46.155252+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "布鲁斯",
+        "target": "雪顶布鲁斯",
+        "condition": "升至26级",
+        "raw_condition": "等级26级",
+        "forward_text": "升至26级可进化为雪顶布鲁斯",
+        "backward_text": "可由布鲁斯升至26级进化得",
+        "text": "升至26级可进化为雪顶布鲁斯"
+      }
+    ],
+    "evolution_condition": "升至26级可进化为雪顶布鲁斯"
   }
 }

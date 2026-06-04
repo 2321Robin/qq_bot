@@ -5,7 +5,7 @@
     "萌",
     "翼"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至20级可进化为魔翼鸟",
   "total_race_value": 330,
   "profile": {
     "编号": "102",
@@ -361,5 +361,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:15:38.760156+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "绿翼鸟",
+        "target": "魔翼鸟",
+        "condition": "升至20级",
+        "raw_condition": "等级20级",
+        "forward_text": "升至20级可进化为魔翼鸟",
+        "backward_text": "可由绿翼鸟升至20级进化得",
+        "text": "升至20级可进化为魔翼鸟"
+      }
+    ],
+    "evolution_condition": "升至20级可进化为魔翼鸟"
   }
 }

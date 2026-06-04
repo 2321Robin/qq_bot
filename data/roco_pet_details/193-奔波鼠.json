@@ -4,7 +4,7 @@
   "attributes": [
     "地"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "挖矿3次可进化为流浪鼠",
   "total_race_value": 451,
   "profile": {
     "编号": "193",
@@ -353,5 +353,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:54.593830+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "奔波鼠",
+        "target": "流浪鼠",
+        "condition": "挖矿3次",
+        "raw_condition": "挖矿3次",
+        "forward_text": "挖矿3次可进化为流浪鼠",
+        "backward_text": "可由奔波鼠挖矿3次进化得",
+        "text": "挖矿3次可进化为流浪鼠"
+      }
+    ],
+    "evolution_condition": "挖矿3次可进化为流浪鼠"
   }
 }

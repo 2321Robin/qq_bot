@@ -4,7 +4,7 @@
   "attributes": [
     "水"
   ],
-  "evolution_condition": "由号儿鱼等级36级进化",
+  "evolution_condition": "可由号儿鱼升至36级进化得",
   "total_race_value": 575,
   "profile": {
     "编号": "184",
@@ -353,5 +353,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:44.785971+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "号儿鱼",
+        "target": "圆号鱼",
+        "condition": "升至36级",
+        "raw_condition": "等级36级",
+        "forward_text": "升至36级可进化为圆号鱼",
+        "backward_text": "可由号儿鱼升至36级进化得",
+        "text": "可由号儿鱼升至36级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由号儿鱼升至36级进化得"
   }
 }

@@ -5,7 +5,7 @@
     "火",
     "萌"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至16级可进化为红丝绒",
   "total_race_value": 358,
   "profile": {
     "编号": "255",
@@ -361,5 +361,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:17:48.339658+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "治愈兔",
+        "target": "红丝绒",
+        "condition": "升至16级",
+        "raw_condition": "等级16级",
+        "forward_text": "升至16级可进化为红丝绒",
+        "backward_text": "可由治愈兔升至16级进化得",
+        "text": "升至16级可进化为红丝绒"
+      }
+    ],
+    "evolution_condition": "升至16级可进化为红丝绒"
   }
 }

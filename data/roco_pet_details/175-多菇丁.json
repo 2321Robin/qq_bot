@@ -5,7 +5,7 @@
     "地",
     "草"
   ],
-  "evolution_condition": "天气为雨天进化",
+  "evolution_condition": "可由菇菇丁天气为雨天进化得；天气为雨天进化可进化为九幽菇",
   "total_race_value": 501,
   "profile": {
     "编号": "175",
@@ -391,5 +391,30 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:39.211893+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "菇菇丁",
+        "target": "多菇丁",
+        "condition": "天气为雨天进化",
+        "raw_condition": "天气为雨天进化",
+        "forward_text": "天气为雨天进化可进化为多菇丁",
+        "backward_text": "可由菇菇丁天气为雨天进化得",
+        "text": "可由菇菇丁天气为雨天进化得"
+      }
+    ],
+    "to": [
+      {
+        "source": "多菇丁",
+        "target": "九幽菇",
+        "condition": "天气为雨天进化",
+        "raw_condition": "天气为雨天进化",
+        "forward_text": "天气为雨天进化可进化为九幽菇",
+        "backward_text": "可由多菇丁天气为雨天进化得",
+        "text": "天气为雨天进化可进化为九幽菇"
+      }
+    ],
+    "evolution_condition": "可由菇菇丁天气为雨天进化得；天气为雨天进化可进化为九幽菇"
   }
 }

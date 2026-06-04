@@ -5,7 +5,7 @@
     "普通",
     "幻"
   ],
-  "evolution_condition": "击败三只武系精灵",
+  "evolution_condition": "可由画像守护击败3个武系精灵进化得",
   "total_race_value": 619,
   "profile": {
     "编号": "301",
@@ -419,5 +419,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:22.577986+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "画像守护",
+        "target": "画间法师手",
+        "condition": "击败3个武系精灵",
+        "raw_condition": "击败三只武系精灵",
+        "forward_text": "击败3个武系精灵可进化为画间法师手",
+        "backward_text": "可由画像守护击败3个武系精灵进化得",
+        "text": "可由画像守护击败3个武系精灵进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由画像守护击败3个武系精灵进化得"
   }
 }

@@ -4,7 +4,7 @@
   "attributes": [
     "幽"
   ],
-  "evolution_condition": "时间为中午进化",
+  "evolution_condition": "可由幽冥眼（睁眼的样子）时间为中午进化得",
   "total_race_value": 592,
   "profile": {
     "编号": "056",
@@ -360,5 +360,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:14:12.692414+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "幽冥眼（睁眼的样子）",
+        "target": "幽冥眼（闭眼的样子）",
+        "condition": "时间为中午进化",
+        "raw_condition": "时间为中午进化",
+        "forward_text": "时间为中午进化可进化为幽冥眼（闭眼的样子）",
+        "backward_text": "可由幽冥眼（睁眼的样子）时间为中午进化得",
+        "text": "可由幽冥眼（睁眼的样子）时间为中午进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由幽冥眼（睁眼的样子）时间为中午进化得"
   }
 }

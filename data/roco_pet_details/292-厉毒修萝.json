@@ -5,7 +5,7 @@
     "毒",
     "恶"
   ],
-  "evolution_condition": "由厉毒小萝等级40级进化",
+  "evolution_condition": "可由厉毒小萝升至40级进化得",
   "total_race_value": 495,
   "profile": {
     "编号": "292",
@@ -354,5 +354,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:17.021846+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "厉毒小萝",
+        "target": "厉毒修萝",
+        "condition": "升至40级",
+        "raw_condition": "等级40级",
+        "forward_text": "升至40级可进化为厉毒修萝",
+        "backward_text": "可由厉毒小萝升至40级进化得",
+        "text": "可由厉毒小萝升至40级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由厉毒小萝升至40级进化得"
   }
 }

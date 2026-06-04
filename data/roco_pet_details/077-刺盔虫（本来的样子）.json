@@ -5,7 +5,7 @@
     "水",
     "毒"
   ],
-  "evolution_condition": "由海盔虫（本来的样子）等级26级进化",
+  "evolution_condition": "可由海盔虫（本来的样子）升至26级进化得",
   "total_race_value": 435,
   "profile": {
     "编号": "077",
@@ -354,5 +354,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:14:38.358207+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "海盔虫（本来的样子）",
+        "target": "刺盔虫（本来的样子）",
+        "condition": "升至26级",
+        "raw_condition": "等级26级",
+        "forward_text": "升至26级可进化为刺盔虫（本来的样子）",
+        "backward_text": "可由海盔虫（本来的样子）升至26级进化得",
+        "text": "可由海盔虫（本来的样子）升至26级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由海盔虫（本来的样子）升至26级进化得"
   }
 }

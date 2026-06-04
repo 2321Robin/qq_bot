@@ -5,7 +5,7 @@
     "机械",
     "幻"
   ],
-  "evolution_condition": "由小箱怪等级36级进化",
+  "evolution_condition": "可由小箱怪升至36级进化得",
   "total_race_value": 782,
   "profile": {
     "编号": "211",
@@ -399,5 +399,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:17:07.952874+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "小箱怪",
+        "target": "迷迷箱怪",
+        "condition": "升至36级",
+        "raw_condition": "等级36级",
+        "forward_text": "升至36级可进化为迷迷箱怪",
+        "backward_text": "可由小箱怪升至36级进化得",
+        "text": "可由小箱怪升至36级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由小箱怪升至36级进化得"
   }
 }

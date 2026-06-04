@@ -5,7 +5,7 @@
     "恶",
     "火"
   ],
-  "evolution_condition": "时间为正午",
+  "evolution_condition": "可由乌拉塔（极夜的样子）时间为正午进化得",
   "total_race_value": 615,
   "profile": {
     "编号": "260",
@@ -354,5 +354,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:17:52.765591+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "乌拉塔（极夜的样子）",
+        "target": "乌拉塔（极昼的样子）",
+        "condition": "时间为正午",
+        "raw_condition": "时间为正午",
+        "forward_text": "时间为正午可进化为乌拉塔（极昼的样子）",
+        "backward_text": "可由乌拉塔（极夜的样子）时间为正午进化得",
+        "text": "可由乌拉塔（极夜的样子）时间为正午进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由乌拉塔（极夜的样子）时间为正午进化得"
   }
 }

@@ -5,7 +5,7 @@
     "虫",
     "草"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至20级可进化为草衣虫",
   "total_race_value": 323,
   "profile": {
     "编号": "099",
@@ -391,5 +391,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:15:36.915127+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "小草虫",
+        "target": "草衣虫",
+        "condition": "升至20级",
+        "raw_condition": "等级20级",
+        "forward_text": "升至20级可进化为草衣虫",
+        "backward_text": "可由小草虫升至20级进化得",
+        "text": "升至20级可进化为草衣虫"
+      }
+    ],
+    "evolution_condition": "升至20级可进化为草衣虫"
   }
 }

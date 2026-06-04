@@ -5,7 +5,7 @@
     "毒",
     "萌"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "夜晚进化可进化为月亮砣（上弦的样子）",
   "total_race_value": 487,
   "profile": {
     "编号": "237",
@@ -405,5 +405,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:17:35.389170+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "刺轮砣（下弦的样子）",
+        "target": "月亮砣（上弦的样子）",
+        "condition": "夜晚进化",
+        "raw_condition": "夜晚进化",
+        "forward_text": "夜晚进化可进化为月亮砣（上弦的样子）",
+        "backward_text": "可由刺轮砣（下弦的样子）夜晚进化得",
+        "text": "夜晚进化可进化为月亮砣（上弦的样子）"
+      }
+    ],
+    "evolution_condition": "夜晚进化可进化为月亮砣（上弦的样子）"
   }
 }

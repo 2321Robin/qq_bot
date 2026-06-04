@@ -4,7 +4,7 @@
   "attributes": [
     "翼"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至30级可进化为斑枭",
   "total_race_value": 494,
   "profile": {
     "编号": "177",
@@ -390,5 +390,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:40.512030+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "斑斑",
+        "target": "斑枭",
+        "condition": "升至30级",
+        "raw_condition": "等级30级",
+        "forward_text": "升至30级可进化为斑枭",
+        "backward_text": "可由斑斑升至30级进化得",
+        "text": "升至30级可进化为斑枭"
+      }
+    ],
+    "evolution_condition": "升至30级可进化为斑枭"
   }
 }

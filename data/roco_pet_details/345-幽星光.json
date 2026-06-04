@@ -4,7 +4,7 @@
   "attributes": [
     "幻"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至21级可进化为曜星光",
   "total_race_value": 319,
   "profile": {
     "编号": "345",
@@ -353,5 +353,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:51.467971+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "幽星光",
+        "target": "曜星光",
+        "condition": "升至21级",
+        "raw_condition": "等级21级",
+        "forward_text": "升至21级可进化为曜星光",
+        "backward_text": "可由幽星光升至21级进化得",
+        "text": "升至21级可进化为曜星光"
+      }
+    ],
+    "evolution_condition": "升至21级可进化为曜星光"
   }
 }

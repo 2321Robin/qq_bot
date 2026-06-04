@@ -4,7 +4,7 @@
   "attributes": [
     "火"
   ],
-  "evolution_condition": "由护主犬等级26级进化",
+  "evolution_condition": "可由护主犬升至26级进化得",
   "total_race_value": 562,
   "profile": {
     "编号": "048",
@@ -353,5 +353,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:14:05.192018+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "护主犬",
+        "target": "音速犬",
+        "condition": "升至26级",
+        "raw_condition": "等级26级",
+        "forward_text": "升至26级可进化为音速犬",
+        "backward_text": "可由护主犬升至26级进化得",
+        "text": "可由护主犬升至26级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由护主犬升至26级进化得"
   }
 }

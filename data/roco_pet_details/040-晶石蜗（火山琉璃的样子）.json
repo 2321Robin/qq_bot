@@ -5,7 +5,7 @@
     "光",
     "地"
   ],
-  "evolution_condition": "撞击三次黑晶琉璃",
+  "evolution_condition": "可由矿晶虫撞击三次黑晶琉璃进化得",
   "total_race_value": 583,
   "profile": {
     "编号": "040",
@@ -397,5 +397,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:13:51.817262+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "矿晶虫",
+        "target": "晶石蜗（火山琉璃的样子）",
+        "condition": "撞击三次黑晶琉璃",
+        "raw_condition": "撞击三次黑晶琉璃",
+        "forward_text": "撞击三次黑晶琉璃可进化为晶石蜗（火山琉璃的样子）",
+        "backward_text": "可由矿晶虫撞击三次黑晶琉璃进化得",
+        "text": "可由矿晶虫撞击三次黑晶琉璃进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由矿晶虫撞击三次黑晶琉璃进化得"
   }
 }

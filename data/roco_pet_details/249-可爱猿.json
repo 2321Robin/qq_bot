@@ -4,7 +4,7 @@
   "attributes": [
     "火"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至28级可进化为炽热猿",
   "total_race_value": 429,
   "profile": {
     "编号": "249",
@@ -381,5 +381,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:17:44.214180+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "可爱猿",
+        "target": "炽热猿",
+        "condition": "升至28级",
+        "raw_condition": "等级28级",
+        "forward_text": "升至28级可进化为炽热猿",
+        "backward_text": "可由可爱猿升至28级进化得",
+        "text": "升至28级可进化为炽热猿"
+      }
+    ],
+    "evolution_condition": "升至28级可进化为炽热猿"
   }
 }

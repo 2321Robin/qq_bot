@@ -4,7 +4,7 @@
   "attributes": [
     "草"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至21级可进化为春兔",
   "total_race_value": 341,
   "profile": {
     "编号": "342",
@@ -390,5 +390,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:49.509217+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "春团",
+        "target": "春兔",
+        "condition": "升至21级",
+        "raw_condition": "等级21级",
+        "forward_text": "升至21级可进化为春兔",
+        "backward_text": "可由春团升至21级进化得",
+        "text": "升至21级可进化为春兔"
+      }
+    ],
+    "evolution_condition": "升至21级可进化为春兔"
   }
 }

@@ -4,7 +4,7 @@
   "attributes": [
     "地"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至30级可进化为阿米樱",
   "total_race_value": 360,
   "profile": {
     "编号": "105",
@@ -368,5 +368,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:15:41.528171+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "阿米亚特",
+        "target": "阿米樱",
+        "condition": "升至30级",
+        "raw_condition": "等级30级",
+        "forward_text": "升至30级可进化为阿米樱",
+        "backward_text": "可由阿米亚特升至30级进化得",
+        "text": "升至30级可进化为阿米樱"
+      }
+    ],
+    "evolution_condition": "升至30级可进化为阿米樱"
   }
 }

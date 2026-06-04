@@ -4,7 +4,7 @@
   "attributes": [
     "火"
   ],
-  "evolution_condition": "由火尾瓦特等级20级进化",
+  "evolution_condition": "可由火尾瓦特升至20级进化得",
   "total_race_value": 451,
   "profile": {
     "编号": "217",
@@ -360,5 +360,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:17:12.930264+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "火尾瓦特",
+        "target": "火尾战士",
+        "condition": "升至20级",
+        "raw_condition": "等级20级",
+        "forward_text": "升至20级可进化为火尾战士",
+        "backward_text": "可由火尾瓦特升至20级进化得",
+        "text": "可由火尾瓦特升至20级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由火尾瓦特升至20级进化得"
   }
 }

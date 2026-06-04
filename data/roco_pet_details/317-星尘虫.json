@@ -4,7 +4,7 @@
   "attributes": [
     "虫"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至30级可进化为落星虫",
   "total_race_value": 307,
   "profile": {
     "编号": "317",
@@ -398,5 +398,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:32.772535+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "星尘虫",
+        "target": "落星虫",
+        "condition": "升至30级",
+        "raw_condition": "等级30级",
+        "forward_text": "升至30级可进化为落星虫",
+        "backward_text": "可由星尘虫升至30级进化得",
+        "text": "升至30级可进化为落星虫"
+      }
+    ],
+    "evolution_condition": "升至30级可进化为落星虫"
   }
 }

@@ -4,7 +4,7 @@
   "attributes": [
     "水"
   ],
-  "evolution_condition": "由板板壳（蜕皮时的样子）等级16级进化",
+  "evolution_condition": "可由板板壳（蜕皮时的样子）升至16级进化得",
   "total_race_value": 462,
   "profile": {
     "编号": "013",
@@ -353,5 +353,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:13:19.605204+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "板板壳（蜕皮时的样子）",
+        "target": "咔咔壳（蜕皮时的样子）",
+        "condition": "升至16级",
+        "raw_condition": "等级16级",
+        "forward_text": "升至16级可进化为咔咔壳（蜕皮时的样子）",
+        "backward_text": "可由板板壳（蜕皮时的样子）升至16级进化得",
+        "text": "可由板板壳（蜕皮时的样子）升至16级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由板板壳（蜕皮时的样子）升至16级进化得"
   }
 }

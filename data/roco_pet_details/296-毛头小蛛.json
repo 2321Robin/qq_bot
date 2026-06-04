@@ -5,7 +5,7 @@
     "虫",
     "地"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "身高大于0.375可进化为捕尘长绒",
   "total_race_value": 452,
   "profile": {
     "编号": "296",
@@ -361,5 +361,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:19.396690+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "毛头小蛛",
+        "target": "捕尘长绒",
+        "condition": "身高大于0.375",
+        "raw_condition": "身高大于0.375",
+        "forward_text": "身高大于0.375可进化为捕尘长绒",
+        "backward_text": "可由毛头小蛛身高大于0.375进化得",
+        "text": "身高大于0.375可进化为捕尘长绒"
+      }
+    ],
+    "evolution_condition": "身高大于0.375可进化为捕尘长绒"
   }
 }

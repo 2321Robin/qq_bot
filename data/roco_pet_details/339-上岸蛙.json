@@ -4,7 +4,7 @@
   "attributes": [
     "幻"
   ],
-  "evolution_condition": "由布瓜蝌等级33级进化",
+  "evolution_condition": "可由布瓜蝌升至33级进化得",
   "total_race_value": 554,
   "profile": {
     "编号": "339",
@@ -353,5 +353,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:47.740429+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "布瓜蝌",
+        "target": "上岸蛙",
+        "condition": "升至33级",
+        "raw_condition": "等级33级",
+        "forward_text": "升至33级可进化为上岸蛙",
+        "backward_text": "可由布瓜蝌升至33级进化得",
+        "text": "可由布瓜蝌升至33级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由布瓜蝌升至33级进化得"
   }
 }

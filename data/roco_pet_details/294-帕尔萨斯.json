@@ -4,7 +4,7 @@
   "attributes": [
     "恶"
   ],
-  "evolution_condition": "成长为1星",
+  "evolution_condition": "可由小帕尔成长为1星进化得；成长为2星可进化为龙息帕尔",
   "total_race_value": 507,
   "profile": {
     "编号": "294",
@@ -375,5 +375,30 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:18.175509+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "小帕尔",
+        "target": "帕尔萨斯",
+        "condition": "成长为1星",
+        "raw_condition": "成长为1星",
+        "forward_text": "成长为1星可进化为帕尔萨斯",
+        "backward_text": "可由小帕尔成长为1星进化得",
+        "text": "可由小帕尔成长为1星进化得"
+      }
+    ],
+    "to": [
+      {
+        "source": "帕尔萨斯",
+        "target": "龙息帕尔",
+        "condition": "成长为2星",
+        "raw_condition": "成长为2星",
+        "forward_text": "成长为2星可进化为龙息帕尔",
+        "backward_text": "可由帕尔萨斯成长为2星进化得",
+        "text": "成长为2星可进化为龙息帕尔"
+      }
+    ],
+    "evolution_condition": "可由小帕尔成长为1星进化得；成长为2星可进化为龙息帕尔"
   }
 }

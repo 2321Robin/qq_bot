@@ -5,7 +5,7 @@
     "虫",
     "翼"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至21级可进化为黄蜂后",
   "total_race_value": 228,
   "profile": {
     "编号": "082",
@@ -406,5 +406,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:14:47.111554+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "一窝蜂",
+        "target": "黄蜂后",
+        "condition": "升至21级",
+        "raw_condition": "等级21级",
+        "forward_text": "升至21级可进化为黄蜂后",
+        "backward_text": "可由一窝蜂升至21级进化得",
+        "text": "升至21级可进化为黄蜂后"
+      }
+    ],
+    "evolution_condition": "升至21级可进化为黄蜂后"
   }
 }

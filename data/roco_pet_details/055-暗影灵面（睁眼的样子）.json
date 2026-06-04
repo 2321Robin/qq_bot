@@ -4,7 +4,7 @@
   "attributes": [
     "幽"
   ],
-  "evolution_condition": "时间为夜晚进化",
+  "evolution_condition": "可由小灵面时间为夜晚进化得；时间为中午进化可进化为暗影灵面（闭眼的样子）",
   "total_race_value": 488,
   "profile": {
     "编号": "055",
@@ -360,5 +360,30 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:14:10.844188+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "小灵面",
+        "target": "暗影灵面（睁眼的样子）",
+        "condition": "时间为夜晚进化",
+        "raw_condition": "时间为夜晚进化",
+        "forward_text": "时间为夜晚进化可进化为暗影灵面（睁眼的样子）",
+        "backward_text": "可由小灵面时间为夜晚进化得",
+        "text": "可由小灵面时间为夜晚进化得"
+      }
+    ],
+    "to": [
+      {
+        "source": "暗影灵面（睁眼的样子）",
+        "target": "暗影灵面（闭眼的样子）",
+        "condition": "时间为中午进化",
+        "raw_condition": "时间为中午进化",
+        "forward_text": "时间为中午进化可进化为暗影灵面（闭眼的样子）",
+        "backward_text": "可由暗影灵面（睁眼的样子）时间为中午进化得",
+        "text": "时间为中午进化可进化为暗影灵面（闭眼的样子）"
+      }
+    ],
+    "evolution_condition": "可由小灵面时间为夜晚进化得；时间为中午进化可进化为暗影灵面（闭眼的样子）"
   }
 }

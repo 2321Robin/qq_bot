@@ -4,7 +4,7 @@
   "attributes": [
     "幽"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "击败3个萌系精灵可进化为混乱鱿彩；击败3个恶系精灵可进化为秩序鱿墨",
   "total_race_value": 461,
   "profile": {
     "编号": "280",
@@ -325,5 +325,29 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:08.808039+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "墨鱿士",
+        "target": "混乱鱿彩",
+        "condition": "击败3个萌系精灵",
+        "raw_condition": "打败三只萌系精灵",
+        "forward_text": "击败3个萌系精灵可进化为混乱鱿彩",
+        "backward_text": "可由墨鱿士击败3个萌系精灵进化得",
+        "text": "击败3个萌系精灵可进化为混乱鱿彩"
+      },
+      {
+        "source": "墨鱿士",
+        "target": "秩序鱿墨",
+        "condition": "击败3个恶系精灵",
+        "raw_condition": "打败三只恶系精灵",
+        "forward_text": "击败3个恶系精灵可进化为秩序鱿墨",
+        "backward_text": "可由墨鱿士击败3个恶系精灵进化得",
+        "text": "击败3个恶系精灵可进化为秩序鱿墨"
+      }
+    ],
+    "evolution_condition": "击败3个萌系精灵可进化为混乱鱿彩；击败3个恶系精灵可进化为秩序鱿墨"
   }
 }

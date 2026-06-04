@@ -5,7 +5,7 @@
     "武",
     "地"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "击败三次棋骑士（黑子）可进化为棋骑士（白子）",
   "total_race_value": 418,
   "profile": {
     "编号": "188",
@@ -281,5 +281,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:48.129959+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "棋棋（黑子）",
+        "target": "棋骑士（白子）",
+        "condition": "击败三次棋骑士（黑子）",
+        "raw_condition": "击败三次棋骑士（黑子）",
+        "forward_text": "击败三次棋骑士（黑子）可进化为棋骑士（白子）",
+        "backward_text": "可由棋棋（黑子）击败三次棋骑士（黑子）进化得",
+        "text": "击败三次棋骑士（黑子）可进化为棋骑士（白子）"
+      }
+    ],
+    "evolution_condition": "击败三次棋骑士（黑子）可进化为棋骑士（白子）"
   }
 }

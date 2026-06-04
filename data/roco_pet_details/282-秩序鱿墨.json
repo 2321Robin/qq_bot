@@ -5,7 +5,7 @@
     "幽",
     "萌"
   ],
-  "evolution_condition": "打败三只恶系精灵",
+  "evolution_condition": "可由墨鱿士击败3个恶系精灵进化得",
   "total_race_value": 604,
   "profile": {
     "编号": "282",
@@ -392,5 +392,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:10.180371+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "墨鱿士",
+        "target": "秩序鱿墨",
+        "condition": "击败3个恶系精灵",
+        "raw_condition": "打败三只恶系精灵",
+        "forward_text": "击败3个恶系精灵可进化为秩序鱿墨",
+        "backward_text": "可由墨鱿士击败3个恶系精灵进化得",
+        "text": "可由墨鱿士击败3个恶系精灵进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由墨鱿士击败3个恶系精灵进化得"
   }
 }

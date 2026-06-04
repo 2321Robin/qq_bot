@@ -5,7 +5,7 @@
     "水",
     "武"
   ],
-  "evolution_condition": "由水滴蛇等级16级进化",
+  "evolution_condition": "可由水滴蛇升至16级进化得",
   "total_race_value": 505,
   "profile": {
     "编号": "160",
@@ -391,5 +391,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:23.022291+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "水滴蛇",
+        "target": "水蛇锁",
+        "condition": "升至16级",
+        "raw_condition": "等级16级",
+        "forward_text": "升至16级可进化为水蛇锁",
+        "backward_text": "可由水滴蛇升至16级进化得",
+        "text": "可由水滴蛇升至16级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由水滴蛇升至16级进化得"
   }
 }

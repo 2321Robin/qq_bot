@@ -4,7 +4,7 @@
   "attributes": [
     "电"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至30级可进化为粉咩咩",
   "total_race_value": 332,
   "profile": {
     "编号": "066",
@@ -381,5 +381,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:14:29.040303+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "电咩咩",
+        "target": "粉咩咩",
+        "condition": "升至30级",
+        "raw_condition": "等级30级",
+        "forward_text": "升至30级可进化为粉咩咩",
+        "backward_text": "可由电咩咩升至30级进化得",
+        "text": "升至30级可进化为粉咩咩"
+      }
+    ],
+    "evolution_condition": "升至30级可进化为粉咩咩"
   }
 }

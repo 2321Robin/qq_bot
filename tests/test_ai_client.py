@@ -190,6 +190,49 @@ def test_build_chat_payload_combines_search_and_chat_context() -> None:
     assert user_message.count("历史聊天记录") == 1
 
 
+def test_build_chat_payload_includes_roco_context_when_provided() -> None:
+    settings = BotSettings(ai_model="test-model")
+
+    payload = build_chat_payload(
+        "画精灵怎么进化？",
+        settings,
+        roco_context="问题类型：进化\n匹配精灵：画精灵\n后续进化：画像守护",
+    )
+
+    user_message = payload["messages"][-1]["content"]
+    system_prompt = payload["messages"][0]["content"]
+    assert "本地洛克王国资料" in user_message
+    assert "匹配精灵：画精灵" in user_message
+    assert "可信的本地数据" in system_prompt
+    assert "本地数据没有记录" in system_prompt
+
+
+def test_build_chat_payload_combines_roco_with_other_contexts() -> None:
+    settings = BotSettings(ai_model="test-model")
+
+    payload = build_chat_payload(
+        "这只精灵今天还有新闻吗",
+        settings,
+        search_context="[1] News\nURL: https://example.com\n摘要: summary",
+        chat_context="历史聊天记录：\n用户2001：刚才说画精灵",
+        roco_context="问题类型：精灵资料\n匹配精灵：画精灵",
+    )
+
+    user_message = payload["messages"][-1]["content"]
+    assert user_message == (
+        "当前用户问题：这只精灵今天还有新闻吗\n\n"
+        "历史聊天记录：\n"
+        "用户2001：刚才说画精灵\n\n"
+        "本地洛克王国资料：\n"
+        "问题类型：精灵资料\n"
+        "匹配精灵：画精灵\n\n"
+        "联网搜索资料：\n"
+        "[1] News\n"
+        "URL: https://example.com\n"
+        "摘要: summary"
+    )
+
+
 @pytest.mark.asyncio
 async def test_request_ai_reply_posts_openai_compatible_payload() -> None:
     settings = BotSettings(
@@ -311,6 +354,25 @@ async def test_request_ai_reply_posts_search_context_payload() -> None:
     assert "今天新闻" in user_message
     assert "联网搜索资料" in user_message
     assert "https://example.com" in user_message
+
+
+@pytest.mark.asyncio
+async def test_request_ai_reply_posts_roco_context_payload() -> None:
+    settings = BotSettings(ai_api_key="secret", ai_model="test-model")
+    client = FakeClient(FakeResponse({"choices": [{"message": {"content": "本地资料回复"}}]}))
+
+    reply = await request_ai_reply(
+        "画精灵怎么进化？",
+        settings=settings,
+        client=client,
+        roco_context="问题类型：进化\n匹配精灵：画精灵",
+    )
+
+    assert reply == "本地资料回复"
+    user_message = client.calls[0]["json"]["messages"][-1]["content"]
+    assert "画精灵怎么进化" in user_message
+    assert "本地洛克王国资料" in user_message
+    assert "匹配精灵：画精灵" in user_message
 
 
 @pytest.mark.asyncio

@@ -5,7 +5,7 @@
     "萌",
     "毒"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至38级可进化为寒音蛇（本命年的样子）",
   "total_race_value": 0,
   "profile": {
     "编号": "212",
@@ -25,5 +25,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:17:09.100448+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "古钟蛇（本命年的样子）",
+        "target": "寒音蛇（本命年的样子）",
+        "condition": "升至38级",
+        "raw_condition": "等级38级",
+        "forward_text": "升至38级可进化为寒音蛇（本命年的样子）",
+        "backward_text": "可由古钟蛇（本命年的样子）升至38级进化得",
+        "text": "升至38级可进化为寒音蛇（本命年的样子）"
+      }
+    ],
+    "evolution_condition": "升至38级可进化为寒音蛇（本命年的样子）"
   }
 }

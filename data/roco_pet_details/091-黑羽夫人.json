@@ -5,7 +5,7 @@
     "翼",
     "恶"
   ],
-  "evolution_condition": "血脉为恶系血脉进化",
+  "evolution_condition": "可由翠顶夫人血脉为恶系血脉进化得",
   "total_race_value": 652,
   "profile": {
     "编号": "091",
@@ -399,5 +399,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:15:31.618015+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "翠顶夫人",
+        "target": "黑羽夫人",
+        "condition": "血脉为恶系血脉进化",
+        "raw_condition": "血脉为恶系血脉进化",
+        "forward_text": "血脉为恶系血脉进化可进化为黑羽夫人",
+        "backward_text": "可由翠顶夫人血脉为恶系血脉进化得",
+        "text": "可由翠顶夫人血脉为恶系血脉进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由翠顶夫人血脉为恶系血脉进化得"
   }
 }

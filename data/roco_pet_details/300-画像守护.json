@@ -4,7 +4,7 @@
   "attributes": [
     "普通"
   ],
-  "evolution_condition": "由画精灵等级16级进化",
+  "evolution_condition": "可由画精灵升至16级进化得；击败3个武系精灵可进化为画间法师手；击败3个幻系精灵可进化为画间沉铁兽",
   "total_race_value": 494,
   "profile": {
     "编号": "300",
@@ -358,5 +358,39 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:21.913882+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "画精灵",
+        "target": "画像守护",
+        "condition": "升至16级",
+        "raw_condition": "等级16级",
+        "forward_text": "升至16级可进化为画像守护",
+        "backward_text": "可由画精灵升至16级进化得",
+        "text": "可由画精灵升至16级进化得"
+      }
+    ],
+    "to": [
+      {
+        "source": "画像守护",
+        "target": "画间法师手",
+        "condition": "击败3个武系精灵",
+        "raw_condition": "击败三只武系精灵",
+        "forward_text": "击败3个武系精灵可进化为画间法师手",
+        "backward_text": "可由画像守护击败3个武系精灵进化得",
+        "text": "击败3个武系精灵可进化为画间法师手"
+      },
+      {
+        "source": "画像守护",
+        "target": "画间沉铁兽",
+        "condition": "击败3个幻系精灵",
+        "raw_condition": "击败三只幻系精灵",
+        "forward_text": "击败3个幻系精灵可进化为画间沉铁兽",
+        "backward_text": "可由画像守护击败3个幻系精灵进化得",
+        "text": "击败3个幻系精灵可进化为画间沉铁兽"
+      }
+    ],
+    "evolution_condition": "可由画精灵升至16级进化得；击败3个武系精灵可进化为画间法师手；击败3个幻系精灵可进化为画间沉铁兽"
   }
 }

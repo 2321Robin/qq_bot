@@ -4,7 +4,7 @@
   "attributes": [
     "恶"
   ],
-  "evolution_condition": "由小夜等级26级进化",
+  "evolution_condition": "可由小夜升至26级进化得",
   "total_race_value": 499,
   "profile": {
     "编号": "086",
@@ -390,5 +390,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:22:03.667040+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "小夜",
+        "target": "紫夜",
+        "condition": "升至26级",
+        "raw_condition": "等级26级",
+        "forward_text": "升至26级可进化为紫夜",
+        "backward_text": "可由小夜升至26级进化得",
+        "text": "可由小夜升至26级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由小夜升至26级进化得"
   }
 }

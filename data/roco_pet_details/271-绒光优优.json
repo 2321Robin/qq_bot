@@ -5,7 +5,7 @@
     "地",
     "光"
   ],
-  "evolution_condition": "由优优等级36级进化",
+  "evolution_condition": "可由优优升至36级进化得",
   "total_race_value": 605,
   "profile": {
     "编号": "271",
@@ -354,5 +354,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:00.583857+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "优优",
+        "target": "绒光优优",
+        "condition": "升至36级",
+        "raw_condition": "等级36级",
+        "forward_text": "升至36级可进化为绒光优优",
+        "backward_text": "可由优优升至36级进化得",
+        "text": "可由优优升至36级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由优优升至36级进化得"
   }
 }

@@ -5,7 +5,7 @@
     "草",
     "萌"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至26级可进化为蒲公英娃娃",
   "total_race_value": 515,
   "profile": {
     "编号": "069",
@@ -391,5 +391,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:14:31.960204+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "蒲公英",
+        "target": "蒲公英娃娃",
+        "condition": "升至26级",
+        "raw_condition": "等级26级",
+        "forward_text": "升至26级可进化为蒲公英娃娃",
+        "backward_text": "可由蒲公英升至26级进化得",
+        "text": "升至26级可进化为蒲公英娃娃"
+      }
+    ],
+    "evolution_condition": "升至26级可进化为蒲公英娃娃"
   }
 }

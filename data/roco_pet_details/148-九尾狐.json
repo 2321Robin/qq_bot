@@ -5,7 +5,7 @@
     "火",
     "冰"
   ],
-  "evolution_condition": "由灵狐等级30级进化",
+  "evolution_condition": "可由灵狐升至30级进化得",
   "total_race_value": 465,
   "profile": {
     "编号": "148",
@@ -398,5 +398,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:15.400608+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "灵狐",
+        "target": "九尾狐",
+        "condition": "升至30级",
+        "raw_condition": "等级30级",
+        "forward_text": "升至30级可进化为九尾狐",
+        "backward_text": "可由灵狐升至30级进化得",
+        "text": "可由灵狐升至30级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由灵狐升至30级进化得"
   }
 }

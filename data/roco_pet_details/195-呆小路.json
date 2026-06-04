@@ -5,7 +5,7 @@
     "草",
     "萌"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至26级可进化为舞动路路",
   "total_race_value": 380,
   "profile": {
     "编号": "195",
@@ -391,5 +391,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:56.018545+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "呆小路",
+        "target": "舞动路路",
+        "condition": "升至26级",
+        "raw_condition": "等级26级",
+        "forward_text": "升至26级可进化为舞动路路",
+        "backward_text": "可由呆小路升至26级进化得",
+        "text": "升至26级可进化为舞动路路"
+      }
+    ],
+    "evolution_condition": "升至26级可进化为舞动路路"
   }
 }

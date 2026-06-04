@@ -5,7 +5,7 @@
     "水",
     "毒"
   ],
-  "evolution_condition": "由翡翠水母等级26级进化",
+  "evolution_condition": "可由翡翠水母升至26级进化得",
   "total_race_value": 580,
   "profile": {
     "编号": "245",
@@ -354,5 +354,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:17:41.573854+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "翡翠水母",
+        "target": "琉璃水母",
+        "condition": "升至26级",
+        "raw_condition": "等级26级",
+        "forward_text": "升至26级可进化为琉璃水母",
+        "backward_text": "可由翡翠水母升至26级进化得",
+        "text": "可由翡翠水母升至26级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由翡翠水母升至26级进化得"
   }
 }

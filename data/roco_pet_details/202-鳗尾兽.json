@@ -5,7 +5,7 @@
     "地",
     "草"
   ],
-  "evolution_condition": "由花怨鳗等级26级进化",
+  "evolution_condition": "可由花怨鳗升至26级进化得",
   "total_race_value": 788,
   "profile": {
     "编号": "202",
@@ -391,5 +391,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:17:01.108745+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "花怨鳗",
+        "target": "鳗尾兽",
+        "condition": "升至26级",
+        "raw_condition": "等级26级",
+        "forward_text": "升至26级可进化为鳗尾兽",
+        "backward_text": "可由花怨鳗升至26级进化得",
+        "text": "可由花怨鳗升至26级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由花怨鳗升至26级进化得"
   }
 }

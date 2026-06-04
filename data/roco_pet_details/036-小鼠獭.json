@@ -5,7 +5,7 @@
     "普通",
     "水"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至30级可进化为燕尾獭",
   "total_race_value": 355,
   "profile": {
     "编号": "036",
@@ -391,5 +391,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:13:47.093002+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "小鼠獭",
+        "target": "燕尾獭",
+        "condition": "升至30级",
+        "raw_condition": "等级30级",
+        "forward_text": "升至30级可进化为燕尾獭",
+        "backward_text": "可由小鼠獭升至30级进化得",
+        "text": "升至30级可进化为燕尾獭"
+      }
+    ],
+    "evolution_condition": "升至30级可进化为燕尾獭"
   }
 }

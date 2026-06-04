@@ -5,7 +5,7 @@
     "翼",
     "水"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至20级可进化为蓝珠天鹅",
   "total_race_value": 394,
   "profile": {
     "编号": "088",
@@ -310,5 +310,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:15:29.754009+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "乖乖鹄",
+        "target": "蓝珠天鹅",
+        "condition": "升至20级",
+        "raw_condition": "等级20级",
+        "forward_text": "升至20级可进化为蓝珠天鹅",
+        "backward_text": "可由乖乖鹄升至20级进化得",
+        "text": "升至20级可进化为蓝珠天鹅"
+      }
+    ],
+    "evolution_condition": "升至20级可进化为蓝珠天鹅"
   }
 }

@@ -5,7 +5,7 @@
     "恶",
     "冰"
   ],
-  "evolution_condition": "由乌达（极夜的样子）等级30级进化",
+  "evolution_condition": "可由乌达（极夜的样子）升至30级进化得；时间为正午可进化为迷你乌（极昼的样子）",
   "total_race_value": 498,
   "profile": {
     "编号": "259",
@@ -354,5 +354,30 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:17:52.145972+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "乌达（极夜的样子）",
+        "target": "迷你乌（极夜的样子）",
+        "condition": "升至30级",
+        "raw_condition": "等级30级",
+        "forward_text": "升至30级可进化为迷你乌（极夜的样子）",
+        "backward_text": "可由乌达（极夜的样子）升至30级进化得",
+        "text": "可由乌达（极夜的样子）升至30级进化得"
+      }
+    ],
+    "to": [
+      {
+        "source": "迷你乌（极夜的样子）",
+        "target": "迷你乌（极昼的样子）",
+        "condition": "时间为正午",
+        "raw_condition": "时间为正午",
+        "forward_text": "时间为正午可进化为迷你乌（极昼的样子）",
+        "backward_text": "可由迷你乌（极夜的样子）时间为正午进化得",
+        "text": "时间为正午可进化为迷你乌（极昼的样子）"
+      }
+    ],
+    "evolution_condition": "可由乌达（极夜的样子）升至30级进化得；时间为正午可进化为迷你乌（极昼的样子）"
   }
 }

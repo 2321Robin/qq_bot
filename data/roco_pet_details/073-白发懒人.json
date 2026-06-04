@@ -4,7 +4,7 @@
   "attributes": [
     "普通"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至18级可进化为动力猿",
   "total_race_value": 410,
   "profile": {
     "编号": "073",
@@ -375,5 +375,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:14:34.834533+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "白发懒人",
+        "target": "动力猿",
+        "condition": "升至18级",
+        "raw_condition": "等级18级",
+        "forward_text": "升至18级可进化为动力猿",
+        "backward_text": "可由白发懒人升至18级进化得",
+        "text": "升至18级可进化为动力猿"
+      }
+    ],
+    "evolution_condition": "升至18级可进化为动力猿"
   }
 }

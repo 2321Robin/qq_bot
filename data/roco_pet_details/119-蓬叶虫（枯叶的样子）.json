@@ -5,7 +5,7 @@
     "普通",
     "虫"
   ],
-  "evolution_condition": "由旋叶虫（枯叶的样子）等级25级进化",
+  "evolution_condition": "可由旋叶虫（枯叶的样子）升至25级进化得",
   "total_race_value": 433,
   "profile": {
     "编号": "119",
@@ -353,5 +353,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:15:54.030485+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "旋叶虫（枯叶的样子）",
+        "target": "蓬叶虫（枯叶的样子）",
+        "condition": "升至25级",
+        "raw_condition": "等级25级",
+        "forward_text": "升至25级可进化为蓬叶虫（枯叶的样子）",
+        "backward_text": "可由旋叶虫（枯叶的样子）升至25级进化得",
+        "text": "可由旋叶虫（枯叶的样子）升至25级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由旋叶虫（枯叶的样子）升至25级进化得"
   }
 }

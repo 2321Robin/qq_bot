@@ -4,7 +4,7 @@
   "attributes": [
     "电"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至28级可进化为奔乐鹿",
   "total_race_value": 318,
   "profile": {
     "编号": "226",
@@ -367,5 +367,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:17:20.597757+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "电动长颈鹿",
+        "target": "奔乐鹿",
+        "condition": "升至28级",
+        "raw_condition": "等级28级",
+        "forward_text": "升至28级可进化为奔乐鹿",
+        "backward_text": "可由电动长颈鹿升至28级进化得",
+        "text": "升至28级可进化为奔乐鹿"
+      }
+    ],
+    "evolution_condition": "升至28级可进化为奔乐鹿"
   }
 }

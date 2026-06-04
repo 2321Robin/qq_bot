@@ -5,7 +5,7 @@
     "电",
     "幻"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至32级可进化为小皮球",
   "total_race_value": 495,
   "profile": {
     "编号": "330",
@@ -354,5 +354,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:42.310996+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "粉粉星",
+        "target": "小皮球",
+        "condition": "升至32级",
+        "raw_condition": "等级32级",
+        "forward_text": "升至32级可进化为小皮球",
+        "backward_text": "可由粉粉星升至32级进化得",
+        "text": "升至32级可进化为小皮球"
+      }
+    ],
+    "evolution_condition": "升至32级可进化为小皮球"
   }
 }

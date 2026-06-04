@@ -5,7 +5,7 @@
     "幽",
     "毒"
   ],
-  "evolution_condition": "由忽幽狸等级36级进化",
+  "evolution_condition": "可由忽幽狸升至36级进化得",
   "total_race_value": 616,
   "profile": {
     "编号": "124",
@@ -398,5 +398,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:15:58.595888+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "忽幽狸",
+        "target": "影狸",
+        "condition": "升至36级",
+        "raw_condition": "等级36级",
+        "forward_text": "升至36级可进化为影狸",
+        "backward_text": "可由忽幽狸升至36级进化得",
+        "text": "可由忽幽狸升至36级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由忽幽狸升至36级进化得"
   }
 }

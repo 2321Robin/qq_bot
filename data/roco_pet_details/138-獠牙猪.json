@@ -5,7 +5,7 @@
     "冰",
     "地"
   ],
-  "evolution_condition": "由呼呼猪等级33级进化",
+  "evolution_condition": "可由呼呼猪升至33级进化得",
   "total_race_value": 579,
   "profile": {
     "编号": "138",
@@ -362,5 +362,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:08.230445+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "呼呼猪",
+        "target": "獠牙猪",
+        "condition": "升至33级",
+        "raw_condition": "等级33级",
+        "forward_text": "升至33级可进化为獠牙猪",
+        "backward_text": "可由呼呼猪升至33级进化得",
+        "text": "可由呼呼猪升至33级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由呼呼猪升至33级进化得"
   }
 }

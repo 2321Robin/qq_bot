@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -39,6 +39,14 @@ DETAIL_EVOLUTION_CHAIN_MAP = {
 
 
 @dataclass(frozen=True)
+class EvolutionRelation:
+    source: str
+    target: str
+    condition: str
+    text: str
+
+
+@dataclass(frozen=True)
 class PetRecord:
     name: str
     aliases: list[str]
@@ -54,6 +62,8 @@ class PetRecord:
     description: str = ""
     race_value: int | None = None
     stats: dict[str, int] | None = None
+    evolution_from: list[EvolutionRelation] = field(default_factory=list)
+    evolution_to: list[EvolutionRelation] = field(default_factory=list)
 
 
 def load_pet_records(path: Path = DEFAULT_PET_DETAIL_DIR) -> list[PetRecord]:
@@ -135,6 +145,8 @@ def _record_from_item(item: Any) -> PetRecord:
         description=_string_value(item, "description"),
         race_value=_optional_int(item, "race_value"),
         stats=_stats_value(item),
+        evolution_from=[],
+        evolution_to=[],
     )
 
 
@@ -146,6 +158,7 @@ def _record_from_detail(item: Any) -> PetRecord:
     name = _string_value(item, "name")
     number = _string_from_mapping(profile, "编号")
     attributes = _string_list(item, "attributes")
+    evolution = _dict_value(item, "evolution")
 
     return PetRecord(
         name=name,
@@ -153,15 +166,20 @@ def _record_from_detail(item: Any) -> PetRecord:
         number=number,
         attributes=attributes,
         stage=_string_from_mapping(profile, "阶段") or "未知",
-        evolution_chain=[name] if name else [],
-        evolution_condition=_string_value(item, "evolution_condition"),
+        evolution_chain=_detail_evolution_chain(item, name),
+        evolution_condition=_detail_evolution_condition(item),
         source_url=_string_value(item, "source_url"),
         height_weight=_string_from_mapping(profile, "体重") or _string_from_mapping(profile, "身高体重"),
         body_length=_string_from_mapping(profile, "体长"),
-        favorite_partner=_string_from_mapping(profile, "最好的伙伴"),
-        description=_first_skill_effect(item),
+        favorite_partner=(
+            _string_from_mapping(profile, "最好的伙伴")
+            or _string_from_mapping(profile, "最佳拍档")
+        ),
+        description=_string_from_mapping(profile, "简介") or _first_skill_effect(item),
         race_value=_optional_int(item, "total_race_value"),
         stats=_detail_stats_value(item),
+        evolution_from=_detail_evolution_relations(evolution, "from"),
+        evolution_to=_detail_evolution_relations(evolution, "to"),
     )
 
 
@@ -176,6 +194,37 @@ def _with_detail_compatibility(record: PetRecord) -> PetRecord:
         aliases=aliases,
         evolution_chain=DETAIL_EVOLUTION_CHAIN_MAP.get(record.name, record.evolution_chain),
     )
+
+
+def _detail_evolution_chain(item: dict[str, Any], name: str) -> list[str]:
+    chain = _string_list(item, "evolution_chain")
+    return chain or ([name] if name else [])
+
+
+def _detail_evolution_condition(item: dict[str, Any]) -> str:
+    evolution = _dict_value(item, "evolution")
+    condition = _string_from_mapping(evolution, "evolution_condition")
+    return condition or _string_value(item, "evolution_condition")
+
+
+def _detail_evolution_relations(evolution: dict[str, Any], key: str) -> list[EvolutionRelation]:
+    raw_relations = evolution.get(key, [])
+    if not isinstance(raw_relations, list):
+        return []
+
+    relations: list[EvolutionRelation] = []
+    for raw_relation in raw_relations:
+        if not isinstance(raw_relation, dict):
+            continue
+        relation = EvolutionRelation(
+            source=_string_from_mapping(raw_relation, "source"),
+            target=_string_from_mapping(raw_relation, "target"),
+            condition=_string_from_mapping(raw_relation, "condition"),
+            text=_string_from_mapping(raw_relation, "text"),
+        )
+        if relation.source or relation.target or relation.text:
+            relations.append(relation)
+    return relations
 
 
 def _dict_value(item: dict[str, Any], key: str) -> dict[str, Any]:
