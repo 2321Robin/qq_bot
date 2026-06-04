@@ -5,7 +5,7 @@
     "草",
     "武"
   ],
-  "evolution_condition": "由松仔等级16级进化",
+  "evolution_condition": "可由松仔升至16级进化得",
   "total_race_value": 507,
   "profile": {
     "编号": "154",
@@ -369,5 +369,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:19.389039+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "松仔",
+        "target": "松叶羊",
+        "condition": "升至16级",
+        "raw_condition": "等级16级",
+        "forward_text": "升至16级可进化为松叶羊",
+        "backward_text": "可由松仔升至16级进化得",
+        "text": "可由松仔升至16级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由松仔升至16级进化得"
   }
 }

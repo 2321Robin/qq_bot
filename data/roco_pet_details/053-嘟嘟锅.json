@@ -4,7 +4,7 @@
   "attributes": [
     "毒"
   ],
-  "evolution_condition": "由嘟嘟煲等级38级进化",
+  "evolution_condition": "可由嘟嘟煲升至38级进化得",
   "total_race_value": 573,
   "profile": {
     "编号": "053",
@@ -360,5 +360,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:14:09.245895+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "嘟嘟煲",
+        "target": "嘟嘟锅",
+        "condition": "升至38级",
+        "raw_condition": "等级38级",
+        "forward_text": "升至38级可进化为嘟嘟锅",
+        "backward_text": "可由嘟嘟煲升至38级进化得",
+        "text": "可由嘟嘟煲升至38级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由嘟嘟煲升至38级进化得"
   }
 }

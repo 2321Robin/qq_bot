@@ -4,7 +4,7 @@
   "attributes": [
     "地"
   ],
-  "evolution_condition": "由地鼠（储水期的样子）等级16级进化",
+  "evolution_condition": "可由地鼠（储水期的样子）升至16级进化得",
   "total_race_value": 442,
   "profile": {
     "编号": "278",
@@ -368,5 +368,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:06.718422+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "地鼠（储水期的样子）",
+        "target": "遁鼠（储水期的样子）",
+        "condition": "升至16级",
+        "raw_condition": "等级16级",
+        "forward_text": "升至16级可进化为遁鼠（储水期的样子）",
+        "backward_text": "可由地鼠（储水期的样子）升至16级进化得",
+        "text": "可由地鼠（储水期的样子）升至16级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由地鼠（储水期的样子）升至16级进化得"
   }
 }

@@ -5,7 +5,7 @@
     "龙",
     "幽"
   ],
-  "evolution_condition": "由大头骨龙等级40级进化",
+  "evolution_condition": "可由大头骨龙升至40级进化得",
   "total_race_value": 552,
   "profile": {
     "编号": "290",
@@ -354,5 +354,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:15.857398+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "大头骨龙",
+        "target": "寂灭骨龙",
+        "condition": "升至40级",
+        "raw_condition": "等级40级",
+        "forward_text": "升至40级可进化为寂灭骨龙",
+        "backward_text": "可由大头骨龙升至40级进化得",
+        "text": "可由大头骨龙升至40级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由大头骨龙升至40级进化得"
   }
 }

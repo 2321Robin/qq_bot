@@ -4,7 +4,7 @@
   "attributes": [
     "地"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至16级可进化为遁鼠（枯水期的样子）",
   "total_race_value": 337,
   "profile": {
     "编号": "277",
@@ -368,5 +368,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:04.759331+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "地鼠（枯水期的样子）",
+        "target": "遁鼠（枯水期的样子）",
+        "condition": "升至16级",
+        "raw_condition": "等级16级",
+        "forward_text": "升至16级可进化为遁鼠（枯水期的样子）",
+        "backward_text": "可由地鼠（枯水期的样子）升至16级进化得",
+        "text": "升至16级可进化为遁鼠（枯水期的样子）"
+      }
+    ],
+    "evolution_condition": "升至16级可进化为遁鼠（枯水期的样子）"
   }
 }

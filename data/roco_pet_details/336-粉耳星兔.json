@@ -4,7 +4,7 @@
   "attributes": [
     "幻"
   ],
-  "evolution_condition": "由粉星仔等级32级进化",
+  "evolution_condition": "可由粉星仔升至32级进化得；幽系血脉可进化为落陨星兔",
   "total_race_value": 642,
   "profile": {
     "编号": "336",
@@ -353,5 +353,30 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:45.991204+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "粉星仔",
+        "target": "粉耳星兔",
+        "condition": "升至32级",
+        "raw_condition": "等级32级",
+        "forward_text": "升至32级可进化为粉耳星兔",
+        "backward_text": "可由粉星仔升至32级进化得",
+        "text": "可由粉星仔升至32级进化得"
+      }
+    ],
+    "to": [
+      {
+        "source": "粉耳星兔",
+        "target": "落陨星兔",
+        "condition": "幽系血脉",
+        "raw_condition": "幽系血脉",
+        "forward_text": "幽系血脉可进化为落陨星兔",
+        "backward_text": "可由粉耳星兔幽系血脉进化得",
+        "text": "幽系血脉可进化为落陨星兔"
+      }
+    ],
+    "evolution_condition": "可由粉星仔升至32级进化得；幽系血脉可进化为落陨星兔"
   }
 }

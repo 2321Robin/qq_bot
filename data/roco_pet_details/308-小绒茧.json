@@ -5,7 +5,7 @@
     "光",
     "虫"
   ],
-  "evolution_condition": "获得1200星光值",
+  "evolution_condition": "可由绒绒获得1200星光值进化得",
   "total_race_value": 454,
   "profile": {
     "编号": "308",
@@ -399,5 +399,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:26.872566+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "绒绒",
+        "target": "小绒茧",
+        "condition": "获得1200星光值",
+        "raw_condition": "获得1200星光值",
+        "forward_text": "获得1200星光值可进化为小绒茧",
+        "backward_text": "可由绒绒获得1200星光值进化得",
+        "text": "可由绒绒获得1200星光值进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由绒绒获得1200星光值进化得"
   }
 }

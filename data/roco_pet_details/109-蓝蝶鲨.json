@@ -5,7 +5,7 @@
     "水",
     "翼"
   ],
-  "evolution_condition": "由风铃鲨等级20级进化",
+  "evolution_condition": "可由风铃鲨升至20级进化得",
   "total_race_value": 462,
   "profile": {
     "编号": "109",
@@ -354,5 +354,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:15:44.004452+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "风铃鲨",
+        "target": "蓝蝶鲨",
+        "condition": "升至20级",
+        "raw_condition": "等级20级",
+        "forward_text": "升至20级可进化为蓝蝶鲨",
+        "backward_text": "可由风铃鲨升至20级进化得",
+        "text": "可由风铃鲨升至20级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由风铃鲨升至20级进化得"
   }
 }

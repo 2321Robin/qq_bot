@@ -5,7 +5,7 @@
     "萌",
     "毒"
   ],
-  "evolution_condition": "由古钟蛇（本来的样子）等级38级进化",
+  "evolution_condition": "可由古钟蛇（本来的样子）升至38级进化得",
   "total_race_value": 558,
   "profile": {
     "编号": "213",
@@ -413,5 +413,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:17:09.776114+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "古钟蛇（本来的样子）",
+        "target": "寒音蛇（本来的样子）",
+        "condition": "升至38级",
+        "raw_condition": "等级38级",
+        "forward_text": "升至38级可进化为寒音蛇（本来的样子）",
+        "backward_text": "可由古钟蛇（本来的样子）升至38级进化得",
+        "text": "可由古钟蛇（本来的样子）升至38级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由古钟蛇（本来的样子）升至38级进化得"
   }
 }

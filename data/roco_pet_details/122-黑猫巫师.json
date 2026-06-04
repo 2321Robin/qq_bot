@@ -4,7 +4,7 @@
   "attributes": [
     "普通"
   ],
-  "evolution_condition": "由小黑猫等级40级进化",
+  "evolution_condition": "可由小黑猫升至40级进化得",
   "total_race_value": 662,
   "profile": {
     "编号": "122",
@@ -353,5 +353,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:15:56.463422+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "小黑猫",
+        "target": "黑猫巫师",
+        "condition": "升至40级",
+        "raw_condition": "等级40级",
+        "forward_text": "升至40级可进化为黑猫巫师",
+        "backward_text": "可由小黑猫升至40级进化得",
+        "text": "可由小黑猫升至40级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由小黑猫升至40级进化得"
   }
 }

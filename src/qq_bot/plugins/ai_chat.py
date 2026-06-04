@@ -13,6 +13,7 @@ from qq_bot.services.memory_prompt import (
 from qq_bot.services.message_formatting import replace_named_mentions
 from qq_bot.services.onebot_send import finish_with_send_errors_logged
 from qq_bot.services.prompt import extract_ai_prompt
+from qq_bot.services.roco_knowledge import build_roco_context
 from qq_bot.services.search import (
     SearchError,
     format_search_context,
@@ -119,6 +120,12 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
         except Exception:
             logger.exception("Chat memory write failed; continuing without storing message")
 
+    try:
+        roco_context = build_roco_context(prompt)
+    except Exception:
+        logger.exception("Roco knowledge lookup failed; continuing without Roco context")
+        roco_context = ""
+
     search_context = ""
     needs_search = prompt_needs_search(prompt)
     if needs_search and not settings.has_search_config():
@@ -145,6 +152,7 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
             settings=settings,
             search_context=search_context,
             chat_context=chat_context,
+            roco_context=roco_context,
         )
     except AIReplyError:
         await finish_with_send_errors_logged(ai_chat, "AI 服务暂时不可用，请稍后再试。")

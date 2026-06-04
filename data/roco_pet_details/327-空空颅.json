@@ -4,7 +4,7 @@
   "attributes": [
     "幽"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "使用3次勾魂可进化为夜宿颅",
   "total_race_value": 280,
   "profile": {
     "编号": "327",
@@ -360,5 +360,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:40.351618+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "空空颅",
+        "target": "夜宿颅",
+        "condition": "使用3次勾魂",
+        "raw_condition": "使用3次勾魂",
+        "forward_text": "使用3次勾魂可进化为夜宿颅",
+        "backward_text": "可由空空颅使用3次勾魂进化得",
+        "text": "使用3次勾魂可进化为夜宿颅"
+      }
+    ],
+    "evolution_condition": "使用3次勾魂可进化为夜宿颅"
   }
 }

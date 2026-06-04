@@ -5,7 +5,7 @@
     "地",
     "幻"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至35级可进化为仪式之星",
   "total_race_value": 366,
   "profile": {
     "编号": "113",
@@ -399,5 +399,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:43:31.864798+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "仪使者",
+        "target": "仪式之星",
+        "condition": "升至35级",
+        "raw_condition": "等级35级",
+        "forward_text": "升至35级可进化为仪式之星",
+        "backward_text": "可由仪使者升至35级进化得",
+        "text": "升至35级可进化为仪式之星"
+      }
+    ],
+    "evolution_condition": "升至35级可进化为仪式之星"
   }
 }

@@ -5,11 +5,14 @@ from urllib.error import HTTPError
 from scripts.fetch_roco_pet_detail import (
     fetch_pet_details,
     fetch_html,
+    load_bwiki_index_target_records,
     load_bwiki_index_targets,
     load_fetch_targets,
+    main,
     write_pet_detail,
 )
 from qq_bot.services.roco_bwiki import parse_pet_detail
+from qq_bot.services.roco_evolution import normalize_pet_details
 
 
 def test_parse_pet_detail_extracts_profile_stats_and_skill_groups() -> None:
@@ -74,7 +77,64 @@ def test_parse_pet_detail_extracts_profile_stats_and_skill_groups() -> None:
             ],
         },
     ]
-    assert detail["metadata"]["parser_version"] == 5
+    assert detail["evolution_edges"] == []
+    assert detail["metadata"]["parser_version"] == 6
+
+
+def test_parse_pet_detail_extracts_raw_template_page() -> None:
+    raw = """
+    {{精灵信息
+    |精灵名称=迪莫
+    |精灵初阶名称=迪莫
+    |精灵阶段=最终形态
+    |精灵类型=永远的伙伴
+    |精灵描述=勇气的伙伴。
+    |主属性=光
+    |2属性=
+    |特性=最好的伙伴
+    |特性描述=造成克制伤害后，获得攻防速+20%，并回复2能量。
+    |生命=120
+    |物攻=80
+    |魔攻=80
+    |物防=105
+    |魔防=105
+    |速度=92
+    |体型=0.54~0.78
+    |重量=5.5~7
+    |技能=猛烈撞击,闪光,防御
+    |技能解锁等级=1,1,1
+    |血脉技能=星星撞击
+    |可学技能石=借用
+    |进化条件=无法进化
+    }}
+    """
+
+    detail = parse_pet_detail("https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB?action=raw", raw)
+
+    assert detail["name"] == "迪莫"
+    assert detail["source_url"] == "https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB"
+    assert detail["attributes"] == ["光"]
+    assert detail["evolution_condition"] == "无法进化"
+    assert detail["profile"]["初阶"] == "迪莫"
+    assert detail["profile"]["阶段"] == "最终形态"
+    assert detail["profile"]["体长"] == "0.54~0.78M"
+    assert detail["profile"]["体重"] == "5.5~7KG"
+    assert detail["stats"] == {
+        "生命": 120,
+        "物攻": 80,
+        "魔攻": 80,
+        "物防": 105,
+        "魔防": 105,
+        "速度": 92,
+    }
+    assert detail["total_race_value"] == 582
+    assert detail["skills"][0]["rows"][:3] == [
+        {"等级": "LV1", "技能": "猛烈撞击", "耗能": "", "类型": "", "威力": "", "效果": ""},
+        {"等级": "LV1", "技能": "闪光", "耗能": "", "类型": "", "威力": "", "效果": ""},
+        {"等级": "LV1", "技能": "防御", "耗能": "", "类型": "", "威力": "", "效果": ""},
+    ]
+    assert detail["skills"][1]["rows"][0]["技能"] == "星星撞击"
+    assert detail["skills"][2]["rows"][0]["技能"] == "借用"
 
 
 def test_parse_pet_detail_uses_empty_values_for_missing_fields() -> None:
@@ -85,6 +145,7 @@ def test_parse_pet_detail_uses_empty_values_for_missing_fields() -> None:
     assert detail["evolution_condition"] == ""
     assert detail["profile"] == {}
     assert detail["stats"] == {}
+    assert detail["evolution_edges"] == []
     assert detail["total_race_value"] is None
     assert detail["skills"] == []
 
@@ -297,6 +358,16 @@ def test_parse_pet_detail_describes_level_evolution_from_component_chain() -> No
     """
 
     detail = parse_pet_detail("https://example.com/pet", html)
+    assert detail["evolution_edges"] == [
+        {
+            "source": "古钟蛇（本来的样子）",
+            "target": "寒音蛇（本来的样子）",
+            "condition": "升至38级",
+            "raw_condition": "38",
+            "forward_text": "升至38级可进化为寒音蛇（本来的样子）",
+            "backward_text": "可由古钟蛇（本来的样子）升至38级进化得",
+        }
+    ]
 
     assert detail["evolution_condition"] == "由古钟蛇（本来的样子）等级38级进化"
     assert "进化条件" not in detail["profile"]
@@ -323,6 +394,8 @@ def test_parse_pet_detail_describes_battle_evolution_from_component_chain() -> N
     """
 
     detail = parse_pet_detail("https://example.com/pet", html)
+    assert detail["evolution_edges"][0]["condition"] == "击败3个恶系精灵"
+    assert detail["evolution_edges"][0]["forward_text"] == "击败3个恶系精灵可进化为秩序鱿墨"
 
     assert detail["evolution_condition"] == "由墨鱿士击败3个恶系精灵进化"
     assert "进化条件" not in detail["profile"]
@@ -349,9 +422,220 @@ def test_parse_pet_detail_preserves_non_level_evolution_text_from_component_chai
     """
 
     detail = parse_pet_detail("https://example.com/pet", html)
-
+    assert detail["evolution_edges"][0]["condition"] == "亲密度进化"
+    assert detail["evolution_edges"][0]["backward_text"] == "可由雪绒鸟（夏天的样子）亲密度进化得"
     assert detail["evolution_condition"] == "由雪绒鸟（夏天的样子）亲密度进化"
     assert "进化条件" not in detail["profile"]
+
+
+
+def test_parse_pet_detail_extracts_middle_form_evolution_edges() -> None:
+    html = """
+    <html>
+      <body>
+        <h1>喵呜</h1>
+        <div class="rocom_spirit_evolution_box">
+          <div class="rocom_spirit_evolution_1"><a href="/rocom/喵喵" title="喵喵">喵喵</a></div>
+          <div class="rocom_spirit_evolution_level"><p class="rocom_spirit_evolution_level_num">16</p></div>
+          <div class="rocom_spirit_evolution_2"><a href="/rocom/喵呜" title="喵呜">喵呜</a></div>
+        </div>
+        <div class="rocom_spirit_evolution_box">
+          <div class="rocom_spirit_evolution_1"><a href="/rocom/喵呜" title="喵呜">喵呜</a></div>
+          <div class="rocom_spirit_evolution_level"><p class="rocom_spirit_evolution_level_num">36</p></div>
+          <div class="rocom_spirit_evolution_2"><a href="/rocom/魔力猫" title="魔力猫">魔力猫</a></div>
+        </div>
+      </body>
+    </html>
+    """
+
+    detail = parse_pet_detail("https://example.com/pet", html)
+
+    assert detail["evolution_condition"] == "由喵喵等级16级进化"
+    assert detail["evolution_edges"] == [
+        {
+            "source": "喵喵",
+            "target": "喵呜",
+            "condition": "升至16级",
+            "raw_condition": "16",
+            "forward_text": "升至16级可进化为喵呜",
+            "backward_text": "可由喵喵升至16级进化得",
+        },
+        {
+            "source": "喵呜",
+            "target": "魔力猫",
+            "condition": "升至36级",
+            "raw_condition": "36",
+            "forward_text": "升至36级可进化为魔力猫",
+            "backward_text": "可由喵呜升至36级进化得",
+        },
+    ]
+
+
+
+def test_parse_pet_detail_extracts_branching_component_edges() -> None:
+    html = """
+    <html>
+      <body>
+        <h1>分支宠物</h1>
+        <div class="rocom_spirit_evolution_box">
+          <div class="rocom_spirit_evolution_1"><a title="源宠物">源宠物</a></div>
+          <div class="rocom_spirit_evolution_level"><p class="rocom_spirit_evolution_level_num">20</p></div>
+          <div class="rocom_spirit_evolution_2"><a title="分支甲">分支甲</a></div>
+          <div class="rocom_spirit_evolution_2"><a title="分支乙">分支乙</a></div>
+        </div>
+      </body>
+    </html>
+    """
+
+    detail = parse_pet_detail("https://example.com/pet", html)
+
+    assert detail["evolution_edges"] == [
+        {
+            "source": "源宠物",
+            "target": "分支甲",
+            "condition": "升至20级",
+            "raw_condition": "20",
+            "forward_text": "升至20级可进化为分支甲",
+            "backward_text": "可由源宠物升至20级进化得",
+        },
+        {
+            "source": "源宠物",
+            "target": "分支乙",
+            "condition": "升至20级",
+            "raw_condition": "20",
+            "forward_text": "升至20级可进化为分支乙",
+            "backward_text": "可由源宠物升至20级进化得",
+        },
+    ]
+
+
+def test_parse_pet_detail_preserves_named_battle_evolution_edge() -> None:
+    html = """
+    <html>
+      <body>
+        <h1>黑棋主教</h1>
+        <div class="rocom_spirit_evolution_box">
+          <div class="rocom_spirit_evolution_1"><a title="棋骑士（白子）">source</a></div>
+          <div class="rocom_spirit_evolution_level"><p class="rocom_spirit_evolution_level_num">击败三次棋骑士（黑子）</p></div>
+          <div class="rocom_spirit_evolution_2"><a title="黑棋主教">target</a></div>
+        </div>
+      </body>
+    </html>
+    """
+
+    detail = parse_pet_detail("https://example.com/pet", html)
+
+    assert detail["evolution_condition"] == "由棋骑士（白子）击败三次棋骑士（黑子）"
+    assert detail["evolution_edges"] == [
+        {
+            "source": "棋骑士（白子）",
+            "target": "黑棋主教",
+            "condition": "击败三次棋骑士（黑子）",
+            "raw_condition": "击败三次棋骑士（黑子）",
+            "forward_text": "击败三次棋骑士（黑子）可进化为黑棋主教",
+            "backward_text": "可由棋骑士（白子）击败三次棋骑士（黑子）进化得",
+        }
+    ]
+
+
+def test_parse_pet_detail_uses_anchor_text_when_evolution_title_is_missing() -> None:
+    html = """
+    <html>
+      <body>
+        <h1>目标宠物</h1>
+        <div class="rocom_spirit_evolution_box">
+          <div class="rocom_spirit_evolution_1"><a>来源宠物</a></div>
+          <div class="rocom_spirit_evolution_level"><p class="rocom_spirit_evolution_level_num">使用道具</p></div>
+          <div class="rocom_spirit_evolution_2"><a>目标宠物</a></div>
+        </div>
+      </body>
+    </html>
+    """
+
+    detail = parse_pet_detail("https://example.com/pet", html)
+
+    assert detail["evolution_condition"] == "由来源宠物使用道具"
+    assert detail["evolution_edges"][0]["raw_condition"] == "使用道具"
+
+
+def test_normalize_pet_details_builds_bidirectional_middle_form_text() -> None:
+    details = [
+        {"name": "喵喵", "evolution_condition": "", "evolution_edges": []},
+        {"name": "喵呜", "evolution_condition": "由喵喵等级16级进化", "evolution_edges": []},
+        {"name": "魔力猫", "evolution_condition": "由喵呜等级36级进化", "evolution_edges": []},
+    ]
+
+    normalize_pet_details(details)
+
+    assert details[0]["evolution_condition"] == "升至16级可进化为喵呜"
+    assert details[0]["evolution"]["evolution_condition"] == "升至16级可进化为喵呜"
+    assert details[1]["evolution_condition"] == "可由喵喵升至16级进化得；升至36级可进化为魔力猫"
+    assert details[1]["evolution"]["evolution_condition"] == "可由喵喵升至16级进化得；升至36级可进化为魔力猫"
+    assert details[2]["evolution_condition"] == "可由喵呜升至36级进化得"
+    assert details[2]["evolution"]["evolution_condition"] == "可由喵呜升至36级进化得"
+
+    first_normalized = json.loads(json.dumps(details, ensure_ascii=False))
+
+    normalize_pet_details(details)
+
+    assert details == first_normalized
+    assert details[1]["evolution"]["from"][0]["source"] == "喵喵"
+    assert details[1]["evolution"]["to"][0]["target"] == "魔力猫"
+
+
+def test_normalize_pet_details_uses_parser_edges_for_non_level_condition() -> None:
+    details = [
+        {"name": "雪绒鸟", "evolution_condition": "", "evolution_edges": []},
+        {
+            "name": "冬羽雀",
+            "evolution_condition": "",
+            "evolution_edges": [
+                {
+                    "source": "雪绒鸟",
+                    "target": "冬羽雀",
+                    "condition": "亲密度进化",
+                    "raw_condition": "亲密度进化",
+                    "forward_text": "亲密度进化可进化为冬羽雀",
+                    "backward_text": "可由雪绒鸟亲密度进化得",
+                }
+            ],
+        },
+    ]
+
+    normalize_pet_details(details)
+
+    assert details[0]["evolution_condition"] == "亲密度进化可进化为冬羽雀"
+    assert details[0]["evolution"]["evolution_condition"] == "亲密度进化可进化为冬羽雀"
+    assert details[1]["evolution_condition"] == "可由雪绒鸟亲密度进化得"
+    assert details[1]["evolution"]["evolution_condition"] == "可由雪绒鸟亲密度进化得"
+
+
+def test_normalize_pet_details_keeps_explicit_final_note_as_compatibility_fallback() -> None:
+    details = [{"name": "迪莫", "evolution_condition": "无法进化", "evolution_edges": []}]
+
+    normalize_pet_details(details)
+
+    assert details[0]["evolution_condition"] == "无法进化"
+    assert details[0]["evolution"] == {"from": [], "to": [], "evolution_condition": "无法进化"}
+
+
+def test_normalize_pet_details_infers_sourceless_branch_conditions_from_previous_form() -> None:
+    details = [
+        {"name": "画精灵", "evolution_condition": "", "evolution_edges": []},
+        {"name": "画像守护", "evolution_condition": "由画精灵等级16级进化", "evolution_edges": []},
+        {"name": "画间法师手", "evolution_condition": "击败三只武系精灵", "evolution_edges": []},
+        {"name": "画间沉铁兽", "evolution_condition": "击败三只幻系精灵", "evolution_edges": []},
+    ]
+
+    normalize_pet_details(details)
+
+    assert details[1]["evolution"]["evolution_condition"] == (
+        "可由画精灵升至16级进化得；"
+        "击败3个武系精灵可进化为画间法师手；"
+        "击败3个幻系精灵可进化为画间沉铁兽"
+    )
+    assert details[2]["evolution_condition"] == "可由画像守护击败3个武系精灵进化得"
+    assert details[3]["evolution_condition"] == "可由画像守护击败3个幻系精灵进化得"
 
 
 def test_parse_pet_detail_sums_stats_when_total_race_value_is_missing() -> None:
@@ -559,6 +843,7 @@ def test_fetch_pet_details_writes_successes_and_continues_after_failure(tmp_path
         ],
         tmp_path,
         fetch_html_func=fake_fetch_html,
+        normalize=False,
     )
 
     assert [error[0] for error in errors] == ["失败宠物"]
@@ -582,6 +867,7 @@ def test_fetch_pet_details_writes_numbered_filename_when_number_is_available(tmp
         [("喵喵", "https://wiki.biligame.com/rocom/喵喵")],
         tmp_path,
         fetch_html_func=fake_fetch_html,
+        normalize=False,
     )
 
     assert errors == []
@@ -602,6 +888,7 @@ def test_fetch_pet_details_continues_after_remote_disconnect(tmp_path) -> None:
         ],
         tmp_path,
         fetch_html_func=fake_fetch_html,
+        normalize=False,
     )
 
     assert [error[0] for error in errors] == ["断开宠物"]
@@ -635,6 +922,29 @@ def test_load_bwiki_index_targets_extracts_all_pet_names() -> None:
     ]
 
 
+def test_load_bwiki_index_target_records_preserves_index_metadata() -> None:
+    html = """
+    <html><body>
+      <table>
+        <tr>
+          <th>精灵</th><th>精灵名称</th><th>属性</th><th>精灵编号</th><th>总种族值</th>
+        </tr>
+        <tr><td></td><td>迪莫</td><td>光</td><td>001</td><td>582</td></tr>
+      </table>
+    </body></html>
+    """
+
+    targets = load_bwiki_index_target_records(html)
+
+    assert targets == [
+        (
+            "迪莫",
+            "https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB",
+            {"精灵": "", "精灵名称": "迪莫", "属性": "光", "精灵编号": "001", "总种族值": "582"},
+        )
+    ]
+
+
 def test_fetch_pet_details_skips_existing_files_unless_force_is_enabled(tmp_path) -> None:
     calls: list[str] = []
 
@@ -644,7 +954,7 @@ def test_fetch_pet_details_skips_existing_files_unless_force_is_enabled(tmp_path
 
     existing_path = tmp_path / "002-喵喵.json"
     existing_path.write_text(
-        json.dumps({"name": "old", "metadata": {"parser_version": 5}}, ensure_ascii=False),
+        json.dumps({"name": "old", "metadata": {"parser_version": 6}}, ensure_ascii=False),
         encoding="utf-8",
     )
 
@@ -652,6 +962,7 @@ def test_fetch_pet_details_skips_existing_files_unless_force_is_enabled(tmp_path
         [("喵喵", "https://wiki.biligame.com/rocom/喵喵")],
         tmp_path,
         fetch_html_func=fake_fetch_html,
+        normalize=False,
     )
 
     assert errors == []
@@ -663,10 +974,68 @@ def test_fetch_pet_details_skips_existing_files_unless_force_is_enabled(tmp_path
         tmp_path,
         fetch_html_func=fake_fetch_html,
         force=True,
+        normalize=False,
     )
 
     assert calls == ["https://wiki.biligame.com/rocom/喵喵"]
     assert json.loads(existing_path.read_text(encoding="utf-8"))["name"] == "喵喵"
+
+
+def test_fetch_pet_details_normalizes_after_successful_refresh(tmp_path) -> None:
+    def fake_fetch_html(url: str) -> str:
+        name = url.rsplit("/", maxsplit=1)[-1]
+        if name == "喵喵":
+            return "<html><body><h1>喵喵</h1></body></html>"
+        return """
+        <html><body>
+          <h1>喵呜</h1>
+          <div class="rocom_spirit_evolution_box">
+            <div class="rocom_spirit_evolution_1"><a title="喵喵">喵喵</a></div>
+            <div class="rocom_spirit_evolution_level"><p class="rocom_spirit_evolution_level_num">16</p></div>
+            <div class="rocom_spirit_evolution_2"><a title="喵呜">喵呜</a></div>
+          </div>
+        </body></html>
+        """
+
+    errors = fetch_pet_details(
+        [
+            ("喵喵", "https://wiki.biligame.com/rocom/喵喵"),
+            ("喵呜", "https://wiki.biligame.com/rocom/喵呜"),
+        ],
+        tmp_path,
+        fetch_html_func=fake_fetch_html,
+    )
+
+    assert errors == []
+    source = json.loads((tmp_path / "喵喵.json").read_text(encoding="utf-8"))
+    target = json.loads((tmp_path / "喵呜.json").read_text(encoding="utf-8"))
+    assert source["evolution_condition"] == "升至16级可进化为喵呜"
+    assert source["evolution"]["evolution_condition"] == "升至16级可进化为喵呜"
+    assert target["evolution"]["from"][0]["text"] == "可由喵喵升至16级进化得"
+
+
+def test_main_can_normalize_existing_detail_directory(tmp_path, monkeypatch) -> None:
+    (tmp_path / "喵喵.json").write_text(
+        json.dumps({"name": "喵喵", "evolution_condition": "", "evolution_edges": []}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (tmp_path / "喵呜.json").write_text(
+        json.dumps(
+            {
+                "name": "喵呜",
+                "evolution_condition": "由喵喵等级16级进化",
+                "evolution_edges": [],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("scripts.fetch_roco_pet_detail.sys.argv", ["fetch_roco_pet_detail.py", "--normalize-only", "--output-dir", str(tmp_path)])
+
+    assert main() == 0
+
+    normalized = json.loads((tmp_path / "喵喵.json").read_text(encoding="utf-8"))
+    assert normalized["evolution"]["evolution_condition"] == "升至16级可进化为喵呜"
 
 
 def test_fetch_pet_details_refreshes_outdated_parser_version(tmp_path) -> None:
@@ -687,6 +1056,7 @@ def test_fetch_pet_details_refreshes_outdated_parser_version(tmp_path) -> None:
         tmp_path,
         fetch_html_func=fake_fetch_html,
         min_parser_version=3,
+        normalize=False,
     )
 
     assert errors == []
@@ -709,6 +1079,7 @@ def test_fetch_pet_details_retries_transient_failures(tmp_path) -> None:
         tmp_path,
         fetch_html_func=fake_fetch_html,
         retries=1,
+        normalize=False,
     )
 
     assert errors == []
@@ -717,3 +1088,45 @@ def test_fetch_pet_details_retries_transient_failures(tmp_path) -> None:
         "https://wiki.biligame.com/rocom/喵喵",
     ]
     assert json.loads((tmp_path / "喵喵.json").read_text(encoding="utf-8"))["name"] == "喵喵"
+
+
+def test_fetch_pet_details_can_fetch_raw_pages_and_apply_index_metadata(tmp_path) -> None:
+    calls: list[str] = []
+
+    def fake_fetch_html(url: str) -> str:
+        calls.append(url)
+        return """
+        {{精灵信息
+        |精灵名称=迪莫
+        |主属性=光
+        |生命=120
+        |物攻=80
+        |魔攻=80
+        |物防=105
+        |魔防=105
+        |速度=92
+        |进化条件=无法进化
+        }}
+        """
+
+    errors = fetch_pet_details(
+        [
+            (
+                "迪莫",
+                "https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB",
+                {"精灵编号": "001", "总种族值": "582"},
+            )
+        ],
+        tmp_path,
+        fetch_html_func=fake_fetch_html,
+        normalize=False,
+        use_raw_pages=True,
+    )
+
+    assert errors == []
+    assert calls == ["https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB?action=raw"]
+    detail = json.loads((tmp_path / "001-迪莫.json").read_text(encoding="utf-8"))
+    assert detail["name"] == "迪莫"
+    assert detail["source_url"] == "https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB"
+    assert detail["profile"]["编号"] == "001"
+    assert detail["total_race_value"] == 582

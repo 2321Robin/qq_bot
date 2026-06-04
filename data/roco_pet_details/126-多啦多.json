@@ -5,7 +5,7 @@
     "毒",
     "地"
   ],
-  "evolution_condition": "由多多等级16级进化",
+  "evolution_condition": "可由多多升至16级进化得",
   "total_race_value": 472,
   "profile": {
     "编号": "126",
@@ -399,5 +399,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:15:59.884560+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "多多",
+        "target": "多啦多",
+        "condition": "升至16级",
+        "raw_condition": "等级16级",
+        "forward_text": "升至16级可进化为多啦多",
+        "backward_text": "可由多多升至16级进化得",
+        "text": "可由多多升至16级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由多多升至16级进化得"
   }
 }

@@ -4,7 +4,7 @@
   "attributes": [
     "毒"
   ],
-  "evolution_condition": "由裘洛等级20级进化",
+  "evolution_condition": "可由裘洛升至20级进化得",
   "total_race_value": 416,
   "profile": {
     "编号": "247",
@@ -390,5 +390,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:17:42.772879+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "裘洛",
+        "target": "裘力",
+        "condition": "升至20级",
+        "raw_condition": "等级20级",
+        "forward_text": "升至20级可进化为裘力",
+        "backward_text": "可由裘洛升至20级进化得",
+        "text": "可由裘洛升至20级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由裘洛升至20级进化得"
   }
 }

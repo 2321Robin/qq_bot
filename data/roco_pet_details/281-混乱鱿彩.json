@@ -5,7 +5,7 @@
     "幽",
     "恶"
   ],
-  "evolution_condition": "打败三只萌系精灵",
+  "evolution_condition": "可由墨鱿士击败3个萌系精灵进化得",
   "total_race_value": 576,
   "profile": {
     "编号": "281",
@@ -392,5 +392,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:09.504165+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "墨鱿士",
+        "target": "混乱鱿彩",
+        "condition": "击败3个萌系精灵",
+        "raw_condition": "打败三只萌系精灵",
+        "forward_text": "击败3个萌系精灵可进化为混乱鱿彩",
+        "backward_text": "可由墨鱿士击败3个萌系精灵进化得",
+        "text": "可由墨鱿士击败3个萌系精灵进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由墨鱿士击败3个萌系精灵进化得"
   }
 }

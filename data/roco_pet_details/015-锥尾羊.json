@@ -4,7 +4,7 @@
   "attributes": [
     "幽"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至20级可进化为铃兰羊",
   "total_race_value": 349,
   "profile": {
     "编号": "015",
@@ -353,5 +353,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:13:21.570847+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "锥尾羊",
+        "target": "铃兰羊",
+        "condition": "升至20级",
+        "raw_condition": "等级20级",
+        "forward_text": "升至20级可进化为铃兰羊",
+        "backward_text": "可由锥尾羊升至20级进化得",
+        "text": "升至20级可进化为铃兰羊"
+      }
+    ],
+    "evolution_condition": "升至20级可进化为铃兰羊"
   }
 }

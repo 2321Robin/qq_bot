@@ -4,7 +4,7 @@
   "attributes": [
     "草"
   ],
-  "evolution_condition": "由格兰种子等级16级进化",
+  "evolution_condition": "可由格兰种子升至16级进化得",
   "total_race_value": 429,
   "profile": {
     "编号": "275",
@@ -352,5 +352,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:03.522534+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "格兰种子",
+        "target": "格兰花",
+        "condition": "升至16级",
+        "raw_condition": "等级16级",
+        "forward_text": "升至16级可进化为格兰花",
+        "backward_text": "可由格兰种子升至16级进化得",
+        "text": "可由格兰种子升至16级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由格兰种子升至16级进化得"
   }
 }

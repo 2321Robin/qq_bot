@@ -5,7 +5,7 @@
     "武",
     "地"
   ],
-  "evolution_condition": "击败三次棋绮后（黑子）",
+  "evolution_condition": "可由棋契陛下击败三次棋绮后（黑子）进化得；击败三次棋绮后（白子）可进化为棋绮后（黑子）",
   "total_race_value": 508,
   "profile": {
     "编号": "192",
@@ -435,5 +435,30 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:52.689704+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "棋契陛下",
+        "target": "棋绮后（白子）",
+        "condition": "击败三次棋绮后（黑子）",
+        "raw_condition": "击败三次棋绮后（黑子）",
+        "forward_text": "击败三次棋绮后（黑子）可进化为棋绮后（白子）",
+        "backward_text": "可由棋契陛下击败三次棋绮后（黑子）进化得",
+        "text": "可由棋契陛下击败三次棋绮后（黑子）进化得"
+      }
+    ],
+    "to": [
+      {
+        "source": "棋绮后（白子）",
+        "target": "棋绮后（黑子）",
+        "condition": "击败三次棋绮后（白子）",
+        "raw_condition": "击败三次棋绮后（白子）",
+        "forward_text": "击败三次棋绮后（白子）可进化为棋绮后（黑子）",
+        "backward_text": "可由棋绮后（白子）击败三次棋绮后（白子）进化得",
+        "text": "击败三次棋绮后（白子）可进化为棋绮后（黑子）"
+      }
+    ],
+    "evolution_condition": "可由棋契陛下击败三次棋绮后（黑子）进化得；击败三次棋绮后（白子）可进化为棋绮后（黑子）"
   }
 }

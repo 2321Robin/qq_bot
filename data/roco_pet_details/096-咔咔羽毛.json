@@ -5,7 +5,7 @@
     "翼",
     "普通"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至18级可进化为咔咔雀",
   "total_race_value": 378,
   "profile": {
     "编号": "096",
@@ -391,5 +391,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:15:34.873553+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "咔咔羽毛",
+        "target": "咔咔雀",
+        "condition": "升至18级",
+        "raw_condition": "等级18级",
+        "forward_text": "升至18级可进化为咔咔雀",
+        "backward_text": "可由咔咔羽毛升至18级进化得",
+        "text": "升至18级可进化为咔咔雀"
+      }
+    ],
+    "evolution_condition": "升至18级可进化为咔咔雀"
   }
 }

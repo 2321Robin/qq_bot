@@ -5,7 +5,7 @@
     "冰",
     "萌"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至32级可进化为帽兜娃娃",
   "total_race_value": 370,
   "profile": {
     "编号": "142",
@@ -399,5 +399,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:10.834314+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "大耳帽兜",
+        "target": "帽兜娃娃",
+        "condition": "升至32级",
+        "raw_condition": "等级32级",
+        "forward_text": "升至32级可进化为帽兜娃娃",
+        "backward_text": "可由大耳帽兜升至32级进化得",
+        "text": "升至32级可进化为帽兜娃娃"
+      }
+    ],
+    "evolution_condition": "升至32级可进化为帽兜娃娃"
   }
 }

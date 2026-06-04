@@ -5,7 +5,7 @@
     "武",
     "水"
   ],
-  "evolution_condition": "由海豹战士等级40级进化",
+  "evolution_condition": "可由海豹战士升至40级进化得",
   "total_race_value": 600,
   "profile": {
     "编号": "182",
@@ -391,5 +391,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:43.609193+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "海豹战士",
+        "target": "海豹船长",
+        "condition": "升至40级",
+        "raw_condition": "等级40级",
+        "forward_text": "升至40级可进化为海豹船长",
+        "backward_text": "可由海豹战士升至40级进化得",
+        "text": "可由海豹战士升至40级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由海豹战士升至40级进化得"
   }
 }

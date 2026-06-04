@@ -4,7 +4,7 @@
   "attributes": [
     "翼"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "亲密度进化可进化为冬羽雀（本来的样子）",
   "total_race_value": 342,
   "profile": {
     "编号": "018",
@@ -367,5 +367,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:13:23.493714+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "雪绒鸟（本来的样子）",
+        "target": "冬羽雀（本来的样子）",
+        "condition": "亲密度进化",
+        "raw_condition": "亲密度进化",
+        "forward_text": "亲密度进化可进化为冬羽雀（本来的样子）",
+        "backward_text": "可由雪绒鸟（本来的样子）亲密度进化得",
+        "text": "亲密度进化可进化为冬羽雀（本来的样子）"
+      }
+    ],
+    "evolution_condition": "亲密度进化可进化为冬羽雀（本来的样子）"
   }
 }

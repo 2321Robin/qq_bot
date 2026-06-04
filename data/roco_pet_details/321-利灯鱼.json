@@ -5,7 +5,7 @@
     "水",
     "电"
   ],
-  "evolution_condition": "由双灯鱼等级30级进化",
+  "evolution_condition": "可由双灯鱼升至30级进化得",
   "total_race_value": 626,
   "profile": {
     "编号": "321",
@@ -362,5 +362,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:36.219601+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "双灯鱼",
+        "target": "利灯鱼",
+        "condition": "升至30级",
+        "raw_condition": "等级30级",
+        "forward_text": "升至30级可进化为利灯鱼",
+        "backward_text": "可由双灯鱼升至30级进化得",
+        "text": "可由双灯鱼升至30级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由双灯鱼升至30级进化得"
   }
 }

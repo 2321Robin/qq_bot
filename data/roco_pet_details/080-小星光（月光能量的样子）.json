@@ -5,7 +5,7 @@
     "电",
     "光"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至38级可进化为星光狮（月光能量的样子）",
   "total_race_value": 493,
   "profile": {
     "编号": "080",
@@ -391,5 +391,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:14:44.145400+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "小星光（月光能量的样子）",
+        "target": "星光狮（月光能量的样子）",
+        "condition": "升至38级",
+        "raw_condition": "等级38级",
+        "forward_text": "升至38级可进化为星光狮（月光能量的样子）",
+        "backward_text": "可由小星光（月光能量的样子）升至38级进化得",
+        "text": "升至38级可进化为星光狮（月光能量的样子）"
+      }
+    ],
+    "evolution_condition": "升至38级可进化为星光狮（月光能量的样子）"
   }
 }

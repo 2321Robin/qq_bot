@@ -23,6 +23,7 @@ def build_chat_payload(
     *,
     search_context: str = "",
     chat_context: str = "",
+    roco_context: str = "",
     current_time: str | None = None,
 ) -> dict[str, Any]:
     cleaned_prompt = prompt.strip()
@@ -39,6 +40,7 @@ def build_chat_payload(
     )
     cleaned_search_context = search_context.strip()
     cleaned_chat_context = chat_context.strip()
+    cleaned_roco_context = roco_context.strip()
     user_sections = [f"当前用户问题：{cleaned_prompt}"]
     if cleaned_chat_context:
         system_prompt += (
@@ -46,6 +48,15 @@ def build_chat_payload(
             "不要编造不存在的历史聊天记录；历史不足时要直接说明。"
         )
         user_sections.append(cleaned_chat_context)
+
+    if cleaned_roco_context:
+        system_prompt += (
+            " 如果提供了本地洛克王国资料，它是可信的本地数据，优先级高于联网搜索和模型记忆；"
+            "回答洛克王国精灵、技能、进化问题时优先依据这些本地资料。"
+            "不要猜本地资料外的洛克王国数据；资料没有记录或字段为空时，"
+            "要直接说本地数据没有记录。"
+        )
+        user_sections.append(f"本地洛克王国资料：\n{cleaned_roco_context}")
 
     if cleaned_search_context:
         system_prompt += (
@@ -58,7 +69,7 @@ def build_chat_payload(
 
     user_content = (
         "\n\n".join(user_sections)
-        if cleaned_search_context or cleaned_chat_context
+        if cleaned_search_context or cleaned_chat_context or cleaned_roco_context
         else cleaned_prompt
     )
 
@@ -80,6 +91,7 @@ async def request_ai_reply(
     client: AsyncPostClient | None = None,
     search_context: str = "",
     chat_context: str = "",
+    roco_context: str = "",
 ) -> str:
     active_settings = settings or get_settings()
     if not active_settings.has_ai_config():
@@ -105,6 +117,7 @@ async def request_ai_reply(
                 model=active_settings.ai_model,
                 search_context=search_context,
                 chat_context=chat_context,
+                roco_context=roco_context,
             )
         except AIReplyError:
             if not active_settings.has_ai_fallback_config():
@@ -118,6 +131,7 @@ async def request_ai_reply(
                 model=active_settings.ai_fallback_model,
                 search_context=search_context,
                 chat_context=chat_context,
+                roco_context=roco_context,
             )
     finally:
         if owns_client and isinstance(active_client, httpx.AsyncClient):
@@ -136,12 +150,14 @@ async def _request_ai_reply_once(
     model: str,
     search_context: str,
     chat_context: str,
+    roco_context: str,
 ) -> str:
     payload = build_chat_payload(
         prompt,
         settings.model_copy(update={"ai_model": model}),
         search_context=search_context,
         chat_context=chat_context,
+        roco_context=roco_context,
     )
 
     try:

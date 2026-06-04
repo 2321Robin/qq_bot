@@ -4,7 +4,7 @@
   "attributes": [
     "冰"
   ],
-  "evolution_condition": "由脆筒甜甜等级28级进化",
+  "evolution_condition": "可由脆筒甜甜升至28级进化得",
   "total_race_value": 491,
   "profile": {
     "编号": "235",
@@ -398,5 +398,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:17:28.029955+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "脆筒甜甜",
+        "target": "香草甜甜（杨桃饰品）",
+        "condition": "升至28级",
+        "raw_condition": "等级28级",
+        "forward_text": "升至28级可进化为香草甜甜（杨桃饰品）",
+        "backward_text": "可由脆筒甜甜升至28级进化得",
+        "text": "可由脆筒甜甜升至28级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由脆筒甜甜升至28级进化得"
   }
 }

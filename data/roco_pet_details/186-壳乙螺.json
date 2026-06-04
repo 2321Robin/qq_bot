@@ -5,7 +5,7 @@
     "水",
     "萌"
   ],
-  "evolution_condition": "由甜田螺等级32级进化",
+  "evolution_condition": "可由甜田螺升至32级进化得",
   "total_race_value": 495,
   "profile": {
     "编号": "186",
@@ -398,5 +398,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:46.103849+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "甜田螺",
+        "target": "壳乙螺",
+        "condition": "升至32级",
+        "raw_condition": "等级32级",
+        "forward_text": "升至32级可进化为壳乙螺",
+        "backward_text": "可由甜田螺升至32级进化得",
+        "text": "可由甜田螺升至32级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由甜田螺升至32级进化得"
   }
 }

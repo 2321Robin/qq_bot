@@ -4,7 +4,7 @@
   "attributes": [
     "普通"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至16级可进化为书卷守护",
   "total_race_value": 395,
   "profile": {
     "编号": "303",
@@ -345,5 +345,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:23.655400+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "书魔虫",
+        "target": "书卷守护",
+        "condition": "升至16级",
+        "raw_condition": "等级16级",
+        "forward_text": "升至16级可进化为书卷守护",
+        "backward_text": "可由书魔虫升至16级进化得",
+        "text": "升至16级可进化为书卷守护"
+      }
+    ],
+    "evolution_condition": "升至16级可进化为书卷守护"
   }
 }

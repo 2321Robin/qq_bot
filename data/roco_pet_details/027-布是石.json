@@ -4,7 +4,7 @@
   "attributes": [
     "地"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至16级可进化为布是岩",
   "total_race_value": 409,
   "profile": {
     "编号": "027",
@@ -369,5 +369,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:13:37.665889+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "布是石",
+        "target": "布是岩",
+        "condition": "升至16级",
+        "raw_condition": "等级16级",
+        "forward_text": "升至16级可进化为布是岩",
+        "backward_text": "可由布是石升至16级进化得",
+        "text": "升至16级可进化为布是岩"
+      }
+    ],
+    "evolution_condition": "升至16级可进化为布是岩"
   }
 }

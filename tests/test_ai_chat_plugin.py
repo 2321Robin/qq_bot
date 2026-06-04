@@ -100,6 +100,7 @@ async def test_ai_chat_formats_named_mentions_in_final_reply(
         settings: BotSettings,
         search_context: str = "",
         chat_context: str = "",
+        roco_context: str = "",
     ) -> str:
         assert prompt == "提醒我"
         assert settings.ai_api_key == "secret"
@@ -146,6 +147,7 @@ async def test_ai_chat_replies_when_group_message_mentions_bot_without_to_me(
         settings: BotSettings,
         search_context: str = "",
         chat_context: str = "",
+        roco_context: str = "",
     ) -> str:
         assert prompt == "你好"
         return "你好呀"
@@ -246,6 +248,7 @@ async def test_ai_chat_ignores_self_mention_for_explicit_user_history(
         settings: BotSettings,
         search_context: str = "",
         chat_context: str = "",
+        roco_context: str = "",
     ) -> str:
         assert prompt == "总结他的观点"
         assert "用户2002：他的观点" in chat_context
@@ -299,6 +302,7 @@ async def test_ai_chat_uses_search_context_for_search_trigger(
         settings: BotSettings,
         search_context: str = "",
         chat_context: str = "",
+        roco_context: str = "",
     ) -> str:
         assert prompt == "今天 DeepSeek 有什么新闻"
         assert "DeepSeek News" in search_context
@@ -345,10 +349,12 @@ async def test_ai_chat_skips_search_for_normal_chat(
         settings: BotSettings,
         search_context: str = "",
         chat_context: str = "",
+        roco_context: str = "",
     ) -> str:
         assert prompt == "讲个笑话"
         assert search_context == ""
         assert chat_context == "没有找到相关历史聊天记录。"
+        assert roco_context == ""
         return "一个简短笑话。"
 
     async def fake_finish(message: object) -> None:
@@ -392,6 +398,7 @@ async def test_ai_chat_falls_back_when_search_fails(
         settings: BotSettings,
         search_context: str = "",
         chat_context: str = "",
+        roco_context: str = "",
     ) -> str:
         assert prompt == "今天 DeepSeek 有什么新闻"
         assert search_context == ""
@@ -499,6 +506,48 @@ async def test_ai_chat_refuses_current_events_when_search_fails(
 
 
 @pytest.mark.asyncio
+async def test_ai_chat_passes_roco_context_for_roco_question(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_request_ai_reply(
+        prompt: str,
+        *,
+        settings: BotSettings,
+        search_context: str = "",
+        chat_context: str = "",
+        roco_context: str = "",
+    ) -> str:
+        assert prompt == "画精灵怎么进化？"
+        assert search_context == ""
+        assert chat_context == "没有找到相关历史聊天记录。"
+        assert roco_context == "问题类型：进化\n匹配精灵：画精灵"
+        return "画像守护"
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    def fake_build_roco_context(prompt: str) -> str:
+        assert prompt == "画精灵怎么进化？"
+        return "问题类型：进化\n匹配精灵：画精灵"
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+    )
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "ChatMemoryStore",
+        lambda path, retention_days: EmptyMemoryStore(),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "build_roco_context", fake_build_roco_context)
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 画精灵怎么进化？"))  # type: ignore[arg-type]
+
+@pytest.mark.asyncio
 async def test_ai_chat_passes_default_group_memory_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -521,6 +570,7 @@ async def test_ai_chat_passes_default_group_memory_context(
         settings: BotSettings,
         search_context: str = "",
         chat_context: str = "",
+        roco_context: str = "",
     ) -> str:
         assert prompt == "继续"
         assert "用户2002：之前的问题" in chat_context
@@ -579,6 +629,7 @@ async def test_ai_chat_uses_recent_group_messages_by_default(
         settings: BotSettings,
         search_context: str = "",
         chat_context: str = "",
+        roco_context: str = "",
     ) -> str:
         assert prompt == "刚才大家在说什么"
         assert "用户2002：普通群友发言" in chat_context
@@ -633,6 +684,7 @@ async def test_ai_chat_uses_explicit_recent_group_history(
         settings: BotSettings,
         search_context: str = "",
         chat_context: str = "",
+        roco_context: str = "",
     ) -> str:
         assert prompt == "总结"
         assert chat_context == "没有找到相关历史聊天记录。"
@@ -692,6 +744,7 @@ async def test_ai_chat_uses_actual_at_segment_for_explicit_user_history(
         settings: BotSettings,
         search_context: str = "",
         chat_context: str = "",
+        roco_context: str = "",
     ) -> str:
         assert prompt == "总结他的观点"
         assert "用户2002：他的观点" in chat_context
@@ -760,6 +813,7 @@ async def test_ai_chat_summarizes_mentioned_user_recent_messages_in_natural_prom
         settings: BotSettings,
         search_context: str = "",
         chat_context: str = "",
+        roco_context: str = "",
     ) -> str:
         assert prompt == "总结 最近三条消息"
         assert "用户2002：目标用户的信息" in chat_context
@@ -821,6 +875,7 @@ async def test_ai_chat_does_not_scope_group_history_to_at_after_separator(
         settings: BotSettings,
         search_context: str = "",
         chat_context: str = "",
+        roco_context: str = "",
     ) -> str:
         assert prompt == "你怎么看"
         assert "用户2003：群聊观点" in chat_context
@@ -872,6 +927,7 @@ async def test_ai_chat_memory_failure_does_not_block_reply(
         settings: BotSettings,
         search_context: str = "",
         chat_context: str = "",
+        roco_context: str = "",
     ) -> str:
         assert prompt == "你好"
         assert chat_context == ""
@@ -910,6 +966,7 @@ async def test_ai_chat_memory_store_construction_failure_does_not_block_reply(
         settings: BotSettings,
         search_context: str = "",
         chat_context: str = "",
+        roco_context: str = "",
     ) -> str:
         assert prompt == "你好"
         assert chat_context == ""
@@ -1041,6 +1098,7 @@ async def test_ai_chat_excludes_current_prompt_from_memory_context(
         settings: BotSettings,
         search_context: str = "",
         chat_context: str = "",
+        roco_context: str = "",
     ) -> str:
         assert prompt == "继续"
         assert "旧问题" in chat_context
@@ -1080,6 +1138,7 @@ async def test_ai_chat_rejects_empty_question_after_memory_reference(
         settings: BotSettings,
         search_context: str = "",
         chat_context: str = "",
+        roco_context: str = "",
     ) -> str:
         raise AssertionError("AI should not be called")
 

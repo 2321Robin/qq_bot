@@ -4,7 +4,7 @@
   "attributes": [
     "冰"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至26级可进化为冰封怨灵",
   "total_race_value": 385,
   "profile": {
     "编号": "139",
@@ -398,5 +398,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:08.917030+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "雪娃娃",
+        "target": "冰封怨灵",
+        "condition": "升至26级",
+        "raw_condition": "等级26级",
+        "forward_text": "升至26级可进化为冰封怨灵",
+        "backward_text": "可由雪娃娃升至26级进化得",
+        "text": "升至26级可进化为冰封怨灵"
+      }
+    ],
+    "evolution_condition": "升至26级可进化为冰封怨灵"
   }
 }

@@ -4,7 +4,7 @@
   "attributes": [
     "武"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至36级可进化为怒目怂猫",
   "total_race_value": 522,
   "profile": {
     "编号": "163",
@@ -397,5 +397,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:25.587878+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "小怂猫",
+        "target": "怒目怂猫",
+        "condition": "升至36级",
+        "raw_condition": "等级36级",
+        "forward_text": "升至36级可进化为怒目怂猫",
+        "backward_text": "可由小怂猫升至36级进化得",
+        "text": "升至36级可进化为怒目怂猫"
+      }
+    ],
+    "evolution_condition": "升至36级可进化为怒目怂猫"
   }
 }

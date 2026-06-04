@@ -4,7 +4,7 @@
   "attributes": [
     "幽"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至32级可进化为梦悠悠（穿旧睡衣的样子）",
   "total_race_value": 462,
   "profile": {
     "编号": "057",
@@ -353,5 +353,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:14:13.361098+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "梦游（穿旧睡衣的样子）",
+        "target": "梦悠悠（穿旧睡衣的样子）",
+        "condition": "升至32级",
+        "raw_condition": "等级32级",
+        "forward_text": "升至32级可进化为梦悠悠（穿旧睡衣的样子）",
+        "backward_text": "可由梦游（穿旧睡衣的样子）升至32级进化得",
+        "text": "升至32级可进化为梦悠悠（穿旧睡衣的样子）"
+      }
+    ],
+    "evolution_condition": "升至32级可进化为梦悠悠（穿旧睡衣的样子）"
   }
 }

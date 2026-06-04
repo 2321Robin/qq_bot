@@ -4,7 +4,7 @@
   "attributes": [
     "虫"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至24级可进化为尖角蜘蛛",
   "total_race_value": 305,
   "profile": {
     "编号": "168",
@@ -390,5 +390,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:31.811919+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "圆眼蜘蛛",
+        "target": "尖角蜘蛛",
+        "condition": "升至24级",
+        "raw_condition": "等级24级",
+        "forward_text": "升至24级可进化为尖角蜘蛛",
+        "backward_text": "可由圆眼蜘蛛升至24级进化得",
+        "text": "升至24级可进化为尖角蜘蛛"
+      }
+    ],
+    "evolution_condition": "升至24级可进化为尖角蜘蛛"
   }
 }

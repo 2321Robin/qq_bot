@@ -5,7 +5,7 @@
     "地",
     "幽"
   ],
-  "evolution_condition": "由石石等级40级进化",
+  "evolution_condition": "可由石石升至40级进化得",
   "total_race_value": 584,
   "profile": {
     "编号": "112",
@@ -391,5 +391,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:15:46.701339+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "石石",
+        "target": "巨灵石",
+        "condition": "升至40级",
+        "raw_condition": "等级40级",
+        "forward_text": "升至40级可进化为巨灵石",
+        "backward_text": "可由石石升至40级进化得",
+        "text": "可由石石升至40级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由石石升至40级进化得"
   }
 }

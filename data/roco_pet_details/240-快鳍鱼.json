@@ -5,7 +5,7 @@
     "水",
     "龙"
   ],
-  "evolution_condition": "由豆丁鱼等级20级进化",
+  "evolution_condition": "可由豆丁鱼升至20级进化得",
   "total_race_value": 534,
   "profile": {
     "编号": "240",
@@ -391,5 +391,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:17:38.532933+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "豆丁鱼",
+        "target": "快鳍鱼",
+        "condition": "升至20级",
+        "raw_condition": "等级20级",
+        "forward_text": "升至20级可进化为快鳍鱼",
+        "backward_text": "可由豆丁鱼升至20级进化得",
+        "text": "可由豆丁鱼升至20级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由豆丁鱼升至20级进化得"
   }
 }

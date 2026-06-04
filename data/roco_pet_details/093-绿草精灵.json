@@ -5,7 +5,7 @@
     "草",
     "幻"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至32级可进化为魔草巫灵",
   "total_race_value": 473,
   "profile": {
     "编号": "093",
@@ -361,5 +361,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:15:32.957095+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "绿草精灵",
+        "target": "魔草巫灵",
+        "condition": "升至32级",
+        "raw_condition": "等级32级",
+        "forward_text": "升至32级可进化为魔草巫灵",
+        "backward_text": "可由绿草精灵升至32级进化得",
+        "text": "升至32级可进化为魔草巫灵"
+      }
+    ],
+    "evolution_condition": "升至32级可进化为魔草巫灵"
   }
 }

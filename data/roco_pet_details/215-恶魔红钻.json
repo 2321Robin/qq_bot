@@ -5,7 +5,7 @@
     "虫",
     "恶"
   ],
-  "evolution_condition": "由矮脚爬爬等级36级进化",
+  "evolution_condition": "可由矮脚爬爬升至36级进化得",
   "total_race_value": 666,
   "profile": {
     "编号": "215",
@@ -362,5 +362,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:17:11.567814+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "矮脚爬爬",
+        "target": "恶魔红钻",
+        "condition": "升至36级",
+        "raw_condition": "等级36级",
+        "forward_text": "升至36级可进化为恶魔红钻",
+        "backward_text": "可由矮脚爬爬升至36级进化得",
+        "text": "可由矮脚爬爬升至36级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由矮脚爬爬升至36级进化得"
   }
 }

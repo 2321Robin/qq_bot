@@ -4,7 +4,7 @@
   "attributes": [
     "虫"
   ],
-  "evolution_condition": "由小甲虫等级40级进化",
+  "evolution_condition": "可由小甲虫升至40级进化得",
   "total_race_value": 522,
   "profile": {
     "编号": "284",
@@ -353,5 +353,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:11.432306+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "小甲虫",
+        "target": "铠甲虫",
+        "condition": "升至40级",
+        "raw_condition": "等级40级",
+        "forward_text": "升至40级可进化为铠甲虫",
+        "backward_text": "可由小甲虫升至40级进化得",
+        "text": "可由小甲虫升至40级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由小甲虫升至40级进化得"
   }
 }

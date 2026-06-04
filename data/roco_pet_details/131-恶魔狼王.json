@@ -367,5 +367,10 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:03.885232+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [],
+    "evolution_condition": ""
   }
 }

@@ -4,7 +4,7 @@
   "attributes": [
     "萌"
   ],
-  "evolution_condition": "由逗逗等级20级进化",
+  "evolution_condition": "可由逗逗升至20级进化得",
   "total_race_value": 511,
   "profile": {
     "编号": "199",
@@ -390,5 +390,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:58.627686+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "逗逗",
+        "target": "气球猫",
+        "condition": "升至20级",
+        "raw_condition": "等级20级",
+        "forward_text": "升至20级可进化为气球猫",
+        "backward_text": "可由逗逗升至20级进化得",
+        "text": "可由逗逗升至20级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由逗逗升至20级进化得"
   }
 }

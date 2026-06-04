@@ -4,7 +4,7 @@
   "attributes": [
     "光"
   ],
-  "evolution_condition": "获得1200星光值",
+  "evolution_condition": "可由犀角鸟获得1200星光值进化得",
   "total_race_value": 490,
   "profile": {
     "编号": "311",
@@ -352,5 +352,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:43:36.959518+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "犀角鸟",
+        "target": "光纤兽",
+        "condition": "获得1200星光值",
+        "raw_condition": "获得1200星光值",
+        "forward_text": "获得1200星光值可进化为光纤兽",
+        "backward_text": "可由犀角鸟获得1200星光值进化得",
+        "text": "可由犀角鸟获得1200星光值进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由犀角鸟获得1200星光值进化得"
   }
 }

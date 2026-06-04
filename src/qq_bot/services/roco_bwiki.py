@@ -7,6 +7,8 @@ from html.parser import HTMLParser
 import re
 from typing import Any
 
+from qq_bot.services.roco_evolution import build_evolution_edge, legacy_evolution_condition
+
 
 STAT_HEADERS = {"精力", "生命", "物攻", "魔攻", "物防", "魔防", "速度", "HP", "hp"}
 SKILL_HEADING_MARKERS = ("技能", "本身就有", "技能石", "血脉", "转血脉", "学习")
@@ -33,7 +35,7 @@ SKILL_FIELD_CLASSES = {
     "rocom_sprite_skill_power": "威力",
     "rocom_sprite_skillContent": "效果",
 }
-PARSER_VERSION = 5
+PARSER_VERSION = 6
 
 
 class _BwikiParser(HTMLParser):
@@ -45,8 +47,9 @@ class _BwikiParser(HTMLParser):
         self.class_texts: dict[str, list[str]] = {class_name: [] for class_name in CAPTURE_CLASSES}
         self.skill_rows: list[dict[str, str]] = []
         self.physique_items: list[dict[str, str]] = []
-        self.evolution_sources: list[str] = []
-        self.evolution_targets: list[str] = []
+        self.evolution_edges: list[dict[str, str]] = []
+        self._evolution_box_stack: list[dict[str, Any]] = []
+        self._anchor_stack: list[dict[str, Any]] = []
         self.visible_texts: list[str] = []
         self._current_tag = ""
         self._text_parts: list[str] = []
@@ -62,6 +65,7 @@ class _BwikiParser(HTMLParser):
         class_names = _class_names(attrs)
         captures = [class_name for class_name in class_names if class_name in CAPTURE_CLASSES]
         skill_box = "rocom_sprite_skill_box" in class_names
+        evolution_box = "rocom_spirit_evolution_box" in class_names
         physique_item = tag == "li" and any(
             "rocom_sprite_info_physique" in element["classes"] for element in self._element_stack
         )
@@ -71,18 +75,16 @@ class _BwikiParser(HTMLParser):
                 "classes": class_names,
                 "captures": [{"class": class_name, "text_parts": []} for class_name in captures],
                 "skill_box": skill_box,
+                "evolution_box": evolution_box,
                 "physique_item": physique_item,
             }
         )
+        if evolution_box:
+            self._evolution_box_stack.append({"sources": [], "targets": [], "conditions": []})
         if physique_item:
             self._physique_stack.append({"label": "", "text_parts": []})
         if tag == "a":
-            title = _attr_value(attrs, "title")
-            if title:
-                if any("rocom_spirit_evolution_1" in element["classes"] for element in self._element_stack):
-                    self.evolution_sources.append(title)
-                if any("rocom_spirit_evolution_2" in element["classes"] for element in self._element_stack):
-                    self.evolution_targets.append(title)
+            self._anchor_stack.append({"attrs": attrs, "text_parts": []})
         elif tag == "img" and self._physique_stack:
             label = _attr_value(attrs, "alt")
             if label:
@@ -101,6 +103,9 @@ class _BwikiParser(HTMLParser):
             self._cell_stack.append({"tag": tag, "text_parts": []})
 
     def handle_endtag(self, tag: str) -> None:
+        if tag == "a" and self._anchor_stack:
+            self._capture_evolution_anchor()
+
         if tag in {"title", "h1", "h2", "h3", "h4"} and self._current_tag == tag:
             text = _normalize_text("".join(self._text_parts))
             if tag == "title":
@@ -133,10 +138,15 @@ class _BwikiParser(HTMLParser):
                     self.class_texts[class_name].append(text)
                     if self._skill_stack and class_name in SKILL_FIELD_CLASSES:
                         self._skill_stack[-1][SKILL_FIELD_CLASSES[class_name]] = text
+                    if self._evolution_box_stack and class_name == "rocom_spirit_evolution_level_num":
+                        self._evolution_box_stack[-1]["conditions"].append(text)
             if element["skill_box"] and self._skill_stack:
                 skill_row = self._skill_stack.pop()
                 if skill_row:
                     self.skill_rows.append(skill_row)
+            if element["evolution_box"] and self._evolution_box_stack:
+                box = self._evolution_box_stack.pop()
+                self.evolution_edges.extend(_build_evolution_edges_from_box(box))
             if element["physique_item"] and self._physique_stack:
                 physique_item = self._physique_stack.pop()
                 text = _normalize_text("".join(physique_item["text_parts"]))
@@ -150,6 +160,8 @@ class _BwikiParser(HTMLParser):
         for element in self._element_stack:
             for capture in element["captures"]:
                 capture["text_parts"].append(data)
+        if self._anchor_stack:
+            self._anchor_stack[-1]["text_parts"].append(data)
         if self._cell_stack:
             self._cell_stack[-1]["text_parts"].append(data)
         elif self._current_tag:
@@ -157,9 +169,47 @@ class _BwikiParser(HTMLParser):
         if self._physique_stack:
             self._physique_stack[-1]["text_parts"].append(data)
 
+    def _capture_evolution_anchor(self) -> None:
+        anchor = self._anchor_stack.pop()
+        title = _attr_value(anchor["attrs"], "title") or _normalize_text("".join(anchor["text_parts"]))
+        if not title or not self._evolution_box_stack:
+            return
+        if any("rocom_spirit_evolution_1" in element["classes"] for element in self._element_stack):
+            self._evolution_box_stack[-1]["sources"].append(title)
+        if any("rocom_spirit_evolution_2" in element["classes"] for element in self._element_stack):
+            self._evolution_box_stack[-1]["targets"].append(title)
+
+
+
+def _build_evolution_edges_from_box(box: dict[str, Any]) -> list[dict[str, str]]:
+    sources = [source for source in box.get("sources", []) if source]
+    targets = [target for target in box.get("targets", []) if target]
+    conditions = [condition for condition in box.get("conditions", []) if condition]
+    if not sources or not targets:
+        return []
+
+    edge_count = max(len(sources), len(targets), len(conditions), 1)
+    edges: list[dict[str, str]] = []
+    for index in range(edge_count):
+        source = _indexed_or_single(sources, index)
+        target = _indexed_or_single(targets, index)
+        if source and target:
+            edges.append(build_evolution_edge(source, target, _indexed_or_single(conditions, index)))
+    return edges
+
+
+def _indexed_or_single(values: list[str], index: int) -> str:
+    if index < len(values):
+        return values[index]
+    if len(values) == 1:
+        return values[0]
+    return ""
 
 def parse_pet_detail(source_url: str, html: str) -> dict[str, Any]:
-    """Parse a BWiki pet detail HTML page into normalized pet detail data."""
+    """Parse a BWiki pet detail page into normalized pet detail data."""
+    if _looks_like_raw_pet_template(html):
+        return _parse_raw_pet_detail(source_url, html)
+
     parser = _BwikiParser()
     parser.feed(html)
 
@@ -182,7 +232,8 @@ def parse_pet_detail(source_url: str, html: str) -> dict[str, Any]:
 
     div_attributes = _parse_component_attributes(parser)
     physique = _parse_component_physique(parser)
-    component_evolution_condition = _parse_component_evolution_condition(parser, _extract_name(parser))
+    evolution_edges = parser.evolution_edges
+    component_evolution_condition = _parse_component_evolution_condition(evolution_edges, _extract_name(parser))
     div_evolution_condition = _first_class_text(parser, "rocom_evolution_data") or component_evolution_condition
     for key, value in _parse_component_profile(parser, div_attributes, physique).items():
         profile.setdefault(key, value)
@@ -204,6 +255,7 @@ def parse_pet_detail(source_url: str, html: str) -> dict[str, Any]:
         "source_url": source_url,
         "attributes": attributes,
         "evolution_condition": evolution_condition,
+        "evolution_edges": evolution_edges,
         "total_race_value": total_race_value,
         "profile": profile,
         "stats": stats,
@@ -213,6 +265,161 @@ def parse_pet_detail(source_url: str, html: str) -> dict[str, Any]:
             "generated_at": datetime.now(UTC).isoformat(),
         },
     }
+
+
+
+def _looks_like_raw_pet_template(source: str) -> bool:
+    text = source.lstrip()
+    return text.startswith("{{精灵") or "{{精灵信息" in text[:200]
+
+
+def _parse_raw_pet_detail(source_url: str, source: str) -> dict[str, Any]:
+    fields = _parse_raw_template_fields(source)
+    stats = _parse_raw_stats(fields)
+    attributes = _raw_attributes(fields)
+    profile = _raw_profile(fields, attributes)
+    skills = _raw_skill_groups(fields)
+
+    return {
+        "name": fields.get("精灵名称", ""),
+        "source_url": _without_raw_action(source_url),
+        "attributes": attributes,
+        "evolution_condition": fields.get("进化条件", ""),
+        "evolution_edges": [],
+        "total_race_value": sum(stats.values()) if len(stats) >= 6 else None,
+        "profile": profile,
+        "stats": stats,
+        "skills": skills,
+        "metadata": {
+            "parser_version": PARSER_VERSION,
+            "generated_at": datetime.now(UTC).isoformat(),
+        },
+    }
+
+
+def _parse_raw_template_fields(source: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    current_key = ""
+    current_parts: list[str] = []
+
+    def flush() -> None:
+        nonlocal current_key, current_parts
+        if current_key:
+            fields[current_key] = _normalize_raw_value("\n".join(current_parts))
+        current_key = ""
+        current_parts = []
+
+    for line in source.splitlines():
+        stripped_line = line.strip()
+        if stripped_line.startswith("|") and "=" in stripped_line:
+            flush()
+            key, value = stripped_line[1:].split("=", maxsplit=1)
+            current_key = key.strip()
+            current_parts = [value]
+        elif stripped_line.startswith("}}"):
+            flush()
+        elif current_key:
+            current_parts.append(stripped_line)
+    flush()
+    return fields
+
+
+def _normalize_raw_value(value: str) -> str:
+    return value.strip().replace("&nbsp;", " ")
+
+
+def _parse_raw_stats(fields: dict[str, str]) -> dict[str, int]:
+    stats: dict[str, int] = {}
+    for key in ("生命", "物攻", "魔攻", "物防", "魔防", "速度"):
+        try:
+            stats[key] = int(fields.get(key, ""))
+        except ValueError:
+            continue
+    return stats
+
+
+def _raw_attributes(fields: dict[str, str]) -> list[str]:
+    return _dedupe_values(
+        value
+        for value in (fields.get("主属性", ""), fields.get("2属性", ""))
+        if value and value != "-"
+    )
+
+
+def _raw_profile(fields: dict[str, str], attributes: list[str]) -> dict[str, str]:
+    profile: dict[str, str] = {}
+    if fields.get("精灵初阶名称"):
+        profile["初阶"] = fields["精灵初阶名称"]
+    if fields.get("精灵阶段"):
+        profile["阶段"] = fields["精灵阶段"]
+    if fields.get("精灵类型"):
+        profile["类型"] = fields["精灵类型"]
+    if attributes:
+        profile["系别"] = "、".join(attributes)
+    if fields.get("体型"):
+        profile["体长"] = _append_unit(fields["体型"], "M")
+    if fields.get("重量"):
+        profile["体重"] = _append_unit(fields["重量"], "KG")
+    if fields.get("特性"):
+        profile["最佳拍档"] = fields["特性"]
+        profile["最好的伙伴"] = fields["特性"]
+    if fields.get("特性描述"):
+        profile["简介"] = fields["特性描述"]
+    if fields.get("精灵描述"):
+        profile["精灵描述"] = fields["精灵描述"]
+    return profile
+
+
+def _append_unit(value: str, unit: str) -> str:
+    text = value.strip()
+    if not text or text.upper().endswith(unit):
+        return text
+    return f"{text}{unit}"
+
+
+def _raw_skill_groups(fields: dict[str, str]) -> list[dict[str, Any]]:
+    groups: list[dict[str, Any]] = []
+    _append_raw_skill_group(groups, "技能", fields.get("技能", ""), fields.get("技能解锁等级", ""))
+    _append_raw_skill_group(groups, "血脉技能", fields.get("血脉技能", ""), "")
+    _append_raw_skill_group(groups, "技能石", fields.get("可学技能石", ""), "")
+    return groups
+
+
+def _append_raw_skill_group(
+    groups: list[dict[str, Any]], source: str, names_value: str, levels_value: str
+) -> None:
+    names = _split_csv(names_value)
+    if not names:
+        return
+    levels = _split_csv(levels_value)
+    rows: list[dict[str, str]] = []
+    for index, name in enumerate(names):
+        row = {
+            "等级": _raw_skill_level(levels[index] if index < len(levels) else ""),
+            "技能": name,
+            "耗能": "",
+            "类型": "",
+            "威力": "",
+            "效果": "",
+        }
+        rows.append(row)
+    groups.append({"source": source, "rows": rows})
+
+
+def _split_csv(value: str) -> list[str]:
+    return [part.strip() for part in value.split(",") if part.strip() and part.strip() != "-"]
+
+
+def _raw_skill_level(value: str) -> str:
+    text = value.strip()
+    if not text or text == "-":
+        return ""
+    return f"LV{text}" if text.isdigit() else text
+
+
+
+def _without_raw_action(source_url: str) -> str:
+    return re.sub(r"([?&])action=raw&?", lambda match: match.group(1), source_url).rstrip("?&")
 
 
 def _normalize_text(text: str) -> str:
@@ -320,51 +527,11 @@ def _parse_component_attributes(parser: _BwikiParser) -> list[str]:
     return _dedupe_values(attributes)
 
 
-def _parse_component_evolution_condition(parser: _BwikiParser, current_name: str) -> str:
-    levels = parser.class_texts["rocom_spirit_evolution_level_num"]
-    for source, level, target in zip(
-        parser.evolution_sources,
-        levels,
-        parser.evolution_targets,
-        strict=False,
-    ):
-        if target != current_name:
-            continue
-        battle_condition = _format_battle_evolution_condition(level)
-        if source and battle_condition:
-            return f"由{source}{battle_condition}进化"
-        normalized_level = level.removesuffix("级")
-        if source and normalized_level.isdigit():
-            return f"由{source}等级{normalized_level}级进化"
-        if source and level:
-            return f"由{source}{level}"
+def _parse_component_evolution_condition(evolution_edges: list[dict[str, str]], current_name: str) -> str:
+    for edge in evolution_edges:
+        if edge["target"] == current_name:
+            return legacy_evolution_condition(edge)
     return ""
-
-
-def _format_battle_evolution_condition(condition: str) -> str:
-    match = re.search(r"(?:打败|击败)([一二两三四五六七八九十\d]+)只(.+?系)(?:精灵|宠物)?$", condition)
-    if not match:
-        return ""
-    count = _chinese_count_to_digit(match.group(1))
-    pet_type = match.group(2)
-    return f"击败{count}个{pet_type}精灵"
-
-
-def _chinese_count_to_digit(value: str) -> str:
-    numbers = {
-        "一": "1",
-        "二": "2",
-        "两": "2",
-        "三": "3",
-        "四": "4",
-        "五": "5",
-        "六": "6",
-        "七": "7",
-        "八": "8",
-        "九": "9",
-        "十": "10",
-    }
-    return numbers.get(value, value)
 
 
 def _parse_component_profile(

@@ -4,7 +4,7 @@
   "attributes": [
     "幽"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至20级可进化为幻灵菇",
   "total_race_value": 374,
   "profile": {
     "编号": "021",
@@ -398,5 +398,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:13:32.026999+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "小灵菇",
+        "target": "幻灵菇",
+        "condition": "升至20级",
+        "raw_condition": "等级20级",
+        "forward_text": "升至20级可进化为幻灵菇",
+        "backward_text": "可由小灵菇升至20级进化得",
+        "text": "升至20级可进化为幻灵菇"
+      }
+    ],
+    "evolution_condition": "升至20级可进化为幻灵菇"
   }
 }

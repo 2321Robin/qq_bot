@@ -5,7 +5,7 @@
     "地",
     "翼"
   ],
-  "evolution_condition": "由吸泥鸥等级36级进化",
+  "evolution_condition": "可由吸泥鸥升至36级进化得",
   "total_race_value": 569,
   "profile": {
     "编号": "288",
@@ -361,5 +361,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:14.567670+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "吸泥鸥",
+        "target": "泥吼牙",
+        "condition": "升至36级",
+        "raw_condition": "等级36级",
+        "forward_text": "升至36级可进化为泥吼牙",
+        "backward_text": "可由吸泥鸥升至36级进化得",
+        "text": "可由吸泥鸥升至36级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由吸泥鸥升至36级进化得"
   }
 }

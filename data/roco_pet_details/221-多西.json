@@ -5,7 +5,7 @@
     "机械",
     "地"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至32级可进化为库多西",
   "total_race_value": 345,
   "profile": {
     "编号": "221",
@@ -354,5 +354,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:17:17.208712+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "多西",
+        "target": "库多西",
+        "condition": "升至32级",
+        "raw_condition": "等级32级",
+        "forward_text": "升至32级可进化为库多西",
+        "backward_text": "可由多西升至32级进化得",
+        "text": "升至32级可进化为库多西"
+      }
+    ],
+    "evolution_condition": "升至32级可进化为库多西"
   }
 }

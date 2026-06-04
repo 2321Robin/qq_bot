@@ -4,7 +4,7 @@
   "attributes": [
     "草"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至28级可进化为伊贝粉粉",
   "total_race_value": 453,
   "profile": {
     "编号": "071",
@@ -390,5 +390,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:14:33.290610+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "伊贝儿",
+        "target": "伊贝粉粉",
+        "condition": "升至28级",
+        "raw_condition": "等级28级",
+        "forward_text": "升至28级可进化为伊贝粉粉",
+        "backward_text": "可由伊贝儿升至28级进化得",
+        "text": "升至28级可进化为伊贝粉粉"
+      }
+    ],
+    "evolution_condition": "升至28级可进化为伊贝粉粉"
   }
 }

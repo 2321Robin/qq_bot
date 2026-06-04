@@ -4,7 +4,7 @@
   "attributes": [
     "翼"
   ],
-  "evolution_condition": "由小狮鹫（高山地的样子）等级32级进化",
+  "evolution_condition": "可由小狮鹫（高山地的样子）升至32级进化得",
   "total_race_value": 443,
   "profile": {
     "编号": "166",
@@ -360,5 +360,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:29.820117+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "小狮鹫（高山地的样子）",
+        "target": "神圣狮鹫（高山地的样子）",
+        "condition": "升至32级",
+        "raw_condition": "等级32级",
+        "forward_text": "升至32级可进化为神圣狮鹫（高山地的样子）",
+        "backward_text": "可由小狮鹫（高山地的样子）升至32级进化得",
+        "text": "可由小狮鹫（高山地的样子）升至32级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由小狮鹫（高山地的样子）升至32级进化得"
   }
 }

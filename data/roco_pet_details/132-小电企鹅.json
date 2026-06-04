@@ -5,7 +5,7 @@
     "冰",
     "电"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至32级可进化为电企鹅",
   "total_race_value": 467,
   "profile": {
     "编号": "132",
@@ -361,5 +361,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:04.409799+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "小电企鹅",
+        "target": "电企鹅",
+        "condition": "升至32级",
+        "raw_condition": "等级32级",
+        "forward_text": "升至32级可进化为电企鹅",
+        "backward_text": "可由小电企鹅升至32级进化得",
+        "text": "升至32级可进化为电企鹅"
+      }
+    ],
+    "evolution_condition": "升至32级可进化为电企鹅"
   }
 }

@@ -4,7 +4,7 @@
   "attributes": [
     "恶"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "成长为1星可进化为帕尔萨斯",
   "total_race_value": 379,
   "profile": {
     "编号": "293",
@@ -375,5 +375,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:17.536409+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "小帕尔",
+        "target": "帕尔萨斯",
+        "condition": "成长为1星",
+        "raw_condition": "成长为1星",
+        "forward_text": "成长为1星可进化为帕尔萨斯",
+        "backward_text": "可由小帕尔成长为1星进化得",
+        "text": "成长为1星可进化为帕尔萨斯"
+      }
+    ],
+    "evolution_condition": "成长为1星可进化为帕尔萨斯"
   }
 }

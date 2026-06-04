@@ -4,7 +4,7 @@
   "attributes": [
     "电"
   ],
-  "evolution_condition": "由闪电环等级28级进化",
+  "evolution_condition": "可由闪电环升至28级进化得",
   "total_race_value": 446,
   "profile": {
     "编号": "208",
@@ -405,5 +405,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:17:06.101880+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "闪电环",
+        "target": "刺电环",
+        "condition": "升至28级",
+        "raw_condition": "等级28级",
+        "forward_text": "升至28级可进化为刺电环",
+        "backward_text": "可由闪电环升至28级进化得",
+        "text": "可由闪电环升至28级进化得"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "可由闪电环升至28级进化得"
   }
 }

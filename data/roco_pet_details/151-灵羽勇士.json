@@ -4,7 +4,7 @@
   "attributes": [
     "翼"
   ],
-  "evolution_condition": "成长为1星",
+  "evolution_condition": "可由里奥成长为1星进化得；成长为2星可进化为圣羽翼王",
   "total_race_value": 547,
   "profile": {
     "编号": "151",
@@ -412,5 +412,30 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:17.313230+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "里奥",
+        "target": "灵羽勇士",
+        "condition": "成长为1星",
+        "raw_condition": "成长为1星",
+        "forward_text": "成长为1星可进化为灵羽勇士",
+        "backward_text": "可由里奥成长为1星进化得",
+        "text": "可由里奥成长为1星进化得"
+      }
+    ],
+    "to": [
+      {
+        "source": "灵羽勇士",
+        "target": "圣羽翼王",
+        "condition": "成长为2星",
+        "raw_condition": "成长为2星",
+        "forward_text": "成长为2星可进化为圣羽翼王",
+        "backward_text": "可由灵羽勇士成长为2星进化得",
+        "text": "成长为2星可进化为圣羽翼王"
+      }
+    ],
+    "evolution_condition": "可由里奥成长为1星进化得；成长为2星可进化为圣羽翼王"
   }
 }

@@ -5,7 +5,7 @@
     "恶",
     "光"
   ],
-  "evolution_condition": "击败三只光系精灵",
+  "evolution_condition": "可由嗜光嗡嗡击败3个光系精灵进化得；使用3次引燃可进化为柴渣虫",
   "total_race_value": 592,
   "profile": {
     "编号": "324",
@@ -405,5 +405,30 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:18:38.452168+00:00"
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "嗜光嗡嗡",
+        "target": "窃光蚊",
+        "condition": "击败3个光系精灵",
+        "raw_condition": "击败三只光系精灵",
+        "forward_text": "击败3个光系精灵可进化为窃光蚊",
+        "backward_text": "可由嗜光嗡嗡击败3个光系精灵进化得",
+        "text": "可由嗜光嗡嗡击败3个光系精灵进化得"
+      }
+    ],
+    "to": [
+      {
+        "source": "窃光蚊",
+        "target": "柴渣虫",
+        "condition": "使用3次引燃",
+        "raw_condition": "使用3次引燃",
+        "forward_text": "使用3次引燃可进化为柴渣虫",
+        "backward_text": "可由窃光蚊使用3次引燃进化得",
+        "text": "使用3次引燃可进化为柴渣虫"
+      }
+    ],
+    "evolution_condition": "可由嗜光嗡嗡击败3个光系精灵进化得；使用3次引燃可进化为柴渣虫"
   }
 }

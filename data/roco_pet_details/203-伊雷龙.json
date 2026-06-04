@@ -4,7 +4,7 @@
   "attributes": [
     "龙"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至40级可进化为伊兰亚龙",
   "total_race_value": 521,
   "profile": {
     "编号": "203",
@@ -353,5 +353,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:17:02.078800+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "伊雷龙",
+        "target": "伊兰亚龙",
+        "condition": "升至40级",
+        "raw_condition": "等级40级",
+        "forward_text": "升至40级可进化为伊兰亚龙",
+        "backward_text": "可由伊雷龙升至40级进化得",
+        "text": "升至40级可进化为伊兰亚龙"
+      }
+    ],
+    "evolution_condition": "升至40级可进化为伊兰亚龙"
   }
 }

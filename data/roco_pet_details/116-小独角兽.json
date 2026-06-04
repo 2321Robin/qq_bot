@@ -4,7 +4,7 @@
   "attributes": [
     "光"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至40级可进化为白金独角兽",
   "total_race_value": 476,
   "profile": {
     "编号": "116",
@@ -388,5 +388,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:15:50.019768+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "小独角兽",
+        "target": "白金独角兽",
+        "condition": "升至40级",
+        "raw_condition": "等级40级",
+        "forward_text": "升至40级可进化为白金独角兽",
+        "backward_text": "可由小独角兽升至40级进化得",
+        "text": "升至40级可进化为白金独角兽"
+      }
+    ],
+    "evolution_condition": "升至40级可进化为白金独角兽"
   }
 }

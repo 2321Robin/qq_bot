@@ -4,7 +4,7 @@
   "attributes": [
     "冰"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至28级可进化为雪蛮人",
   "total_race_value": 429,
   "profile": {
     "编号": "134",
@@ -353,5 +353,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:16:05.565691+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "雪豆丁",
+        "target": "雪蛮人",
+        "condition": "升至28级",
+        "raw_condition": "等级28级",
+        "forward_text": "升至28级可进化为雪蛮人",
+        "backward_text": "可由雪豆丁升至28级进化得",
+        "text": "升至28级可进化为雪蛮人"
+      }
+    ],
+    "evolution_condition": "升至28级可进化为雪蛮人"
   }
 }

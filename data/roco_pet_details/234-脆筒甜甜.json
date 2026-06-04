@@ -4,7 +4,7 @@
   "attributes": [
     "冰"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至28级可进化为香草甜甜；升至28级可进化为香草甜甜（杨桃饰品）；升至28级可进化为香草甜甜（蓝莓饰品）",
   "total_race_value": 368,
   "profile": {
     "编号": "234",
@@ -398,5 +398,38 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:17:26.653807+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "脆筒甜甜",
+        "target": "香草甜甜",
+        "condition": "升至28级",
+        "raw_condition": "等级28级",
+        "forward_text": "升至28级可进化为香草甜甜",
+        "backward_text": "可由脆筒甜甜升至28级进化得",
+        "text": "升至28级可进化为香草甜甜"
+      },
+      {
+        "source": "脆筒甜甜",
+        "target": "香草甜甜（杨桃饰品）",
+        "condition": "升至28级",
+        "raw_condition": "等级28级",
+        "forward_text": "升至28级可进化为香草甜甜（杨桃饰品）",
+        "backward_text": "可由脆筒甜甜升至28级进化得",
+        "text": "升至28级可进化为香草甜甜（杨桃饰品）"
+      },
+      {
+        "source": "脆筒甜甜",
+        "target": "香草甜甜（蓝莓饰品）",
+        "condition": "升至28级",
+        "raw_condition": "等级28级",
+        "forward_text": "升至28级可进化为香草甜甜（蓝莓饰品）",
+        "backward_text": "可由脆筒甜甜升至28级进化得",
+        "text": "升至28级可进化为香草甜甜（蓝莓饰品）"
+      }
+    ],
+    "evolution_condition": "升至28级可进化为香草甜甜；升至28级可进化为香草甜甜（杨桃饰品）；升至28级可进化为香草甜甜（蓝莓饰品）"
   }
 }

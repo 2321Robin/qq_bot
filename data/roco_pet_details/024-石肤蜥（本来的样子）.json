@@ -4,7 +4,7 @@
   "attributes": [
     "地"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "升至32级可进化为石刺蜥（本来的样子）",
   "total_race_value": 343,
   "profile": {
     "编号": "024",
@@ -383,5 +383,20 @@
   "metadata": {
     "parser_version": 5,
     "generated_at": "2026-05-12T13:13:33.859603+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [
+      {
+        "source": "石肤蜥（本来的样子）",
+        "target": "石刺蜥（本来的样子）",
+        "condition": "升至32级",
+        "raw_condition": "等级32级",
+        "forward_text": "升至32级可进化为石刺蜥（本来的样子）",
+        "backward_text": "可由石肤蜥（本来的样子）升至32级进化得",
+        "text": "升至32级可进化为石刺蜥（本来的样子）"
+      }
+    ],
+    "evolution_condition": "升至32级可进化为石刺蜥（本来的样子）"
   }
 }
