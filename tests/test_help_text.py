@@ -7,6 +7,8 @@ def test_help_text_lists_supported_commands() -> None:
     assert "基础命令" in text
     assert "/help" in text
     assert "/帮助" in text
+    assert "/version" in text
+    assert "/版本" in text
     assert "洛克查询" in text
     assert "/精灵 迪莫" in text
     assert "/洛克 迪莫" in text
