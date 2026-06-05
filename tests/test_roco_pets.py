@@ -58,7 +58,36 @@ def test_find_pet_matches_name_alias_and_substring() -> None:
     assert find_pet(records, "迪莫") is records[0]
     assert find_pet(records, "小迪莫") is records[0]
     assert find_pet(records, "圣光") is records[0]
+    assert find_pet(records, "编号001怎么进化") is records[0]
+    assert find_pet(records, "1怎么进化") is records[0]
     assert find_pet(records, "不存在") is None
+
+
+def test_find_pet_prefers_direct_name_over_evolution_chain_substring() -> None:
+    records = [
+        PetRecord(
+            name="钨丝贝贝",
+            aliases=[],
+            number="348",
+            attributes=["机械"],
+            stage="I阶",
+            evolution_chain=["钨丝贝贝", "辉光幕机", "机幕方舟"],
+            evolution_condition="提升为1星可进化为辉光幕机",
+            source_url="https://example.com/348",
+        ),
+        PetRecord(
+            name="辉光幕机",
+            aliases=[],
+            number="349",
+            attributes=["机械"],
+            stage="II阶",
+            evolution_chain=["钨丝贝贝", "辉光幕机", "机幕方舟"],
+            evolution_condition="可由钨丝贝贝提升为1星进化得；提升为2星可进化为机幕方舟",
+            source_url="https://example.com/349",
+        ),
+    ]
+
+    assert find_pet(records, "辉光幕机怎么进化") is records[1]
 
 
 def test_load_pet_records_derives_alias_from_parenthesized_detail_name() -> None:
