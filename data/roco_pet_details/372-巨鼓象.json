@@ -4,8 +4,12 @@
   "attributes": [
     "机械"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "可由小鼓象达到36级并释放出来约一分钟后收回进化得",
   "evolution_edges": [],
+  "evolution_chain": [
+    "小鼓象",
+    "巨鼓象"
+  ],
   "total_race_value": 675,
   "profile": {
     "初阶": "小鼓象",
@@ -410,8 +414,18 @@
     "generated_at": "2026-06-04T05:04:23.965833+00:00"
   },
   "evolution": {
-    "from": [],
+    "from": [
+      {
+        "source": "小鼓象",
+        "target": "巨鼓象",
+        "condition": "达到36级并释放出来约一分钟后收回",
+        "raw_condition": "达到36级并释放出来约一分钟后收回",
+        "forward_text": "达到36级并释放出来约一分钟后收回可进化为巨鼓象",
+        "backward_text": "可由小鼓象达到36级并释放出来约一分钟后收回进化得",
+        "text": "可由小鼓象达到36级并释放出来约一分钟后收回进化得"
+      }
+    ],
     "to": [],
-    "evolution_condition": ""
+    "evolution_condition": "可由小鼓象达到36级并释放出来约一分钟后收回进化得"
   }
 }

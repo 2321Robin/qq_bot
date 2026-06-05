@@ -4,7 +4,7 @@
   "attributes": [
     "冰"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "可由香草甜甜（蓝莓饰品）达到40级并随机进化进化得",
   "total_race_value": 608,
   "profile": {
     "编号": "236",
@@ -400,8 +400,18 @@
     "generated_at": "2026-05-12T13:17:31.805349+00:00"
   },
   "evolution": {
-    "from": [],
+    "from": [
+      {
+        "source": "香草甜甜（蓝莓饰品）",
+        "target": "圣代甜甜（蓝莓草莓口味）",
+        "condition": "达到40级并随机进化",
+        "raw_condition": "达到40级并随机进化",
+        "forward_text": "达到40级并随机进化可进化为圣代甜甜（蓝莓草莓口味）",
+        "backward_text": "可由香草甜甜（蓝莓饰品）达到40级并随机进化进化得",
+        "text": "可由香草甜甜（蓝莓饰品）达到40级并随机进化进化得"
+      }
+    ],
     "to": [],
-    "evolution_condition": ""
+    "evolution_condition": "可由香草甜甜（蓝莓饰品）达到40级并随机进化进化得"
   }
 }

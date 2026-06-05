@@ -1,11 +1,14 @@
 {
   "name": "武者鸡",
+  "aliases": [
+    "舞者鸡"
+  ],
   "source_url": "https://wiki.biligame.com/rocom/%E6%AD%A6%E8%80%85%E9%B8%A1",
   "attributes": [
     "火",
     "武"
   ],
-  "evolution_condition": "可由绅士鸡击败3个恶系精灵进化得",
+  "evolution_condition": "可由绅士鸡击败3个恶系精灵进化得；可由晕晕鸡达到36级并击败3个恶系精灵进化得",
   "total_race_value": 580,
   "profile": {
     "编号": "269",
@@ -373,9 +376,18 @@
         "forward_text": "击败3个恶系精灵可进化为武者鸡",
         "backward_text": "可由绅士鸡击败3个恶系精灵进化得",
         "text": "可由绅士鸡击败3个恶系精灵进化得"
+      },
+      {
+        "source": "晕晕鸡",
+        "target": "武者鸡",
+        "condition": "达到36级并击败3个恶系精灵",
+        "raw_condition": "达到36级并击败3个恶系精灵",
+        "forward_text": "达到36级并击败3个恶系精灵可进化为武者鸡",
+        "backward_text": "可由晕晕鸡达到36级并击败3个恶系精灵进化得",
+        "text": "可由晕晕鸡达到36级并击败3个恶系精灵进化得"
       }
     ],
     "to": [],
-    "evolution_condition": "可由绅士鸡击败3个恶系精灵进化得"
+    "evolution_condition": "可由绅士鸡击败3个恶系精灵进化得；可由晕晕鸡达到36级并击败3个恶系精灵进化得"
   }
 }

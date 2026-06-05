@@ -1,11 +1,15 @@
 {
   "name": "月亮砣（上弦的样子）",
+  "aliases": [
+    "月亮陀（上弦的样子）",
+    "月亮陀"
+  ],
   "source_url": "https://wiki.biligame.com/rocom/%E6%9C%88%E4%BA%AE%E7%A0%A3%EF%BC%88%E4%B8%8A%E5%BC%A6%E7%9A%84%E6%A0%B7%E5%AD%90%EF%BC%89",
   "attributes": [
     "毒",
     "萌"
   ],
-  "evolution_condition": "可由刺轮砣（下弦的样子）夜晚进化得；夜晚进化可进化为月亮砣（下弦的样子）",
+  "evolution_condition": "可由刺轮砣（上弦的样子）达到36级且时间为晚上进化得",
   "total_race_value": 609,
   "profile": {
     "编号": "238",
@@ -409,26 +413,16 @@
   "evolution": {
     "from": [
       {
-        "source": "刺轮砣（下弦的样子）",
+        "source": "刺轮砣（上弦的样子）",
         "target": "月亮砣（上弦的样子）",
-        "condition": "夜晚进化",
-        "raw_condition": "夜晚进化",
-        "forward_text": "夜晚进化可进化为月亮砣（上弦的样子）",
-        "backward_text": "可由刺轮砣（下弦的样子）夜晚进化得",
-        "text": "可由刺轮砣（下弦的样子）夜晚进化得"
+        "condition": "达到36级且时间为晚上",
+        "raw_condition": "达到36级且时间为晚上",
+        "forward_text": "达到36级且时间为晚上可进化为月亮砣（上弦的样子）",
+        "backward_text": "可由刺轮砣（上弦的样子）达到36级且时间为晚上进化得",
+        "text": "可由刺轮砣（上弦的样子）达到36级且时间为晚上进化得"
       }
     ],
-    "to": [
-      {
-        "source": "月亮砣（上弦的样子）",
-        "target": "月亮砣（下弦的样子）",
-        "condition": "夜晚进化",
-        "raw_condition": "夜晚进化",
-        "forward_text": "夜晚进化可进化为月亮砣（下弦的样子）",
-        "backward_text": "可由月亮砣（上弦的样子）夜晚进化得",
-        "text": "夜晚进化可进化为月亮砣（下弦的样子）"
-      }
-    ],
-    "evolution_condition": "可由刺轮砣（下弦的样子）夜晚进化得；夜晚进化可进化为月亮砣（下弦的样子）"
+    "to": [],
+    "evolution_condition": "可由刺轮砣（上弦的样子）达到36级且时间为晚上进化得"
   }
 }

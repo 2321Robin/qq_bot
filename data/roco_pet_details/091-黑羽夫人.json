@@ -5,7 +5,7 @@
     "翼",
     "恶"
   ],
-  "evolution_condition": "可由翠顶夫人血脉为恶系血脉进化得",
+  "evolution_condition": "可由蓝珠天鹅达到40级且恶系血脉进化得",
   "total_race_value": 652,
   "profile": {
     "编号": "091",
@@ -403,16 +403,16 @@
   "evolution": {
     "from": [
       {
-        "source": "翠顶夫人",
+        "source": "蓝珠天鹅",
         "target": "黑羽夫人",
-        "condition": "血脉为恶系血脉进化",
-        "raw_condition": "血脉为恶系血脉进化",
-        "forward_text": "血脉为恶系血脉进化可进化为黑羽夫人",
-        "backward_text": "可由翠顶夫人血脉为恶系血脉进化得",
-        "text": "可由翠顶夫人血脉为恶系血脉进化得"
+        "condition": "达到40级且恶系血脉",
+        "raw_condition": "达到40级且恶系血脉",
+        "forward_text": "达到40级且恶系血脉可进化为黑羽夫人",
+        "backward_text": "可由蓝珠天鹅达到40级且恶系血脉进化得",
+        "text": "可由蓝珠天鹅达到40级且恶系血脉进化得"
       }
     ],
     "to": [],
-    "evolution_condition": "可由翠顶夫人血脉为恶系血脉进化得"
+    "evolution_condition": "可由蓝珠天鹅达到40级且恶系血脉进化得"
   }
 }

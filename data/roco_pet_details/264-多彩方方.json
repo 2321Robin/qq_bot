@@ -4,7 +4,7 @@
   "attributes": [
     "机械"
   ],
-  "evolution_condition": "可由机械方方且处于联机情况下进化得；且处于联机情况下可进化为立方人",
+  "evolution_condition": "可由机械方方进入好友世界进化得；达到40级并进入好友世界可进化为立方人",
   "total_race_value": 482,
   "profile": {
     "编号": "264",
@@ -359,24 +359,24 @@
       {
         "source": "机械方方",
         "target": "多彩方方",
-        "condition": "且处于联机情况下",
-        "raw_condition": "且处于联机情况下",
-        "forward_text": "且处于联机情况下可进化为多彩方方",
-        "backward_text": "可由机械方方且处于联机情况下进化得",
-        "text": "可由机械方方且处于联机情况下进化得"
+        "condition": "进入好友世界",
+        "raw_condition": "进入好友世界",
+        "forward_text": "进入好友世界可进化为多彩方方",
+        "backward_text": "可由机械方方进入好友世界进化得",
+        "text": "可由机械方方进入好友世界进化得"
       }
     ],
     "to": [
       {
         "source": "多彩方方",
         "target": "立方人",
-        "condition": "且处于联机情况下",
-        "raw_condition": "且处于联机情况下",
-        "forward_text": "且处于联机情况下可进化为立方人",
-        "backward_text": "可由多彩方方且处于联机情况下进化得",
-        "text": "且处于联机情况下可进化为立方人"
+        "condition": "达到40级并进入好友世界",
+        "raw_condition": "达到40级并进入好友世界",
+        "forward_text": "达到40级并进入好友世界可进化为立方人",
+        "backward_text": "可由多彩方方达到40级并进入好友世界进化得",
+        "text": "达到40级并进入好友世界可进化为立方人"
       }
     ],
-    "evolution_condition": "可由机械方方且处于联机情况下进化得；且处于联机情况下可进化为立方人"
+    "evolution_condition": "可由机械方方进入好友世界进化得；达到40级并进入好友世界可进化为立方人"
   }
 }

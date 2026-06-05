@@ -5,8 +5,12 @@
     "火",
     "毒"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "可由烟花团达到36级并释放出来约一分钟后收回进化得",
   "evolution_edges": [],
+  "evolution_chain": [
+    "烟花团",
+    "烟花伯爵"
+  ],
   "total_race_value": 485,
   "profile": {
     "初阶": "烟花团",
@@ -403,8 +407,18 @@
     "generated_at": "2026-06-04T05:20:44.074046+00:00"
   },
   "evolution": {
-    "from": [],
+    "from": [
+      {
+        "source": "烟花团",
+        "target": "烟花伯爵",
+        "condition": "达到36级并释放出来约一分钟后收回",
+        "raw_condition": "达到36级并释放出来约一分钟后收回",
+        "forward_text": "达到36级并释放出来约一分钟后收回可进化为烟花伯爵",
+        "backward_text": "可由烟花团达到36级并释放出来约一分钟后收回进化得",
+        "text": "可由烟花团达到36级并释放出来约一分钟后收回进化得"
+      }
+    ],
     "to": [],
-    "evolution_condition": ""
+    "evolution_condition": "可由烟花团达到36级并释放出来约一分钟后收回进化得"
   }
 }

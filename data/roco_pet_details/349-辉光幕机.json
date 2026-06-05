@@ -4,8 +4,22 @@
   "attributes": [
     "机械"
   ],
-  "evolution_condition": "",
-  "evolution_edges": [],
+  "evolution_condition": "可由钨丝贝贝提升为1星进化得；提升为2星可进化为机幕方舟",
+  "evolution_edges": [
+    {
+      "source": "辉光幕机",
+      "target": "机幕方舟",
+      "condition": "提升为2星",
+      "raw_condition": "提升为2星",
+      "forward_text": "提升为2星可进化为机幕方舟",
+      "backward_text": "可由辉光幕机提升为2星进化得"
+    }
+  ],
+  "evolution_chain": [
+    "钨丝贝贝",
+    "辉光幕机",
+    "机幕方舟"
+  ],
   "total_race_value": 478,
   "profile": {
     "编号": "349",
@@ -695,8 +709,28 @@
     "generated_at": "2026-06-04T05:18:06.413488+00:00"
   },
   "evolution": {
-    "from": [],
-    "to": [],
-    "evolution_condition": ""
+    "from": [
+      {
+        "source": "钨丝贝贝",
+        "target": "辉光幕机",
+        "condition": "提升为1星",
+        "raw_condition": "提升为1星",
+        "forward_text": "提升为1星可进化为辉光幕机",
+        "backward_text": "可由钨丝贝贝提升为1星进化得",
+        "text": "可由钨丝贝贝提升为1星进化得"
+      }
+    ],
+    "to": [
+      {
+        "source": "辉光幕机",
+        "target": "机幕方舟",
+        "condition": "提升为2星",
+        "raw_condition": "提升为2星",
+        "forward_text": "提升为2星可进化为机幕方舟",
+        "backward_text": "可由辉光幕机提升为2星进化得",
+        "text": "提升为2星可进化为机幕方舟"
+      }
+    ],
+    "evolution_condition": "可由钨丝贝贝提升为1星进化得；提升为2星可进化为机幕方舟"
   }
 }

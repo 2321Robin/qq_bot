@@ -5,7 +5,7 @@
     "光",
     "地"
   ],
-  "evolution_condition": "可由矿晶虫撞击三次紫莲钢玉进化得",
+  "evolution_condition": "可由矿晶虫达到40级并挖掘紫莲刚玉3次进化得",
   "total_race_value": 585,
   "profile": {
     "编号": "040",
@@ -403,14 +403,14 @@
       {
         "source": "矿晶虫",
         "target": "晶石蜗（莲花刚玉的样子）",
-        "condition": "撞击三次紫莲钢玉",
-        "raw_condition": "撞击三次紫莲钢玉",
-        "forward_text": "撞击三次紫莲钢玉可进化为晶石蜗（莲花刚玉的样子）",
-        "backward_text": "可由矿晶虫撞击三次紫莲钢玉进化得",
-        "text": "可由矿晶虫撞击三次紫莲钢玉进化得"
+        "condition": "达到40级并挖掘紫莲刚玉3次",
+        "raw_condition": "达到40级并挖掘紫莲刚玉3次",
+        "forward_text": "达到40级并挖掘紫莲刚玉3次可进化为晶石蜗（莲花刚玉的样子）",
+        "backward_text": "可由矿晶虫达到40级并挖掘紫莲刚玉3次进化得",
+        "text": "可由矿晶虫达到40级并挖掘紫莲刚玉3次进化得"
       }
     ],
     "to": [],
-    "evolution_condition": "可由矿晶虫撞击三次紫莲钢玉进化得"
+    "evolution_condition": "可由矿晶虫达到40级并挖掘紫莲刚玉3次进化得"
   }
 }

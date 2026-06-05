@@ -5,7 +5,7 @@
     "水",
     "草"
   ],
-  "evolution_condition": "可由果冻草血脉进化得",
+  "evolution_condition": "可由果冻达到30级且草系血脉进化得",
   "total_race_value": 546,
   "profile": {
     "编号": "314",
@@ -388,14 +388,14 @@
       {
         "source": "果冻",
         "target": "抹茶布丁",
-        "condition": "草血脉",
-        "raw_condition": "草血脉",
-        "forward_text": "草血脉可进化为抹茶布丁",
-        "backward_text": "可由果冻草血脉进化得",
-        "text": "可由果冻草血脉进化得"
+        "condition": "达到30级且草系血脉",
+        "raw_condition": "达到30级且草系血脉",
+        "forward_text": "达到30级且草系血脉可进化为抹茶布丁",
+        "backward_text": "可由果冻达到30级且草系血脉进化得",
+        "text": "可由果冻达到30级且草系血脉进化得"
       }
     ],
     "to": [],
-    "evolution_condition": "可由果冻草血脉进化得"
+    "evolution_condition": "可由果冻达到30级且草系血脉进化得"
   }
 }

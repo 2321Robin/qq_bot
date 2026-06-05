@@ -5,7 +5,7 @@
     "虫",
     "草"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "可由小草虫达到36级且雌性进化得",
   "total_race_value": 539,
   "profile": {
     "编号": "101",
@@ -393,8 +393,18 @@
     "generated_at": "2026-05-12T13:15:38.133171+00:00"
   },
   "evolution": {
-    "from": [],
+    "from": [
+      {
+        "source": "小草虫",
+        "target": "花衣蝶",
+        "condition": "达到36级且雌性",
+        "raw_condition": "达到36级且雌性",
+        "forward_text": "达到36级且雌性可进化为花衣蝶",
+        "backward_text": "可由小草虫达到36级且雌性进化得",
+        "text": "可由小草虫达到36级且雌性进化得"
+      }
+    ],
     "to": [],
-    "evolution_condition": ""
+    "evolution_condition": "可由小草虫达到36级且雌性进化得"
   }
 }

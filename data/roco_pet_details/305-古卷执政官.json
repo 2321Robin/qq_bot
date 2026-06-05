@@ -5,7 +5,7 @@
     "普通",
     "幻"
   ],
-  "evolution_condition": "可由书卷守护击败3个武系精灵进化得",
+  "evolution_condition": "可由书卷守护达到36级并击败3个武系精灵进化得",
   "total_race_value": 658,
   "profile": {
     "编号": "305",
@@ -404,14 +404,14 @@
       {
         "source": "书卷守护",
         "target": "古卷执政官",
-        "condition": "击败3个武系精灵",
-        "raw_condition": "击败三只武系精灵",
-        "forward_text": "击败3个武系精灵可进化为古卷执政官",
-        "backward_text": "可由书卷守护击败3个武系精灵进化得",
-        "text": "可由书卷守护击败3个武系精灵进化得"
+        "condition": "达到36级并击败3个武系精灵",
+        "raw_condition": "达到36级并击败3个武系精灵",
+        "forward_text": "达到36级并击败3个武系精灵可进化为古卷执政官",
+        "backward_text": "可由书卷守护达到36级并击败3个武系精灵进化得",
+        "text": "可由书卷守护达到36级并击败3个武系精灵进化得"
       }
     ],
     "to": [],
-    "evolution_condition": "可由书卷守护击败3个武系精灵进化得"
+    "evolution_condition": "可由书卷守护达到36级并击败3个武系精灵进化得"
   }
 }

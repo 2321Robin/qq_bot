@@ -162,7 +162,7 @@ def _record_from_detail(item: Any) -> PetRecord:
 
     return PetRecord(
         name=name,
-        aliases=_derived_aliases(name),
+        aliases=_detail_aliases(item, name),
         number=number,
         attributes=attributes,
         stage=_string_from_mapping(profile, "阶段") or "未知",
@@ -252,6 +252,14 @@ def _derived_aliases(name: str) -> list[str]:
             alias = name.split(marker, 1)[0].strip()
             if alias and alias != name and alias not in aliases:
                 aliases.append(alias)
+    return aliases
+
+
+def _detail_aliases(item: dict[str, Any], name: str) -> list[str]:
+    aliases = _string_list(item, "aliases")
+    for alias in _derived_aliases(name):
+        if alias not in aliases:
+            aliases.append(alias)
     return aliases
 
 

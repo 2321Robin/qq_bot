@@ -5,7 +5,7 @@
     "翼",
     "水"
   ],
-  "evolution_condition": "血脉为恶系血脉进化可进化为黑羽夫人",
+  "evolution_condition": "可由蓝珠天鹅达到40级且水系血脉进化得",
   "total_race_value": 656,
   "profile": {
     "编号": "090",
@@ -386,18 +386,18 @@
     "generated_at": "2026-05-12T13:15:30.978910+00:00"
   },
   "evolution": {
-    "from": [],
-    "to": [
+    "from": [
       {
-        "source": "翠顶夫人",
-        "target": "黑羽夫人",
-        "condition": "血脉为恶系血脉进化",
-        "raw_condition": "血脉为恶系血脉进化",
-        "forward_text": "血脉为恶系血脉进化可进化为黑羽夫人",
-        "backward_text": "可由翠顶夫人血脉为恶系血脉进化得",
-        "text": "血脉为恶系血脉进化可进化为黑羽夫人"
+        "source": "蓝珠天鹅",
+        "target": "翠顶夫人",
+        "condition": "达到40级且水系血脉",
+        "raw_condition": "达到40级且水系血脉",
+        "forward_text": "达到40级且水系血脉可进化为翠顶夫人",
+        "backward_text": "可由蓝珠天鹅达到40级且水系血脉进化得",
+        "text": "可由蓝珠天鹅达到40级且水系血脉进化得"
       }
     ],
-    "evolution_condition": "血脉为恶系血脉进化可进化为黑羽夫人"
+    "to": [],
+    "evolution_condition": "可由蓝珠天鹅达到40级且水系血脉进化得"
   }
 }

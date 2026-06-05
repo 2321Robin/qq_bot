@@ -77,6 +77,12 @@ def test_load_pet_records_preserves_detail_aliases() -> None:
     assert find_pet(records, "火系御三家") is find_pet(records, "火花")
     assert find_pet(records, "水系御三家") is find_pet(records, "水蓝蓝")
     assert find_pet(records, "魔力喵") is find_pet(records, "魔力猫")
+    assert find_pet(records, "爆炎仔") is find_pet(records, "爆焰仔")
+    assert find_pet(records, "暗光嗡嗡") is find_pet(records, "嗜光嗡嗡")
+    assert find_pet(records, "刺轮陀") is find_pet(records, "刺轮砣（上弦的样子）")
+    assert find_pet(records, "伊贝尔") is find_pet(records, "伊贝儿")
+    assert find_pet(records, "犀牛鸟") is find_pet(records, "犀角鸟")
+    assert find_pet(records, "极光千兽") is find_pet(records, "疾光千兽")
 
 
 def test_load_pet_records_preserves_detail_evolution_chain() -> None:

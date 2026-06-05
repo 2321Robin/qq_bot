@@ -4,8 +4,11 @@
   "attributes": [
     "武"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "无法进化",
   "evolution_edges": [],
+  "evolution_chain": [
+    "学院呱呱"
+  ],
   "total_race_value": 614,
   "profile": {
     "初阶": "学院呱呱",
@@ -2116,6 +2119,6 @@
   "evolution": {
     "from": [],
     "to": [],
-    "evolution_condition": ""
+    "evolution_condition": "无法进化"
   }
 }

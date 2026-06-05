@@ -5,7 +5,7 @@
     "光",
     "地"
   ],
-  "evolution_condition": "可由矿晶虫撞击三次黑晶琉璃进化得",
+  "evolution_condition": "可由矿晶虫达到40级并挖掘黑晶琉璃3次进化得",
   "total_race_value": 583,
   "profile": {
     "编号": "040",
@@ -403,14 +403,14 @@
       {
         "source": "矿晶虫",
         "target": "晶石蜗（火山琉璃的样子）",
-        "condition": "撞击三次黑晶琉璃",
-        "raw_condition": "撞击三次黑晶琉璃",
-        "forward_text": "撞击三次黑晶琉璃可进化为晶石蜗（火山琉璃的样子）",
-        "backward_text": "可由矿晶虫撞击三次黑晶琉璃进化得",
-        "text": "可由矿晶虫撞击三次黑晶琉璃进化得"
+        "condition": "达到40级并挖掘黑晶琉璃3次",
+        "raw_condition": "达到40级并挖掘黑晶琉璃3次",
+        "forward_text": "达到40级并挖掘黑晶琉璃3次可进化为晶石蜗（火山琉璃的样子）",
+        "backward_text": "可由矿晶虫达到40级并挖掘黑晶琉璃3次进化得",
+        "text": "可由矿晶虫达到40级并挖掘黑晶琉璃3次进化得"
       }
     ],
     "to": [],
-    "evolution_condition": "可由矿晶虫撞击三次黑晶琉璃进化得"
+    "evolution_condition": "可由矿晶虫达到40级并挖掘黑晶琉璃3次进化得"
   }
 }

@@ -4,7 +4,7 @@
   "attributes": [
     "冰"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "可由香草甜甜达到40级后随机颜色进化得，配饰变化取决于香草甜甜配饰",
   "total_race_value": 612,
   "profile": {
     "编号": "236",
@@ -400,8 +400,18 @@
     "generated_at": "2026-05-12T13:17:29.276327+00:00"
   },
   "evolution": {
-    "from": [],
+    "from": [
+      {
+        "source": "香草甜甜",
+        "target": "圣代甜甜",
+        "condition": "达到40级并随机进化",
+        "raw_condition": "达到40级并随机进化",
+        "forward_text": "达到40级并随机进化可进化为圣代甜甜",
+        "backward_text": "可由香草甜甜达到40级并随机进化进化得",
+        "text": "可由香草甜甜达到40级并随机进化进化得"
+      }
+    ],
     "to": [],
-    "evolution_condition": ""
+    "evolution_condition": "可由香草甜甜达到40级后随机颜色进化得，配饰变化取决于香草甜甜配饰"
   }
 }

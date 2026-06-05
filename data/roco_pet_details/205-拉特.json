@@ -4,7 +4,7 @@
   "attributes": [
     "电"
   ],
-  "evolution_condition": "升至40级可进化为酷拉",
+  "evolution_condition": "达到40级并进入好友世界可进化为酷拉",
   "total_race_value": 467,
   "profile": {
     "编号": "205",
@@ -396,13 +396,13 @@
       {
         "source": "拉特",
         "target": "酷拉",
-        "condition": "升至40级",
-        "raw_condition": "等级40级",
-        "forward_text": "升至40级可进化为酷拉",
-        "backward_text": "可由拉特升至40级进化得",
-        "text": "升至40级可进化为酷拉"
+        "condition": "达到40级并进入好友世界",
+        "raw_condition": "达到40级并进入好友世界",
+        "forward_text": "达到40级并进入好友世界可进化为酷拉",
+        "backward_text": "可由拉特达到40级并进入好友世界进化得",
+        "text": "达到40级并进入好友世界可进化为酷拉"
       }
     ],
-    "evolution_condition": "升至40级可进化为酷拉"
+    "evolution_condition": "达到40级并进入好友世界可进化为酷拉"
   }
 }

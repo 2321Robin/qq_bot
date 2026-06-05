@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Added AI chat grounding on local 洛克王国精灵 and skill data for natural-language evolution and multi-skill questions.
 - Added structured evolution normalization so source, middle, and target forms all record forward and backward evolution text.
 - Added BWiki raw-template fetching support for newly published pets.
+- Added S2 season local evolution data for pets 348, 354, 356, 358, 360, 362, 365, 367, 369, 371, 373, and 375.
+- Added image-sourced special evolution conditions for bloodline, skill-use, typed-defeat, time, weather, sex, height, random-form, mining, friend-world, and starlight evolutions.
 
 ### Changed
 

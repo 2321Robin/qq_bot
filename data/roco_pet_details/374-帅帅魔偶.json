@@ -4,8 +4,12 @@
   "attributes": [
     "幻"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "可由牵线木偶升至40级进化得",
   "evolution_edges": [],
+  "evolution_chain": [
+    "牵线木偶",
+    "帅帅魔偶"
+  ],
   "total_race_value": 636,
   "profile": {
     "初阶": "牵线木偶",
@@ -506,8 +510,18 @@
     "generated_at": "2026-06-04T05:04:24.485778+00:00"
   },
   "evolution": {
-    "from": [],
+    "from": [
+      {
+        "source": "牵线木偶",
+        "target": "帅帅魔偶",
+        "condition": "升至40级",
+        "raw_condition": "升至40级",
+        "forward_text": "升至40级可进化为帅帅魔偶",
+        "backward_text": "可由牵线木偶升至40级进化得",
+        "text": "可由牵线木偶升至40级进化得"
+      }
+    ],
     "to": [],
-    "evolution_condition": ""
+    "evolution_condition": "可由牵线木偶升至40级进化得"
   }
 }

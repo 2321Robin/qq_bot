@@ -1,12 +1,28 @@
 {
   "name": "爆焰仔",
+  "aliases": [
+    "爆炎仔"
+  ],
   "source_url": "https://wiki.biligame.com/rocom/%E7%88%86%E7%84%B0%E4%BB%94",
   "attributes": [
     "火",
     "龙"
   ],
-  "evolution_condition": "",
-  "evolution_edges": [],
+  "evolution_condition": "达到40级并释放15次流星火雨技能可进化为爆焰喷喷",
+  "evolution_edges": [
+    {
+      "source": "爆焰仔",
+      "target": "爆焰喷喷",
+      "condition": "达到40级并释放15次流星火雨技能",
+      "raw_condition": "达到40级并释放15次流星火雨技能",
+      "forward_text": "达到40级并释放15次流星火雨技能可进化为爆焰喷喷",
+      "backward_text": "可由爆焰仔达到40级并释放15次流星火雨技能进化得"
+    }
+  ],
+  "evolution_chain": [
+    "爆焰仔",
+    "爆焰喷喷"
+  ],
   "total_race_value": 498,
   "profile": {
     "编号": "356",
@@ -618,7 +634,17 @@
   },
   "evolution": {
     "from": [],
-    "to": [],
-    "evolution_condition": ""
+    "to": [
+      {
+        "source": "爆焰仔",
+        "target": "爆焰喷喷",
+        "condition": "达到40级并释放15次流星火雨技能",
+        "raw_condition": "达到40级并释放15次流星火雨技能",
+        "forward_text": "达到40级并释放15次流星火雨技能可进化为爆焰喷喷",
+        "backward_text": "可由爆焰仔达到40级并释放15次流星火雨技能进化得",
+        "text": "达到40级并释放15次流星火雨技能可进化为爆焰喷喷"
+      }
+    ],
+    "evolution_condition": "达到40级并释放15次流星火雨技能可进化为爆焰喷喷"
   }
 }

@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 
 from PIL import Image, ImageDraw, ImageFont
 
-from qq_bot.services.roco_pets import PetRecord
+from qq_bot.services.roco_pets import EvolutionRelation, PetRecord
 
 
 DEFAULT_CARD_DIR = Path("data/roco_pet_cards")
@@ -115,6 +115,7 @@ def _pet_record_from_detail(detail: dict[str, Any]) -> PetRecord:
     attributes = _string_detail_list(detail.get("attributes")) or _split_detail_values(profile.get("系别"))
     stats = _card_stats_from_detail_stats(_dict_value(detail.get("stats")))
     evolution_chain = _string_detail_list(detail.get("evolution_chain")) or [name]
+    evolution = _dict_value(detail.get("evolution"))
 
     return PetRecord(
         name=name,
@@ -131,6 +132,8 @@ def _pet_record_from_detail(detail: dict[str, Any]) -> PetRecord:
         description=_first_string(profile, "简介", "描述", "精灵介绍"),
         race_value=_optional_detail_int(detail.get("total_race_value")),
         stats=stats,
+        evolution_from=_detail_evolution_relations(evolution, "from"),
+        evolution_to=_detail_evolution_relations(evolution, "to"),
     )
 
 
@@ -156,6 +159,26 @@ def _string_detail_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [_string_detail_value(part) for part in value if _string_detail_value(part)]
+
+
+def _detail_evolution_relations(evolution: dict[str, Any], key: str) -> list[EvolutionRelation]:
+    raw_relations = evolution.get(key, [])
+    if not isinstance(raw_relations, list):
+        return []
+
+    relations: list[EvolutionRelation] = []
+    for raw_relation in raw_relations:
+        if not isinstance(raw_relation, dict):
+            continue
+        relation = EvolutionRelation(
+            source=_string_detail_value(raw_relation.get("source")),
+            target=_string_detail_value(raw_relation.get("target")),
+            condition=_string_detail_value(raw_relation.get("condition")),
+            text=_string_detail_value(raw_relation.get("text")),
+        )
+        if relation.source or relation.target or relation.text:
+            relations.append(relation)
+    return relations
 
 
 def _split_detail_values(value: Any) -> list[str]:
@@ -814,10 +837,84 @@ def _draw_evolution_condition(
 ) -> None:
     if not condition:
         return
-    label_box = (arrow_center_x - 36, 260, arrow_center_x + 36, 283)
-    label_font = _fit_font_to_width(draw, condition, condition_font, label_box[2] - label_box[0] - 10, min_size=12)
+    display_condition = _evolution_condition_label(condition)
+    max_width = 112
+    condition_lines = _evolution_condition_lines(draw, display_condition, condition_font, max_width=max_width)
+    if not condition_lines:
+        return
+    label_font = _fit_font_to_lines(draw, condition_lines, condition_font, max_width - 10, min_size=10)
+    line_heights = [_text_height(draw, line, label_font) for line in condition_lines]
+    total_text_height = sum(line_heights)
+    label_height = 12 + total_text_height
+    label_top = 249 if len(condition_lines) > 1 else 260
+    label_box = (arrow_center_x - max_width // 2, label_top, arrow_center_x + max_width // 2, label_top + label_height)
     _rounded(draw, label_box, 11, ORANGE)
-    _center_text(draw, condition, (arrow_center_x, 271), label_font, "#202326")
+    y = label_box[1] + (label_box[3] - label_box[1] - total_text_height) / 2
+    for line, line_height in zip(condition_lines, line_heights, strict=True):
+        _center_text(draw, line, (arrow_center_x, int(y + line_height / 2)), label_font, "#202326")
+        y += line_height
+
+
+def _evolution_condition_label(condition: str) -> str:
+    text = condition.strip()
+    if not text:
+        return ""
+    star_match = re.fullmatch(r"提升为(\d+)星", text)
+    if star_match:
+        return f"{star_match.group(1)}星"
+    level_match = re.fullmatch(r"升至(\d+)级", text)
+    if level_match:
+        return f"{level_match.group(1)}级"
+    skill_match = re.fullmatch(r"达到(\d+)级并释放(\d+)次(.+?)技能", text)
+    if skill_match:
+        level, count, skill = skill_match.groups()
+        return f"{level}级+{count}次{skill}"
+    release_match = re.fullmatch(r"达到(\d+)级并释放出来约一分钟后收回", text)
+    if release_match:
+        return f"{release_match.group(1)}级+放出收回"
+    return text
+
+
+def _evolution_condition_lines(
+    draw: ImageDraw.ImageDraw,
+    condition: str,
+    font: ImageFont.ImageFont,
+    *,
+    max_width: int,
+) -> list[str]:
+    if "+" in condition:
+        parts = [part for part in condition.split("+", 1) if part]
+        if len(parts) == 2:
+            return parts
+    if _text_width(draw, condition, font) <= max_width:
+        return [condition]
+    parts = re.split(r"(?<=[级星])", condition)
+    lines = [part for part in parts if part]
+    if len(lines) > 1 and all(_text_width(draw, line, font) <= max_width for line in lines):
+        return lines[:2]
+    return _wrap_text(draw, condition, font, max_width)[:2]
+
+
+def _fit_font_to_lines(
+    draw: ImageDraw.ImageDraw,
+    lines: list[str],
+    font: ImageFont.ImageFont,
+    max_width: int,
+    *,
+    min_size: int = 10,
+) -> ImageFont.ImageFont:
+    if not isinstance(font, ImageFont.FreeTypeFont):
+        return font
+    for size in range(font.size, min_size - 1, -1):
+        candidate = font.font_variant(size=size)
+        if all(_text_width(draw, line, candidate) <= max_width for line in lines):
+            return candidate
+    return font.font_variant(size=min_size)
+
+
+def _text_height(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) -> int:
+    bbox = draw.textbbox((0, 0), text, font=font)
+    return bbox[3] - bbox[1]
 
 
 def _fit_chain_font(
@@ -1061,7 +1158,6 @@ def _draw_icon_text(
         _paste_icon(image, icon, (int(x), int(center_y - icon_size[1] / 2)), icon_size)
     elif fallback_icon_text:
         _center_text(draw, fallback_icon_text, (int(x + icon_size[0] / 2), int(center_y)), font, ORANGE)
-
     text_x = x + icon_width + (gap if icon_width else 0)
     text_y = center_y - text_height / 2 - text_bbox[1]
     draw.text((text_x, text_y), text, fill=fill, font=font)
@@ -1101,12 +1197,78 @@ def _evolution_steps(record: PetRecord) -> list[tuple[str, str, str]]:
     chain = record.evolution_chain
     if len(chain) < 2:
         return []
+
+    relation_conditions = _evolution_relation_conditions(record)
+    segment_conditions = _evolution_segment_conditions(record, chain)
+    levels = _evolution_fallback_levels(record)
+    steps = []
+    for index, (source, target) in enumerate(zip(chain, chain[1:], strict=False)):
+        condition = relation_conditions.get((source, target)) or segment_conditions.get((source, target))
+        if not condition and index < len(levels):
+            condition = levels[index]
+        steps.append((source, target, condition))
+    return steps
+
+
+def _evolution_relation_conditions(record: PetRecord) -> dict[tuple[str, str], str]:
+    conditions: dict[tuple[str, str], str] = {}
+    for relation in [*record.evolution_from, *record.evolution_to]:
+        if relation.source and relation.target and relation.condition:
+            conditions.setdefault((relation.source, relation.target), relation.condition)
+    return conditions
+
+
+def _evolution_segment_conditions(record: PetRecord, chain: list[str]) -> dict[tuple[str, str], str]:
+    conditions: dict[tuple[str, str], str] = {}
+    pairs = list(zip(chain, chain[1:], strict=False))
+    previous_condition = ""
+    for segment in re.split(r"[；;]", record.evolution_condition):
+        segment = segment.strip()
+        condition = _evolution_segment_condition(segment, previous_condition)
+        if condition:
+            previous_condition = condition
+        if not segment or not condition:
+            continue
+        for source, target in pairs:
+            if segment.startswith(("由", "可由")):
+                if target == record.name and source in segment:
+                    conditions.setdefault((source, target), condition)
+                    break
+                continue
+            if "可进化为" in segment:
+                target_text = segment.split("可进化为", 1)[1]
+                if target in target_text:
+                    conditions.setdefault((source, target), condition)
+                    break
+    return conditions
+
+
+def _evolution_segment_condition(segment: str, previous_condition: str) -> str:
+    if "按相同条件" in segment:
+        return previous_condition
+    for pattern in (
+        r"达到\d+级并释放\d+次.+?技能",
+        r"达到\d+级并释放出来约?一分钟后收回",
+        r"提升为\d+星",
+        r"升至\d+级",
+        r"\d+级",
+    ):
+        match = re.search(pattern, segment)
+        if match:
+            return match.group(0)
+    if "亲密度" in segment:
+        return "亲密度"
+    return ""
+
+
+def _evolution_fallback_levels(record: PetRecord) -> list[str]:
+    chain = record.evolution_chain
     levels = [f"{level}级" for level in re.findall(r"(\d+)级", record.evolution_condition)]
     if "亲密度" in record.evolution_condition:
         levels = ["亲密度", *levels]
     if len(chain) == 3 and len(levels) == 1:
         levels = ["16级", levels[0]]
-    return [(source, target, levels[index] if index < len(levels) else "") for index, (source, target) in enumerate(zip(chain, chain[1:], strict=False))]
+    return levels
 
 
 def _evolution_step_positions(record: PetRecord) -> list[tuple[str, str, str, int]]:

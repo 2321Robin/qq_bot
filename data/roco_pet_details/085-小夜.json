@@ -4,7 +4,7 @@
   "attributes": [
     "恶"
   ],
-  "evolution_condition": "升至26级可进化为紫夜",
+  "evolution_condition": "升至26级可进化为紫夜；达到44级且雌性可进化为朔夜伊芙",
   "total_race_value": 374,
   "profile": {
     "编号": "085",
@@ -402,8 +402,17 @@
         "forward_text": "升至26级可进化为紫夜",
         "backward_text": "可由小夜升至26级进化得",
         "text": "升至26级可进化为紫夜"
+      },
+      {
+        "source": "小夜",
+        "target": "朔夜伊芙",
+        "condition": "达到44级且雌性",
+        "raw_condition": "达到44级且雌性",
+        "forward_text": "达到44级且雌性可进化为朔夜伊芙",
+        "backward_text": "可由小夜达到44级且雌性进化得",
+        "text": "达到44级且雌性可进化为朔夜伊芙"
       }
     ],
-    "evolution_condition": "升至26级可进化为紫夜"
+    "evolution_condition": "升至26级可进化为紫夜；达到44级且雌性可进化为朔夜伊芙"
   }
 }

@@ -5,7 +5,7 @@
     "地",
     "草"
   ],
-  "evolution_condition": "可由多菇丁天气为雨天进化得",
+  "evolution_condition": "可由多菇丁达到48级且雨天进化得",
   "total_race_value": 627,
   "profile": {
     "编号": "176",
@@ -397,14 +397,14 @@
       {
         "source": "多菇丁",
         "target": "九幽菇",
-        "condition": "天气为雨天进化",
-        "raw_condition": "天气为雨天进化",
-        "forward_text": "天气为雨天进化可进化为九幽菇",
-        "backward_text": "可由多菇丁天气为雨天进化得",
-        "text": "可由多菇丁天气为雨天进化得"
+        "condition": "达到48级且雨天",
+        "raw_condition": "达到48级且雨天",
+        "forward_text": "达到48级且雨天可进化为九幽菇",
+        "backward_text": "可由多菇丁达到48级且雨天进化得",
+        "text": "可由多菇丁达到48级且雨天进化得"
       }
     ],
     "to": [],
-    "evolution_condition": "可由多菇丁天气为雨天进化得"
+    "evolution_condition": "可由多菇丁达到48级且雨天进化得"
   }
 }

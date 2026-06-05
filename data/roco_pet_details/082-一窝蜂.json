@@ -5,7 +5,7 @@
     "虫",
     "翼"
   ],
-  "evolution_condition": "升至21级可进化为黄蜂后",
+  "evolution_condition": "升至21级可进化为黄蜂后；达到38级且雌性可进化为花魁蜂后",
   "total_race_value": 228,
   "profile": {
     "编号": "082",
@@ -418,8 +418,17 @@
         "forward_text": "升至21级可进化为黄蜂后",
         "backward_text": "可由一窝蜂升至21级进化得",
         "text": "升至21级可进化为黄蜂后"
+      },
+      {
+        "source": "一窝蜂",
+        "target": "花魁蜂后",
+        "condition": "达到38级且雌性",
+        "raw_condition": "达到38级且雌性",
+        "forward_text": "达到38级且雌性可进化为花魁蜂后",
+        "backward_text": "可由一窝蜂达到38级且雌性进化得",
+        "text": "达到38级且雌性可进化为花魁蜂后"
       }
     ],
-    "evolution_condition": "升至21级可进化为黄蜂后"
+    "evolution_condition": "升至21级可进化为黄蜂后；达到38级且雌性可进化为花魁蜂后"
   }
 }

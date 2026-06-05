@@ -1,11 +1,14 @@
 {
   "name": "乌达（极昼的样子）",
+  "aliases": [
+    "红乌达"
+  ],
   "source_url": "https://wiki.biligame.com/rocom/%E4%B9%8C%E8%BE%BE%EF%BC%88%E6%9E%81%E6%98%BC%E7%9A%84%E6%A0%B7%E5%AD%90%EF%BC%89",
   "attributes": [
     "恶",
     "火"
   ],
-  "evolution_condition": "可由乌达（极夜的样子）时间为正午进化得",
+  "evolution_condition": "达到30级且时间为中午可进化为迷你乌（极昼的样子）",
   "total_race_value": 369,
   "profile": {
     "编号": "258",
@@ -356,18 +359,18 @@
     "generated_at": "2026-05-12T13:17:50.250032+00:00"
   },
   "evolution": {
-    "from": [
+    "from": [],
+    "to": [
       {
-        "source": "乌达（极夜的样子）",
-        "target": "乌达（极昼的样子）",
-        "condition": "时间为正午",
-        "raw_condition": "时间为正午",
-        "forward_text": "时间为正午可进化为乌达（极昼的样子）",
-        "backward_text": "可由乌达（极夜的样子）时间为正午进化得",
-        "text": "可由乌达（极夜的样子）时间为正午进化得"
+        "source": "乌达（极昼的样子）",
+        "target": "迷你乌（极昼的样子）",
+        "condition": "达到30级且时间为中午",
+        "raw_condition": "达到30级且时间为中午",
+        "forward_text": "达到30级且时间为中午可进化为迷你乌（极昼的样子）",
+        "backward_text": "可由乌达（极昼的样子）达到30级且时间为中午进化得",
+        "text": "达到30级且时间为中午可进化为迷你乌（极昼的样子）"
       }
     ],
-    "to": [],
-    "evolution_condition": "可由乌达（极夜的样子）时间为正午进化得"
+    "evolution_condition": "达到30级且时间为中午可进化为迷你乌（极昼的样子）"
   }
 }

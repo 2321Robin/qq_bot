@@ -5,7 +5,7 @@
     "虫",
     "萌"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "可由爬爬达到35级并随机进化进化得",
   "total_race_value": 362,
   "profile": {
     "编号": "034",
@@ -393,8 +393,18 @@
     "generated_at": "2026-05-12T13:13:44.868100+00:00"
   },
   "evolution": {
-    "from": [],
+    "from": [
+      {
+        "source": "爬爬",
+        "target": "化蝶（奇丽花的样子）",
+        "condition": "达到35级并随机进化",
+        "raw_condition": "达到35级并随机进化",
+        "forward_text": "达到35级并随机进化可进化为化蝶（奇丽花的样子）",
+        "backward_text": "可由爬爬达到35级并随机进化进化得",
+        "text": "可由爬爬达到35级并随机进化进化得"
+      }
+    ],
     "to": [],
-    "evolution_condition": ""
+    "evolution_condition": "可由爬爬达到35级并随机进化进化得"
   }
 }

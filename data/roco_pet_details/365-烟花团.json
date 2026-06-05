@@ -5,8 +5,21 @@
     "火",
     "毒"
   ],
-  "evolution_condition": "",
-  "evolution_edges": [],
+  "evolution_condition": "达到36级并释放出来约一分钟后收回可进化为烟花伯爵（小丑豆豆、小鼓象、咕咕帽、烟花团可同时放出后收回统一进化）",
+  "evolution_edges": [
+    {
+      "source": "烟花团",
+      "target": "烟花伯爵",
+      "condition": "达到36级并释放出来约一分钟后收回",
+      "raw_condition": "达到36级并释放出来约一分钟后收回",
+      "forward_text": "达到36级并释放出来约一分钟后收回可进化为烟花伯爵",
+      "backward_text": "可由烟花团达到36级并释放出来约一分钟后收回进化得"
+    }
+  ],
+  "evolution_chain": [
+    "烟花团",
+    "烟花伯爵"
+  ],
   "total_race_value": 389,
   "profile": {
     "编号": "365",
@@ -615,7 +628,17 @@
   },
   "evolution": {
     "from": [],
-    "to": [],
-    "evolution_condition": ""
+    "to": [
+      {
+        "source": "烟花团",
+        "target": "烟花伯爵",
+        "condition": "达到36级并释放出来约一分钟后收回",
+        "raw_condition": "达到36级并释放出来约一分钟后收回",
+        "forward_text": "达到36级并释放出来约一分钟后收回可进化为烟花伯爵",
+        "backward_text": "可由烟花团达到36级并释放出来约一分钟后收回进化得",
+        "text": "达到36级并释放出来约一分钟后收回可进化为烟花伯爵"
+      }
+    ],
+    "evolution_condition": "达到36级并释放出来约一分钟后收回可进化为烟花伯爵（小丑豆豆、小鼓象、咕咕帽、烟花团可同时放出后收回统一进化）"
   }
 }

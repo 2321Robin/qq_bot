@@ -5,8 +5,12 @@
     "电",
     "光"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "可由炫光迪迪升至40级进化得",
   "evolution_edges": [],
+  "evolution_chain": [
+    "炫光迪迪",
+    "霹雳迪迪"
+  ],
   "total_race_value": 690,
   "profile": {
     "初阶": "炫光迪迪",
@@ -403,8 +407,18 @@
     "generated_at": "2026-06-04T05:21:09.402455+00:00"
   },
   "evolution": {
-    "from": [],
+    "from": [
+      {
+        "source": "炫光迪迪",
+        "target": "霹雳迪迪",
+        "condition": "升至40级",
+        "raw_condition": "升至40级",
+        "forward_text": "升至40级可进化为霹雳迪迪",
+        "backward_text": "可由炫光迪迪升至40级进化得",
+        "text": "可由炫光迪迪升至40级进化得"
+      }
+    ],
     "to": [],
-    "evolution_condition": ""
+    "evolution_condition": "可由炫光迪迪升至40级进化得"
   }
 }
