@@ -1,10 +1,13 @@
 {
   "name": "犀角鸟",
+  "aliases": [
+    "犀牛鸟"
+  ],
   "source_url": "https://wiki.biligame.com/rocom/%E7%8A%80%E8%A7%92%E9%B8%9F",
   "attributes": [
     "光"
   ],
-  "evolution_condition": "获得1200星光值可进化为光纤兽",
+  "evolution_condition": "达到40级并放入队伍收集星光可进化为光纤兽",
   "total_race_value": 368,
   "profile": {
     "编号": "310",
@@ -359,13 +362,13 @@
       {
         "source": "犀角鸟",
         "target": "光纤兽",
-        "condition": "获得1200星光值",
-        "raw_condition": "获得1200星光值",
-        "forward_text": "获得1200星光值可进化为光纤兽",
-        "backward_text": "可由犀角鸟获得1200星光值进化得",
-        "text": "获得1200星光值可进化为光纤兽"
+        "condition": "达到40级并放入队伍收集星光",
+        "raw_condition": "达到40级并放入队伍收集星光",
+        "forward_text": "达到40级并放入队伍收集星光可进化为光纤兽",
+        "backward_text": "可由犀角鸟达到40级并放入队伍收集星光进化得",
+        "text": "达到40级并放入队伍收集星光可进化为光纤兽"
       }
     ],
-    "evolution_condition": "获得1200星光值可进化为光纤兽"
+    "evolution_condition": "达到40级并放入队伍收集星光可进化为光纤兽"
   }
 }

@@ -1,10 +1,13 @@
 {
   "name": "疾光千兽",
+  "aliases": [
+    "极光千兽"
+  ],
   "source_url": "https://wiki.biligame.com/rocom/%E7%96%BE%E5%85%89%E5%8D%83%E5%85%BD",
   "attributes": [
     "光"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "可由光纤兽达到40级并放入队伍收集星光进化得",
   "total_race_value": 612,
   "profile": {
     "编号": "312",
@@ -354,8 +357,18 @@
     "generated_at": "2026-05-12T13:43:37.533842+00:00"
   },
   "evolution": {
-    "from": [],
+    "from": [
+      {
+        "source": "光纤兽",
+        "target": "疾光千兽",
+        "condition": "达到40级并放入队伍收集星光",
+        "raw_condition": "达到40级并放入队伍收集星光",
+        "forward_text": "达到40级并放入队伍收集星光可进化为疾光千兽",
+        "backward_text": "可由光纤兽达到40级并放入队伍收集星光进化得",
+        "text": "可由光纤兽达到40级并放入队伍收集星光进化得"
+      }
+    ],
     "to": [],
-    "evolution_condition": ""
+    "evolution_condition": "可由光纤兽达到40级并放入队伍收集星光进化得"
   }
 }

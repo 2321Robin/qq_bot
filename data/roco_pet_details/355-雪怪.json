@@ -4,8 +4,12 @@
   "attributes": [
     "冰"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "可由小雪人达到40级并释放15次滚雪球技能进化得",
   "evolution_edges": [],
+  "evolution_chain": [
+    "小雪人",
+    "雪怪"
+  ],
   "total_race_value": 636,
   "profile": {
     "编号": "355",
@@ -671,8 +675,18 @@
     "generated_at": "2026-06-04T05:18:32.465461+00:00"
   },
   "evolution": {
-    "from": [],
+    "from": [
+      {
+        "source": "小雪人",
+        "target": "雪怪",
+        "condition": "达到40级并释放15次滚雪球技能",
+        "raw_condition": "达到40级并释放15次滚雪球技能",
+        "forward_text": "达到40级并释放15次滚雪球技能可进化为雪怪",
+        "backward_text": "可由小雪人达到40级并释放15次滚雪球技能进化得",
+        "text": "可由小雪人达到40级并释放15次滚雪球技能进化得"
+      }
+    ],
     "to": [],
-    "evolution_condition": ""
+    "evolution_condition": "可由小雪人达到40级并释放15次滚雪球技能进化得"
   }
 }

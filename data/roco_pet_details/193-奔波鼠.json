@@ -4,7 +4,7 @@
   "attributes": [
     "地"
   ],
-  "evolution_condition": "挖矿3次可进化为流浪鼠",
+  "evolution_condition": "达到32级并采矿3次可进化为流浪鼠",
   "total_race_value": 451,
   "profile": {
     "编号": "193",
@@ -360,13 +360,13 @@
       {
         "source": "奔波鼠",
         "target": "流浪鼠",
-        "condition": "挖矿3次",
-        "raw_condition": "挖矿3次",
-        "forward_text": "挖矿3次可进化为流浪鼠",
-        "backward_text": "可由奔波鼠挖矿3次进化得",
-        "text": "挖矿3次可进化为流浪鼠"
+        "condition": "达到32级并采矿3次",
+        "raw_condition": "达到32级并采矿3次",
+        "forward_text": "达到32级并采矿3次可进化为流浪鼠",
+        "backward_text": "可由奔波鼠达到32级并采矿3次进化得",
+        "text": "达到32级并采矿3次可进化为流浪鼠"
       }
     ],
-    "evolution_condition": "挖矿3次可进化为流浪鼠"
+    "evolution_condition": "达到32级并采矿3次可进化为流浪鼠"
   }
 }

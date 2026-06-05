@@ -4,8 +4,22 @@
   "attributes": [
     "恶"
   ],
-  "evolution_condition": "",
-  "evolution_edges": [],
+  "evolution_condition": "可由小丑豆豆达到36级并释放出来约一分钟后收回进化得；达到36级并释放出来约一分钟后收回可进化为小丑公爵",
+  "evolution_edges": [
+    {
+      "source": "小丑兔",
+      "target": "小丑公爵",
+      "condition": "达到36级并释放出来约一分钟后收回",
+      "raw_condition": "达到36级并释放出来约一分钟后收回",
+      "forward_text": "达到36级并释放出来约一分钟后收回可进化为小丑公爵",
+      "backward_text": "可由小丑兔达到36级并释放出来约一分钟后收回进化得"
+    }
+  ],
+  "evolution_chain": [
+    "小丑豆豆",
+    "小丑兔",
+    "小丑公爵"
+  ],
   "total_race_value": 583,
   "profile": {
     "初阶": "小丑豆豆",
@@ -442,8 +456,28 @@
     "generated_at": "2026-06-04T05:20:20.952769+00:00"
   },
   "evolution": {
-    "from": [],
-    "to": [],
-    "evolution_condition": ""
+    "from": [
+      {
+        "source": "小丑豆豆",
+        "target": "小丑兔",
+        "condition": "达到36级并释放出来约一分钟后收回",
+        "raw_condition": "达到36级并释放出来约一分钟后收回",
+        "forward_text": "达到36级并释放出来约一分钟后收回可进化为小丑兔",
+        "backward_text": "可由小丑豆豆达到36级并释放出来约一分钟后收回进化得",
+        "text": "可由小丑豆豆达到36级并释放出来约一分钟后收回进化得"
+      }
+    ],
+    "to": [
+      {
+        "source": "小丑兔",
+        "target": "小丑公爵",
+        "condition": "达到36级并释放出来约一分钟后收回",
+        "raw_condition": "达到36级并释放出来约一分钟后收回",
+        "forward_text": "达到36级并释放出来约一分钟后收回可进化为小丑公爵",
+        "backward_text": "可由小丑兔达到36级并释放出来约一分钟后收回进化得",
+        "text": "达到36级并释放出来约一分钟后收回可进化为小丑公爵"
+      }
+    ],
+    "evolution_condition": "可由小丑豆豆达到36级并释放出来约一分钟后收回进化得；达到36级并释放出来约一分钟后收回可进化为小丑公爵"
   }
 }

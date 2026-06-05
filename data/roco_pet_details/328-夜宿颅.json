@@ -4,7 +4,7 @@
   "attributes": [
     "幽"
   ],
-  "evolution_condition": "可由空空颅使用3次勾魂进化得；使用三次【勾魂】可进化为夜枭",
+  "evolution_condition": "可由空空颅达到30级并使用3次勾魂进化得",
   "total_race_value": 373,
   "profile": {
     "编号": "328",
@@ -366,24 +366,14 @@
       {
         "source": "空空颅",
         "target": "夜宿颅",
-        "condition": "使用3次勾魂",
-        "raw_condition": "使用3次勾魂",
-        "forward_text": "使用3次勾魂可进化为夜宿颅",
-        "backward_text": "可由空空颅使用3次勾魂进化得",
-        "text": "可由空空颅使用3次勾魂进化得"
+        "condition": "达到30级并使用3次勾魂",
+        "raw_condition": "达到30级并使用3次勾魂",
+        "forward_text": "达到30级并使用3次勾魂可进化为夜宿颅",
+        "backward_text": "可由空空颅达到30级并使用3次勾魂进化得",
+        "text": "可由空空颅达到30级并使用3次勾魂进化得"
       }
     ],
-    "to": [
-      {
-        "source": "夜宿颅",
-        "target": "夜枭",
-        "condition": "使用三次【勾魂】",
-        "raw_condition": "使用三次【勾魂】",
-        "forward_text": "使用三次【勾魂】可进化为夜枭",
-        "backward_text": "可由夜宿颅使用三次【勾魂】进化得",
-        "text": "使用三次【勾魂】可进化为夜枭"
-      }
-    ],
-    "evolution_condition": "可由空空颅使用3次勾魂进化得；使用三次【勾魂】可进化为夜枭"
+    "to": [],
+    "evolution_condition": "可由空空颅达到30级并使用3次勾魂进化得"
   }
 }

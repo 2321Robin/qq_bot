@@ -5,7 +5,7 @@
     "火",
     "草"
   ],
-  "evolution_condition": "可由柴渣虫升至40级进化得",
+  "evolution_condition": "可由柴渣虫达到40级并用引燃技能击败3个草系精灵进化得",
   "total_race_value": 579,
   "profile": {
     "编号": "326",
@@ -367,14 +367,14 @@
       {
         "source": "柴渣虫",
         "target": "燃薪虫",
-        "condition": "升至40级",
-        "raw_condition": "等级40级",
-        "forward_text": "升至40级可进化为燃薪虫",
-        "backward_text": "可由柴渣虫升至40级进化得",
-        "text": "可由柴渣虫升至40级进化得"
+        "condition": "达到40级并用引燃技能击败3个草系精灵",
+        "raw_condition": "达到40级并用引燃技能击败3个草系精灵",
+        "forward_text": "达到40级并用引燃技能击败3个草系精灵可进化为燃薪虫",
+        "backward_text": "可由柴渣虫达到40级并用引燃技能击败3个草系精灵进化得",
+        "text": "可由柴渣虫达到40级并用引燃技能击败3个草系精灵进化得"
       }
     ],
     "to": [],
-    "evolution_condition": "可由柴渣虫升至40级进化得"
+    "evolution_condition": "可由柴渣虫达到40级并用引燃技能击败3个草系精灵进化得"
   }
 }

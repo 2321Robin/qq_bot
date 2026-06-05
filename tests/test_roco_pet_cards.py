@@ -31,7 +31,7 @@ from qq_bot.services.roco_pet_cards import (
     pet_card_path,
     render_pet_card_png,
 )
-from qq_bot.services.roco_pets import PetRecord
+from qq_bot.services.roco_pets import EvolutionRelation, PetRecord
 
 
 def _tiny_png_bytes() -> bytes:
@@ -475,6 +475,29 @@ def test_evolution_steps_keeps_intimacy_condition_for_arrows() -> None:
     )
 
     assert _evolution_steps(record) == [("雪绒鸟", "冬羽雀", "亲密度"), ("冬羽雀", "岚鸟", "30级")]
+
+
+def test_evolution_steps_prefers_structured_edge_condition_for_arrows() -> None:
+    record = PetRecord(
+        name="小雪人",
+        aliases=[],
+        number="354",
+        attributes=["冰"],
+        stage="Ⅰ阶",
+        evolution_chain=["小雪人", "雪怪"],
+        evolution_condition="达到40级并释放15次滚雪球技能可进化为雪怪",
+        source_url="https://wiki.biligame.com/rocom/小雪人",
+        evolution_to=[
+            EvolutionRelation(
+                source="小雪人",
+                target="雪怪",
+                condition="达到40级并释放15次滚雪球技能",
+                text="达到40级并释放15次滚雪球技能可进化为雪怪",
+            )
+        ],
+    )
+
+    assert _evolution_steps(record) == [("小雪人", "雪怪", "达到40级并释放15次滚雪球技能")]
 
 
 def test_evolution_tokens_put_conditions_on_matching_arrows() -> None:

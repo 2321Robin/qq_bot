@@ -4,7 +4,7 @@
   "attributes": [
     "水"
   ],
-  "evolution_condition": "草血脉可进化为抹茶布丁；冰血脉可进化为椰浆布丁；火血脉可进化为熔岩布丁",
+  "evolution_condition": "达到30级且草系血脉可进化为抹茶布丁；达到30级且冰系血脉可进化为椰浆布丁；达到30级且火系血脉可进化为熔岩布丁",
   "total_race_value": 437,
   "profile": {
     "编号": "313",
@@ -321,31 +321,31 @@
       {
         "source": "果冻",
         "target": "抹茶布丁",
-        "condition": "草血脉",
-        "raw_condition": "草血脉",
-        "forward_text": "草血脉可进化为抹茶布丁",
-        "backward_text": "可由果冻草血脉进化得",
-        "text": "草血脉可进化为抹茶布丁"
+        "condition": "达到30级且草系血脉",
+        "raw_condition": "达到30级且草系血脉",
+        "forward_text": "达到30级且草系血脉可进化为抹茶布丁",
+        "backward_text": "可由果冻达到30级且草系血脉进化得",
+        "text": "达到30级且草系血脉可进化为抹茶布丁"
       },
       {
         "source": "果冻",
         "target": "椰浆布丁",
-        "condition": "冰血脉",
-        "raw_condition": "冰血脉",
-        "forward_text": "冰血脉可进化为椰浆布丁",
-        "backward_text": "可由果冻冰血脉进化得",
-        "text": "冰血脉可进化为椰浆布丁"
+        "condition": "达到30级且冰系血脉",
+        "raw_condition": "达到30级且冰系血脉",
+        "forward_text": "达到30级且冰系血脉可进化为椰浆布丁",
+        "backward_text": "可由果冻达到30级且冰系血脉进化得",
+        "text": "达到30级且冰系血脉可进化为椰浆布丁"
       },
       {
         "source": "果冻",
         "target": "熔岩布丁",
-        "condition": "火血脉",
-        "raw_condition": "火血脉",
-        "forward_text": "火血脉可进化为熔岩布丁",
-        "backward_text": "可由果冻火血脉进化得",
-        "text": "火血脉可进化为熔岩布丁"
+        "condition": "达到30级且火系血脉",
+        "raw_condition": "达到30级且火系血脉",
+        "forward_text": "达到30级且火系血脉可进化为熔岩布丁",
+        "backward_text": "可由果冻达到30级且火系血脉进化得",
+        "text": "达到30级且火系血脉可进化为熔岩布丁"
       }
     ],
-    "evolution_condition": "草血脉可进化为抹茶布丁；冰血脉可进化为椰浆布丁；火血脉可进化为熔岩布丁"
+    "evolution_condition": "达到30级且草系血脉可进化为抹茶布丁；达到30级且冰系血脉可进化为椰浆布丁；达到30级且火系血脉可进化为熔岩布丁"
   }
 }

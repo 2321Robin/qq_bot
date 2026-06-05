@@ -5,7 +5,7 @@
     "水",
     "火"
   ],
-  "evolution_condition": "可由果冻火血脉进化得",
+  "evolution_condition": "可由果冻达到30级且火系血脉进化得",
   "total_race_value": 564,
   "profile": {
     "编号": "316",
@@ -388,14 +388,14 @@
       {
         "source": "果冻",
         "target": "熔岩布丁",
-        "condition": "火血脉",
-        "raw_condition": "火血脉",
-        "forward_text": "火血脉可进化为熔岩布丁",
-        "backward_text": "可由果冻火血脉进化得",
-        "text": "可由果冻火血脉进化得"
+        "condition": "达到30级且火系血脉",
+        "raw_condition": "达到30级且火系血脉",
+        "forward_text": "达到30级且火系血脉可进化为熔岩布丁",
+        "backward_text": "可由果冻达到30级且火系血脉进化得",
+        "text": "可由果冻达到30级且火系血脉进化得"
       }
     ],
     "to": [],
-    "evolution_condition": "可由果冻火血脉进化得"
+    "evolution_condition": "可由果冻达到30级且火系血脉进化得"
   }
 }

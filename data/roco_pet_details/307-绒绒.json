@@ -5,7 +5,7 @@
     "光",
     "虫"
   ],
-  "evolution_condition": "获得1200星光值可进化为小绒茧",
+  "evolution_condition": "达到40级并放入队伍收集星光可进化为小绒茧",
   "total_race_value": 342,
   "profile": {
     "编号": "307",
@@ -406,13 +406,13 @@
       {
         "source": "绒绒",
         "target": "小绒茧",
-        "condition": "获得1200星光值",
-        "raw_condition": "获得1200星光值",
-        "forward_text": "获得1200星光值可进化为小绒茧",
-        "backward_text": "可由绒绒获得1200星光值进化得",
-        "text": "获得1200星光值可进化为小绒茧"
+        "condition": "达到40级并放入队伍收集星光",
+        "raw_condition": "达到40级并放入队伍收集星光",
+        "forward_text": "达到40级并放入队伍收集星光可进化为小绒茧",
+        "backward_text": "可由绒绒达到40级并放入队伍收集星光进化得",
+        "text": "达到40级并放入队伍收集星光可进化为小绒茧"
       }
     ],
-    "evolution_condition": "获得1200星光值可进化为小绒茧"
+    "evolution_condition": "达到40级并放入队伍收集星光可进化为小绒茧"
   }
 }

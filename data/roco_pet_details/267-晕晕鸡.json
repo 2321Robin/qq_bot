@@ -4,7 +4,7 @@
   "attributes": [
     "火"
   ],
-  "evolution_condition": "可由可立鸡升至16级进化得",
+  "evolution_condition": "可由可立鸡升至16级进化得；达到36级并击败3个恶系精灵可进化为武者鸡",
   "total_race_value": 530,
   "profile": {
     "编号": "267",
@@ -329,7 +329,17 @@
         "text": "可由可立鸡升至16级进化得"
       }
     ],
-    "to": [],
-    "evolution_condition": "可由可立鸡升至16级进化得"
+    "to": [
+      {
+        "source": "晕晕鸡",
+        "target": "武者鸡",
+        "condition": "达到36级并击败3个恶系精灵",
+        "raw_condition": "达到36级并击败3个恶系精灵",
+        "forward_text": "达到36级并击败3个恶系精灵可进化为武者鸡",
+        "backward_text": "可由晕晕鸡达到36级并击败3个恶系精灵进化得",
+        "text": "达到36级并击败3个恶系精灵可进化为武者鸡"
+      }
+    ],
+    "evolution_condition": "可由可立鸡升至16级进化得；达到36级并击败3个恶系精灵可进化为武者鸡"
   }
 }

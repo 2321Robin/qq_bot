@@ -4,7 +4,7 @@
   "attributes": [
     "幻"
   ],
-  "evolution_condition": "升至32级可进化为粉耳星兔",
+  "evolution_condition": "升至32级可进化为粉耳星兔；达到32级且幽系血脉可进化为落陨星兔",
   "total_race_value": 514,
   "profile": {
     "编号": "335",
@@ -305,8 +305,17 @@
         "forward_text": "升至32级可进化为粉耳星兔",
         "backward_text": "可由粉星仔升至32级进化得",
         "text": "升至32级可进化为粉耳星兔"
+      },
+      {
+        "source": "粉星仔",
+        "target": "落陨星兔",
+        "condition": "达到32级且幽系血脉",
+        "raw_condition": "达到32级且幽系血脉",
+        "forward_text": "达到32级且幽系血脉可进化为落陨星兔",
+        "backward_text": "可由粉星仔达到32级且幽系血脉进化得",
+        "text": "达到32级且幽系血脉可进化为落陨星兔"
       }
     ],
-    "evolution_condition": "升至32级可进化为粉耳星兔"
+    "evolution_condition": "升至32级可进化为粉耳星兔；达到32级且幽系血脉可进化为落陨星兔"
   }
 }

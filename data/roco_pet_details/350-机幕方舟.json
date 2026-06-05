@@ -4,8 +4,13 @@
   "attributes": [
     "机械"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "可由辉光幕机提升为2星进化得",
   "evolution_edges": [],
+  "evolution_chain": [
+    "钨丝贝贝",
+    "辉光幕机",
+    "机幕方舟"
+  ],
   "total_race_value": 597,
   "profile": {
     "编号": "350",
@@ -695,8 +700,18 @@
     "generated_at": "2026-06-04T05:18:07.128347+00:00"
   },
   "evolution": {
-    "from": [],
+    "from": [
+      {
+        "source": "辉光幕机",
+        "target": "机幕方舟",
+        "condition": "提升为2星",
+        "raw_condition": "提升为2星",
+        "forward_text": "提升为2星可进化为机幕方舟",
+        "backward_text": "可由辉光幕机提升为2星进化得",
+        "text": "可由辉光幕机提升为2星进化得"
+      }
+    ],
     "to": [],
-    "evolution_condition": ""
+    "evolution_condition": "可由辉光幕机提升为2星进化得"
   }
 }

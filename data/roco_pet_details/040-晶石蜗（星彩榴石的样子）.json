@@ -5,7 +5,7 @@
     "光",
     "地"
   ],
-  "evolution_condition": "可由矿晶虫撞击三次黄石榴石进化得",
+  "evolution_condition": "可由矿晶虫达到40级并挖掘黄石榴石3次进化得",
   "total_race_value": 583,
   "profile": {
     "编号": "040",
@@ -403,14 +403,14 @@
       {
         "source": "矿晶虫",
         "target": "晶石蜗（星彩榴石的样子）",
-        "condition": "撞击三次黄石榴石",
-        "raw_condition": "撞击三次黄石榴石",
-        "forward_text": "撞击三次黄石榴石可进化为晶石蜗（星彩榴石的样子）",
-        "backward_text": "可由矿晶虫撞击三次黄石榴石进化得",
-        "text": "可由矿晶虫撞击三次黄石榴石进化得"
+        "condition": "达到40级并挖掘黄石榴石3次",
+        "raw_condition": "达到40级并挖掘黄石榴石3次",
+        "forward_text": "达到40级并挖掘黄石榴石3次可进化为晶石蜗（星彩榴石的样子）",
+        "backward_text": "可由矿晶虫达到40级并挖掘黄石榴石3次进化得",
+        "text": "可由矿晶虫达到40级并挖掘黄石榴石3次进化得"
       }
     ],
     "to": [],
-    "evolution_condition": "可由矿晶虫撞击三次黄石榴石进化得"
+    "evolution_condition": "可由矿晶虫达到40级并挖掘黄石榴石3次进化得"
   }
 }

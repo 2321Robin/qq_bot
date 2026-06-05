@@ -5,7 +5,7 @@
     "光",
     "虫"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "可由小绒茧达到40级并放入队伍收集星光进化得",
   "total_race_value": 569,
   "profile": {
     "编号": "309",
@@ -401,8 +401,18 @@
     "generated_at": "2026-05-12T13:18:27.514458+00:00"
   },
   "evolution": {
-    "from": [],
+    "from": [
+      {
+        "source": "小绒茧",
+        "target": "绒仙子",
+        "condition": "达到40级并放入队伍收集星光",
+        "raw_condition": "达到40级并放入队伍收集星光",
+        "forward_text": "达到40级并放入队伍收集星光可进化为绒仙子",
+        "backward_text": "可由小绒茧达到40级并放入队伍收集星光进化得",
+        "text": "可由小绒茧达到40级并放入队伍收集星光进化得"
+      }
+    ],
     "to": [],
-    "evolution_condition": ""
+    "evolution_condition": "可由小绒茧达到40级并放入队伍收集星光进化得"
   }
 }

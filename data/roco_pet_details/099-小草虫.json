@@ -5,7 +5,7 @@
     "虫",
     "草"
   ],
-  "evolution_condition": "升至20级可进化为草衣虫",
+  "evolution_condition": "升至20级可进化为草衣虫；达到36级且雌性可进化为花衣蝶",
   "total_race_value": 323,
   "profile": {
     "编号": "099",
@@ -403,8 +403,17 @@
         "forward_text": "升至20级可进化为草衣虫",
         "backward_text": "可由小草虫升至20级进化得",
         "text": "升至20级可进化为草衣虫"
+      },
+      {
+        "source": "小草虫",
+        "target": "花衣蝶",
+        "condition": "达到36级且雌性",
+        "raw_condition": "达到36级且雌性",
+        "forward_text": "达到36级且雌性可进化为花衣蝶",
+        "backward_text": "可由小草虫达到36级且雌性进化得",
+        "text": "达到36级且雌性可进化为花衣蝶"
       }
     ],
-    "evolution_condition": "升至20级可进化为草衣虫"
+    "evolution_condition": "升至20级可进化为草衣虫；达到36级且雌性可进化为花衣蝶"
   }
 }

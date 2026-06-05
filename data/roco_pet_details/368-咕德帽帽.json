@@ -4,8 +4,12 @@
   "attributes": [
     "幽"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "可由咕咕帽达到36级并释放出来约一分钟后收回进化得",
   "evolution_edges": [],
+  "evolution_chain": [
+    "咕咕帽",
+    "咕德帽帽"
+  ],
   "total_race_value": 642,
   "profile": {
     "编号": "368",
@@ -650,8 +654,18 @@
     "generated_at": "2026-06-04T05:20:46.940474+00:00"
   },
   "evolution": {
-    "from": [],
+    "from": [
+      {
+        "source": "咕咕帽",
+        "target": "咕德帽帽",
+        "condition": "达到36级并释放出来约一分钟后收回",
+        "raw_condition": "达到36级并释放出来约一分钟后收回",
+        "forward_text": "达到36级并释放出来约一分钟后收回可进化为咕德帽帽",
+        "backward_text": "可由咕咕帽达到36级并释放出来约一分钟后收回进化得",
+        "text": "可由咕咕帽达到36级并释放出来约一分钟后收回进化得"
+      }
+    ],
     "to": [],
-    "evolution_condition": ""
+    "evolution_condition": "可由咕咕帽达到36级并释放出来约一分钟后收回进化得"
   }
 }

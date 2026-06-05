@@ -4,7 +4,7 @@
   "attributes": [
     "草"
   ],
-  "evolution_condition": "可由伊贝儿升至28级进化得",
+  "evolution_condition": "可由伊贝儿达到28级且雨天进化得",
   "total_race_value": 566,
   "profile": {
     "编号": "072",
@@ -396,14 +396,14 @@
       {
         "source": "伊贝儿",
         "target": "伊贝粉粉",
-        "condition": "升至28级",
-        "raw_condition": "等级28级",
-        "forward_text": "升至28级可进化为伊贝粉粉",
-        "backward_text": "可由伊贝儿升至28级进化得",
-        "text": "可由伊贝儿升至28级进化得"
+        "condition": "达到28级且雨天",
+        "raw_condition": "达到28级且雨天",
+        "forward_text": "达到28级且雨天可进化为伊贝粉粉",
+        "backward_text": "可由伊贝儿达到28级且雨天进化得",
+        "text": "可由伊贝儿达到28级且雨天进化得"
       }
     ],
     "to": [],
-    "evolution_condition": "可由伊贝儿升至28级进化得"
+    "evolution_condition": "可由伊贝儿达到28级且雨天进化得"
   }
 }

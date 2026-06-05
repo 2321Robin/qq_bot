@@ -5,7 +5,7 @@
     "虫",
     "翼"
   ],
-  "evolution_condition": "",
+  "evolution_condition": "可由一窝蜂达到38级且雌性进化得",
   "total_race_value": 382,
   "profile": {
     "编号": "084",
@@ -408,8 +408,18 @@
     "generated_at": "2026-05-12T13:14:49.123475+00:00"
   },
   "evolution": {
-    "from": [],
+    "from": [
+      {
+        "source": "一窝蜂",
+        "target": "花魁蜂后",
+        "condition": "达到38级且雌性",
+        "raw_condition": "达到38级且雌性",
+        "forward_text": "达到38级且雌性可进化为花魁蜂后",
+        "backward_text": "可由一窝蜂达到38级且雌性进化得",
+        "text": "可由一窝蜂达到38级且雌性进化得"
+      }
+    ],
     "to": [],
-    "evolution_condition": ""
+    "evolution_condition": "可由一窝蜂达到38级且雌性进化得"
   }
 }

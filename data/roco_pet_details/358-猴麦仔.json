@@ -5,8 +5,21 @@
     "普通",
     "机械"
   ],
-  "evolution_condition": "",
-  "evolution_edges": [],
+  "evolution_condition": "升至40级可进化为音碟吼",
+  "evolution_edges": [
+    {
+      "source": "猴麦仔",
+      "target": "音碟吼",
+      "condition": "升至40级",
+      "raw_condition": "升至40级",
+      "forward_text": "升至40级可进化为音碟吼",
+      "backward_text": "可由猴麦仔升至40级进化得"
+    }
+  ],
+  "evolution_chain": [
+    "猴麦仔",
+    "音碟吼"
+  ],
   "total_race_value": 529,
   "profile": {
     "编号": "358",
@@ -651,7 +664,17 @@
   },
   "evolution": {
     "from": [],
-    "to": [],
-    "evolution_condition": ""
+    "to": [
+      {
+        "source": "猴麦仔",
+        "target": "音碟吼",
+        "condition": "升至40级",
+        "raw_condition": "升至40级",
+        "forward_text": "升至40级可进化为音碟吼",
+        "backward_text": "可由猴麦仔升至40级进化得",
+        "text": "升至40级可进化为音碟吼"
+      }
+    ],
+    "evolution_condition": "升至40级可进化为音碟吼"
   }
 }
