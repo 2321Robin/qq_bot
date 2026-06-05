@@ -184,6 +184,11 @@ def _format_evolution_context(record: PetRecord, records: Sequence[PetRecord]) -
         f"进化条件：{_value_or_unknown(record.evolution_condition)}",
     ]
 
+    full_routes = _full_evolution_routes(record, records)
+    if full_routes:
+        lines.append("完整进化路线：")
+        lines.extend(f"- {route}" for route in full_routes)
+
     if record.evolution_from:
         lines.append("来源进化：")
         lines.extend(f"- {relation.text}" for relation in record.evolution_from if relation.text)
@@ -205,9 +210,140 @@ def _format_evolution_context(record: PetRecord, records: Sequence[PetRecord]) -
 
     if record.source_url:
         lines.append(f"来源：{record.source_url}")
-    lines.append("回答时只能依据以上本地图鉴字段；字段为空或未写明就说明本地数据没有记录。")
+    lines.append("回答时优先说明完整进化路线；只能依据以上本地图鉴字段，字段为空或未写明就说明本地数据没有记录。")
     return "\n".join(lines)
 
+
+
+
+def _full_evolution_routes(record: PetRecord, records: Sequence[PetRecord]) -> list[str]:
+    roots = _evolution_roots(record, records)
+    routes: list[str] = []
+    seen_edges: set[tuple[str, str]] = set()
+    for root in roots:
+        _collect_evolution_routes(root, records, routes, seen_edges, set())
+    return routes
+
+
+def _evolution_roots(record: PetRecord, records: Sequence[PetRecord]) -> list[PetRecord]:
+    return _dedupe_records(_evolution_roots_from(record, records, set()))
+
+
+def _evolution_roots_from(
+    record: PetRecord,
+    records: Sequence[PetRecord],
+    visiting: set[str],
+) -> list[PetRecord]:
+    if record.name in visiting:
+        return [record]
+
+    predecessors = _evolution_predecessors(record, records)
+    if not predecessors:
+        return [record]
+
+    next_visiting = {*visiting, record.name}
+    roots: list[PetRecord] = []
+    for predecessor in predecessors:
+        roots.extend(_evolution_roots_from(predecessor, records, next_visiting))
+    return roots
+
+
+def _collect_evolution_routes(
+    record: PetRecord,
+    records: Sequence[PetRecord],
+    routes: list[str],
+    seen_edges: set[tuple[str, str]],
+    visiting: set[str],
+) -> None:
+    if record.name in visiting:
+        return
+
+    next_visiting = {*visiting, record.name}
+    for successor in _direct_evolution_successors(record, records):
+        edge_key = (record.name, successor.name)
+        if edge_key not in seen_edges:
+            seen_edges.add(edge_key)
+            routes.append(_format_evolution_route(record, successor, records))
+        _collect_evolution_routes(successor, records, routes, seen_edges, next_visiting)
+
+
+def _direct_evolution_successors(record: PetRecord, records: Sequence[PetRecord]) -> list[PetRecord]:
+    successors: list[PetRecord] = []
+    seen: set[str] = set()
+
+    def add_successor(name: str) -> None:
+        successor = _find_pet_by_name(records, name)
+        if successor is not None and successor.name not in seen and successor.name != record.name:
+            successors.append(successor)
+            seen.add(successor.name)
+
+    for relation in record.evolution_to:
+        add_successor(relation.target)
+
+    if record.name in record.evolution_chain:
+        index = record.evolution_chain.index(record.name)
+        if index + 1 < len(record.evolution_chain):
+            add_successor(record.evolution_chain[index + 1])
+
+    for candidate in records:
+        if candidate.name == record.name or candidate.name in seen:
+            continue
+        predecessor = _condition_predecessor(candidate.evolution_condition, candidate.name, records)
+        if predecessor == record.name:
+            add_successor(candidate.name)
+            continue
+        if _is_direct_chain_transition(record.name, candidate.name, candidate.evolution_chain):
+            add_successor(candidate.name)
+
+    return successors
+
+
+def _format_evolution_route(
+    source: PetRecord,
+    target: PetRecord,
+    records: Sequence[PetRecord],
+) -> str:
+    condition = _evolution_transition_condition(source, target, records)
+    if condition:
+        return f"{source.name} -> {target.name}：{condition}"
+    return f"{source.name} -> {target.name}"
+
+
+def _evolution_transition_condition(
+    source: PetRecord,
+    target: PetRecord,
+    records: Sequence[PetRecord],
+) -> str:
+    for relation in source.evolution_to:
+        if relation.target == target.name:
+            return relation.condition or relation.text
+    for relation in target.evolution_from:
+        if relation.source == source.name:
+            return relation.condition or relation.text
+    if _condition_predecessor(target.evolution_condition, target.name, records) == source.name:
+        return target.evolution_condition
+    if _is_direct_chain_transition(source.name, target.name, target.evolution_chain):
+        return target.evolution_condition
+    if target.name in source.evolution_condition:
+        return source.evolution_condition
+    return ""
+
+
+def _is_direct_chain_transition(source_name: str, target_name: str, chain: Sequence[str]) -> bool:
+    if source_name not in chain or target_name not in chain:
+        return False
+    return chain.index(target_name) == chain.index(source_name) + 1
+
+
+def _dedupe_records(records: Sequence[PetRecord]) -> list[PetRecord]:
+    deduped: list[PetRecord] = []
+    seen: set[str] = set()
+    for record in records:
+        if record.name in seen:
+            continue
+        deduped.append(record)
+        seen.add(record.name)
+    return deduped
 
 def _format_pet_context(record: PetRecord) -> str:
     lines = [
