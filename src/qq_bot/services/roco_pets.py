@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
@@ -90,14 +91,18 @@ def find_pet(records: list[PetRecord] | tuple[PetRecord, ...], query: str) -> Pe
     if not cleaned_query:
         return None
 
-    for record in records:
-        if cleaned_query == record.name or cleaned_query in record.aliases:
-            return record
+    for candidate_number in _query_number_candidates(cleaned_query):
+        for record in records:
+            if _same_number(record.number, candidate_number):
+                return record
 
-    for record in records:
-        searchable_names = [record.name, *record.aliases, *record.evolution_chain]
-        if any(cleaned_query in name or name in cleaned_query for name in searchable_names):
-            return record
+    direct_match = _best_direct_name_match(records, cleaned_query)
+    if direct_match is not None:
+        return direct_match
+
+    chain_match = _best_chain_match(records, cleaned_query)
+    if chain_match is not None:
+        return chain_match
     return None
 
 
@@ -347,6 +352,94 @@ def _stats_value(item: dict[str, Any]) -> dict[str, int] | None:
         stats[key] = stat_value
     return stats
 
+
+def _query_number_candidates(query: str) -> list[str]:
+    explicit_matches = re.findall(r"(?:序号|编号|图鉴编号|图鉴|No\.?|NO\.?|no\.?|#)\s*0*(\d{1,3})(?!\d)", query)
+    if explicit_matches:
+        return [_normalize_number(match) for match in explicit_matches]
+
+    compact = re.sub(r"[\s:：#？?。,.，、!！]", "", query)
+    for word in (
+        "洛克王国",
+        "洛克",
+        "王国",
+        "世界",
+        "精灵",
+        "宠物",
+        "图鉴编号",
+        "图鉴",
+        "序号",
+        "编号",
+        "No.",
+        "NO.",
+        "no.",
+        "No",
+        "NO",
+        "no",
+        "怎么",
+        "如何",
+        "进化条件",
+        "进化",
+        "条件",
+        "是什么",
+        "查询",
+        "查",
+        "一下",
+        "的",
+    ):
+        compact = compact.replace(word, "")
+    if compact.isdigit() and 1 <= len(compact) <= 3:
+        return [_normalize_number(compact)]
+    return []
+
+
+def _normalize_number(number: str) -> str:
+    return str(int(number)).zfill(3)
+
+
+def _same_number(record_number: str, query_number: str) -> bool:
+    if not record_number or not query_number:
+        return False
+    try:
+        return int(record_number) == int(query_number)
+    except ValueError:
+        return record_number == query_number
+
+
+def _best_direct_name_match(records: list[PetRecord] | tuple[PetRecord, ...], query: str) -> PetRecord | None:
+    return _best_named_match(records, query, include_chain=False)
+
+
+def _best_chain_match(records: list[PetRecord] | tuple[PetRecord, ...], query: str) -> PetRecord | None:
+    return _best_named_match(records, query, include_chain=True)
+
+
+def _best_named_match(
+    records: list[PetRecord] | tuple[PetRecord, ...],
+    query: str,
+    *,
+    include_chain: bool,
+) -> PetRecord | None:
+    best: tuple[int, int, int, PetRecord] | None = None
+    for index, record in enumerate(records):
+        names = [record.name, *record.aliases]
+        if include_chain:
+            names.extend(record.evolution_chain)
+        for name in names:
+            if not name:
+                continue
+            if query == name:
+                score = 3
+            elif name in query:
+                score = 2
+            elif query in name:
+                score = 1
+            else:
+                continue
+            candidate = (score, len(name), -index, record)
+            if best is None or candidate[:3] > best[:3]:
+                best = candidate
+    return best[3] if best is not None else None
 
 def _value_or_unknown(value: str) -> str:
     return value or "未知"
