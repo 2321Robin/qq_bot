@@ -7,6 +7,8 @@ import httpx
 
 from qq_bot.config import BotSettings, get_settings
 
+_WEEKDAY_NAMES = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
+
 
 class AIReplyError(RuntimeError):
     """Raised when the AI provider cannot produce a usable reply."""
@@ -33,6 +35,7 @@ def build_chat_payload(
     system_prompt = (
         "你是一个自然的 QQ 群助手，像 QQ 群友聊天。"
         f"当前本地时间：{current_time or _format_current_local_time()}。"
+        "回答当前日期、时间、星期时必须以该本地时间为准，不要自行推算或改写。"
         "先直接回答问题，不要总用“好的”“当然”“我来整理”开头。"
         "语气自然，不要像新闻稿或客服；不确定就说不确定。"
         "不要编造事实，不要编造链接，不要编造时间，不要编造价格。"
@@ -183,4 +186,5 @@ async def _request_ai_reply_once(
 
 
 def _format_current_local_time() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M")
+    local_now = datetime.now()
+    return f"{local_now:%Y-%m-%d %H:%M}，{_WEEKDAY_NAMES[local_now.weekday()]}"
