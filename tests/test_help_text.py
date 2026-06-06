@@ -14,10 +14,8 @@ def test_help_text_lists_supported_commands() -> None:
     assert "/洛克 迪莫" in text
     assert "/技能 闪光" in text
     assert "@机器人 迪莫" in text
-    assert "捕捉计数" in text
-    assert "/计数 迪莫" in text
-    assert "/计数 异色 迪莫" in text
-    assert "按当前群、当前用户、当前赛季分别统计" in text
+    assert "/计数" not in text
+    assert "捕捉计数" not in text
     assert "/ping" not in text
     assert "/状态" not in text
     assert "AI 对话" not in text

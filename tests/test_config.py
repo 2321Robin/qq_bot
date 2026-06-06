@@ -1,9 +1,7 @@
-from pathlib import Path
-
 import pytest
 from pydantic import ValidationError
 
-from qq_bot.config import BotSettings, get_settings, parse_id_list, parse_schedule_time_list, resolve_project_path
+from qq_bot.config import BotSettings, get_settings, parse_id_list, parse_schedule_time_list
 
 
 def test_parse_id_list_accepts_comma_separated_values() -> None:
@@ -197,27 +195,6 @@ def test_chat_memory_settings_are_exposed() -> None:
     assert settings.chat_memory_retention_days == 3
     assert settings.chat_memory_default_turns == 10
     assert settings.chat_memory_max_results == 20
-
-
-def test_roco_counter_settings_have_defaults() -> None:
-    settings = BotSettings()
-
-    assert settings.roco_counter_path == "data/roco_counter.sqlite3"
-    assert settings.roco_counter_season == "S2"
-
-
-def test_roco_counter_path_resolves_from_project_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.chdir(tmp_path)
-    settings = BotSettings()
-
-    assert settings.resolved_roco_counter_path == resolve_project_path("data/roco_counter.sqlite3")
-    assert settings.resolved_roco_counter_path != tmp_path / "data" / "roco_counter.sqlite3"
-
-
-def test_roco_counter_season_is_stripped() -> None:
-    settings = BotSettings(roco_counter_season=" S3 ")
-
-    assert settings.roco_counter_season == "S3"
 
 
 def test_chat_memory_settings_validate_positive_limits() -> None:

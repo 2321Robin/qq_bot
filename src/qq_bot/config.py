@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from pathlib import Path
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -25,16 +24,6 @@ def parse_id_list(value: str | None) -> list[int]:
         except ValueError as exc:
             raise ValueError("ID lists must be comma-separated integers") from exc
     return ids
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
-
-def resolve_project_path(path: str) -> Path:
-    configured_path = Path(path).expanduser()
-    if configured_path.is_absolute():
-        return configured_path
-    return PROJECT_ROOT / configured_path
 
 
 def parse_schedule_time_list(value: str | None) -> list[tuple[int, int]]:
@@ -87,8 +76,6 @@ class BotSettings(BaseSettings):
     chat_memory_retention_days: int = 3
     chat_memory_default_turns: int = 10
     chat_memory_max_results: int = 20
-    roco_counter_path: str = "data/roco_counter.sqlite3"
-    roco_counter_season: str = "S2"
 
     search_enabled: bool = False
     tavily_api_key: str = Field(default="", repr=False)
@@ -162,14 +149,6 @@ class BotSettings(BaseSettings):
             raise ValueError("chat_memory_max_results must be greater than 0")
         return value
 
-    @field_validator("roco_counter_season")
-    @classmethod
-    def validate_roco_counter_season(cls, value: str) -> str:
-        season = value.strip()
-        if not season:
-            raise ValueError("roco_counter_season must not be empty")
-        return season
-
     @property
     def allowed_group_id_list(self) -> list[int]:
         return parse_id_list(self.allowed_group_ids)
@@ -216,10 +195,6 @@ class BotSettings(BaseSettings):
 
     def scheduled_enabled(self) -> bool:
         return bool(self.scheduled_group_id_list) and bool(self.scheduled_message.strip())
-
-    @property
-    def resolved_roco_counter_path(self) -> Path:
-        return resolve_project_path(self.roco_counter_path)
 
 
 @lru_cache(maxsize=1)

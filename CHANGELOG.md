@@ -22,6 +22,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Included the computed weekday in AI current-time grounding to avoid mismatched date and weekday replies.
 - Refreshed local 洛克王国精灵 details through 图鉴编号 375.
 
+### Removed
+
+- Removed obsolete `/计数` capture counting command and local counter configuration.
+
 ## [0.1.0] - 2026-06-04
 
 ### Added
