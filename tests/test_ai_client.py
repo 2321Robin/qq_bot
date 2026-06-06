@@ -1,7 +1,9 @@
 import httpx
+from datetime import datetime
 import pytest
 
 from qq_bot.config import BotSettings
+from qq_bot.services import ai_client
 from qq_bot.services.ai_client import AIReplyError, build_chat_payload, request_ai_reply
 
 
@@ -127,6 +129,31 @@ def test_build_chat_payload_injects_current_local_time() -> None:
     system_prompt = payload["messages"][0]["content"]
     assert "当前本地时间：2026-05-09 19:30" in system_prompt
 
+
+
+def test_format_current_local_time_includes_matching_weekday(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FixedDatetime:
+        @classmethod
+        def now(cls) -> datetime:
+            return datetime(2026, 6, 6, 21, 30)
+
+    monkeypatch.setattr(ai_client, "datetime", FixedDatetime)
+
+    assert ai_client._format_current_local_time() == "2026-06-06 21:30，星期六"
+
+
+def test_build_chat_payload_tells_model_not_to_recalculate_current_time() -> None:
+    settings = BotSettings(ai_model="test-model")
+
+    payload = build_chat_payload(
+        "今天星期几",
+        settings,
+        current_time="2026-06-06 21:30，星期六",
+    )
+
+    system_prompt = payload["messages"][0]["content"]
+    assert "当前本地时间：2026-06-06 21:30，星期六" in system_prompt
+    assert "回答当前日期、时间、星期时必须以该本地时间为准" in system_prompt
 
 def test_build_chat_payload_uses_reliability_rules_with_search_context() -> None:
     settings = BotSettings(ai_model="test-model")
