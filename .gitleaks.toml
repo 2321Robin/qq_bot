@@ -28,4 +28,7 @@ description = "Known safe values used in example configs and test fixtures"
 # startup.example.ps1 uses empty strings and port 8081 — safe by design.
 regexes = [
     '''NapCatDir\s*=\s*""''',
+    # Documented placeholder token in the one-click startup design docs —
+    # never a real WebUI token.
+    '''webui\?token=['"]?TOKEN_PLACEHOLDER''',
 ]

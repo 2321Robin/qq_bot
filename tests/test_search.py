@@ -1,6 +1,10 @@
+import httpx
 import pytest
 
 from qq_bot.config import BotSettings
+from qq_bot.runtime import BREAKER_TAVILY
+from qq_bot.services import search as search_module
+from qq_bot.services.reliability import TRANSIENT, CircuitBreaker
 from qq_bot.services.search import (
     SearchError,
     SearchResult,
@@ -11,11 +15,24 @@ from qq_bot.services.search import (
 
 
 class FakeResponse:
-    def __init__(self, payload: dict):
+    def __init__(
+        self,
+        payload: dict,
+        status_code: int = 200,
+        headers: dict[str, str] | None = None,
+    ):
         self.payload = payload
+        self.status_code = status_code
+        self.headers = headers or {}
 
     def raise_for_status(self) -> None:
-        return None
+        if 400 <= self.status_code < 600:
+            request = httpx.Request("POST", "https://api.tavily.com/search")
+            raise httpx.HTTPStatusError(
+                f"HTTP {self.status_code}",
+                request=request,
+                response=httpx.Response(self.status_code, request=request, headers=self.headers),
+            )
 
     def json(self) -> dict:
         return self.payload
@@ -31,9 +48,37 @@ class FakeClient:
         self.response = response
         self.calls: list[dict] = []
 
-    async def post(self, url: str, *, headers: dict[str, str], json: dict) -> FakeResponse:
-        self.calls.append({"url": url, "headers": headers, "json": json})
+    async def post(
+        self, url: str, *, headers: dict[str, str], json: dict, timeout: float | None = None
+    ) -> FakeResponse:
+        self.calls.append({"url": url, "headers": headers, "json": json, "timeout": timeout})
         return self.response
+
+
+class SequenceClient:
+    def __init__(self, responses: list[FakeResponse]):
+        self.responses = responses
+        self.calls: list[dict] = []
+
+    async def post(
+        self, url: str, *, headers: dict[str, str], json: dict, timeout: float | None = None
+    ) -> FakeResponse:
+        self.calls.append({"url": url, "headers": headers, "json": json, "timeout": timeout})
+        return self.responses.pop(0)
+
+
+def _fast_retry_settings(**overrides) -> BotSettings:
+    defaults = {
+        "search_enabled": True,
+        "tavily_api_key": "tvly-secret",
+        "search_max_results": 2,
+        "search_max_attempts": 3,
+        "search_retry_base_delay_seconds": 0.001,
+        "search_retry_max_delay_seconds": 0.002,
+        "retry_jitter_ratio": 0.0,
+    }
+    defaults.update(overrides)
+    return BotSettings(**defaults)
 
 
 def test_prompt_needs_search_detects_current_information_requests() -> None:
@@ -111,12 +156,75 @@ async def test_search_web_requires_search_config() -> None:
 
 
 @pytest.mark.asyncio
+async def test_search_web_passes_timeout_to_client() -> None:
+    settings = _fast_retry_settings(search_timeout_seconds=7)
+    client = FakeClient(FakeResponse({"results": []}))
+
+    results = await search_web("query", settings=settings, client=client)
+
+    assert results == []
+    assert client.calls[0]["timeout"] == 7
+
+
+@pytest.mark.asyncio
 async def test_search_web_rejects_invalid_response() -> None:
-    settings = BotSettings(search_enabled=True, tavily_api_key="tvly-secret")
+    settings = _fast_retry_settings()
     client = FakeClient(InvalidJsonResponse({}))
 
     with pytest.raises(SearchError, match="invalid response"):
         await search_web("query", settings=settings, client=client)
+
+    assert len(client.calls) == 1  # parsing failures are permanent, never retried
+
+
+@pytest.mark.asyncio
+async def test_search_web_retries_transient_failure_then_succeeds() -> None:
+    settings = _fast_retry_settings(search_max_attempts=3)
+    client = SequenceClient(
+        [
+            FakeResponse({}, status_code=503),
+            FakeResponse({}, status_code=503),
+            FakeResponse(
+                {"results": [{"title": "T", "url": "https://example.com", "content": "C"}]}
+            ),
+        ]
+    )
+
+    results = await search_web("query", settings=settings, client=client)
+
+    assert len(client.calls) == 3
+    assert results == [SearchResult(title="T", url="https://example.com", content="C")]
+
+
+@pytest.mark.asyncio
+async def test_search_web_does_not_retry_401() -> None:
+    settings = _fast_retry_settings(search_max_attempts=3)
+    client = FakeClient(FakeResponse({}, status_code=401))
+
+    with pytest.raises(SearchError, match="Tavily search request failed"):
+        await search_web("query", settings=settings, client=client)
+
+    assert len(client.calls) == 1  # permanent auth failure, no retry
+
+
+@pytest.mark.asyncio
+async def test_search_web_circuit_open_fails_fast_without_calling_client(
+    monkeypatch,
+) -> None:
+    settings = _fast_retry_settings()
+    open_breaker = CircuitBreaker(name=BREAKER_TAVILY, failure_threshold=1, recovery_seconds=30)
+    await open_breaker.on_failure(TRANSIENT)
+
+    def fake_breaker_for(name: str):
+        return open_breaker
+
+    monkeypatch.setattr(search_module, "_breaker_for", fake_breaker_for)
+    client = FakeClient(FakeResponse({"results": []}))
+
+    with pytest.raises(SearchError, match="temporarily unavailable"):
+        await search_web("query", settings=settings, client=client)
+
+    assert len(client.calls) == 0
 
 
 def test_format_search_context_includes_numbered_sources() -> None:

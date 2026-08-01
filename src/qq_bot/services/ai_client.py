@@ -6,6 +6,16 @@ from typing import Any, Protocol
 import httpx
 
 from qq_bot.config import BotSettings, get_settings
+from qq_bot.runtime import BREAKER_AI_FALLBACK, BREAKER_AI_PRIMARY, RuntimeStateError, get_runtime
+from qq_bot.services.reliability import (
+    CircuitBreaker,
+    CircuitOpenError,
+    PermanentDependencyError,
+    TransientDependencyError,
+    build_retry_policy,
+    classify_exception,
+    wrap_http_error,
+)
 
 _WEEKDAY_NAMES = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
 
@@ -15,7 +25,14 @@ class AIReplyError(RuntimeError):
 
 
 class AsyncPostClient(Protocol):
-    async def post(self, url: str, *, headers: dict[str, str], json: dict[str, Any]) -> Any:
+    async def post(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str],
+        json: dict[str, Any],
+        timeout: float | None = None,
+    ) -> Any:
         raise NotImplementedError
 
 
@@ -87,6 +104,29 @@ def build_chat_payload(
     }
 
 
+def _breaker_for(name: str) -> CircuitBreaker:
+    """Resolve a provider breaker from the runtime, falling back to a fresh
+    default when no runtime is installed (unit tests)."""
+    try:
+        return get_runtime().get_breaker(name)
+    except RuntimeStateError:
+        settings = get_settings()
+        return CircuitBreaker(
+            name=name,
+            failure_threshold=settings.breaker_failure_threshold,
+            recovery_seconds=settings.breaker_recovery_seconds,
+        )
+
+
+def _resolve_client(client: AsyncPostClient | None) -> AsyncPostClient:
+    if client is not None:
+        return client
+    try:
+        return get_runtime().get_http_client()
+    except RuntimeStateError as exc:
+        raise AIReplyError("AI client is not available (runtime not ready)") from exc
+
+
 async def request_ai_reply(
     prompt: str,
     *,
@@ -102,45 +142,92 @@ async def request_ai_reply(
     if not prompt.strip():
         raise AIReplyError("prompt cannot be empty")
 
-    owns_client = client is None
-    active_client: AsyncPostClient
-    if client is None:
-        active_client = httpx.AsyncClient(timeout=active_settings.ai_timeout_seconds)
-    else:
-        active_client = client
+    active_client = _resolve_client(client)
 
     try:
-        try:
-            content = await _request_ai_reply_once(
-                prompt,
-                settings=active_settings,
-                client=active_client,
-                base_url=active_settings.normalized_ai_base_url,
-                api_key=active_settings.ai_api_key,
-                model=active_settings.ai_model,
-                search_context=search_context,
-                chat_context=chat_context,
-                roco_context=roco_context,
-            )
-        except AIReplyError:
-            if not active_settings.has_ai_fallback_config():
-                raise
-            content = await _request_ai_reply_once(
-                prompt,
-                settings=active_settings,
-                client=active_client,
-                base_url=active_settings.normalized_ai_fallback_base_url,
-                api_key=active_settings.ai_fallback_api_key,
-                model=active_settings.ai_fallback_model,
-                search_context=search_context,
-                chat_context=chat_context,
-                roco_context=roco_context,
-            )
-    finally:
-        if owns_client and isinstance(active_client, httpx.AsyncClient):
-            await active_client.aclose()
+        return await _call_provider(
+            prompt,
+            settings=active_settings,
+            client=active_client,
+            base_url=active_settings.normalized_ai_base_url,
+            api_key=active_settings.ai_api_key,
+            model=active_settings.ai_model,
+            breaker_name=BREAKER_AI_PRIMARY,
+            search_context=search_context,
+            chat_context=chat_context,
+            roco_context=roco_context,
+        )
+    except AIReplyError:
+        if not active_settings.has_ai_fallback_config():
+            raise
+        return await _call_provider(
+            prompt,
+            settings=active_settings,
+            client=active_client,
+            base_url=active_settings.normalized_ai_fallback_base_url,
+            api_key=active_settings.ai_fallback_api_key,
+            model=active_settings.ai_fallback_model,
+            breaker_name=BREAKER_AI_FALLBACK,
+            search_context=search_context,
+            chat_context=chat_context,
+            roco_context=roco_context,
+        )
 
-    return content
+
+async def _call_provider(
+    prompt: str,
+    *,
+    settings: BotSettings,
+    client: AsyncPostClient,
+    base_url: str,
+    api_key: str,
+    model: str,
+    breaker_name: str,
+    search_context: str,
+    chat_context: str,
+    roco_context: str,
+) -> str:
+    """Run one provider under its own retry policy and breaker. Any provider
+    failure raises ``AIReplyError``; the caller decides about fallback."""
+    breaker = _breaker_for(breaker_name)
+    try:
+        await breaker.check()
+    except CircuitOpenError:
+        raise AIReplyError("AI provider is temporarily unavailable") from None
+
+    policy = build_retry_policy(
+        max_attempts=settings.ai_max_attempts,
+        base_delay_seconds=settings.ai_retry_base_delay_seconds,
+        max_delay_seconds=settings.ai_retry_max_delay_seconds,
+        jitter_ratio=settings.retry_jitter_ratio,
+    )
+    try:
+        async for attempt in policy:
+            with attempt:
+                try:
+                    content = await _request_ai_reply_once(
+                        prompt,
+                        settings=settings,
+                        client=client,
+                        base_url=base_url,
+                        api_key=api_key,
+                        model=model,
+                        search_context=search_context,
+                        chat_context=chat_context,
+                        roco_context=roco_context,
+                    )
+                except AIReplyError:
+                    # Invalid response / empty content: permanent, not
+                    # retried, not counted against the breaker.
+                    raise
+                except Exception as exc:
+                    await breaker.on_failure(classify_exception(exc))
+                    raise
+                await breaker.on_success()
+                return content
+    except (TransientDependencyError, PermanentDependencyError) as exc:
+        raise AIReplyError("AI API request failed") from exc
+    raise AIReplyError("AI API request failed")
 
 
 async def _request_ai_reply_once(
@@ -175,8 +262,12 @@ async def _request_ai_reply_once(
         response.raise_for_status()
         data = response.json()
         content = data["choices"][0]["message"]["content"].strip()
+    except (TransientDependencyError, PermanentDependencyError):
+        raise
+    except httpx.HTTPStatusError as exc:
+        raise wrap_http_error(exc) from exc
     except httpx.HTTPError as exc:
-        raise AIReplyError("AI API request failed") from exc
+        raise wrap_http_error(exc) from exc
     except (KeyError, IndexError, TypeError, AttributeError, ValueError) as exc:
         raise AIReplyError("AI API returned an invalid response") from exc
 

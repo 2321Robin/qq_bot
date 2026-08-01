@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -53,6 +53,35 @@ def parse_schedule_time_list(value: str | None) -> list[tuple[int, int]]:
     return times
 
 
+def parse_named_mention_replacements(value: str | None) -> dict[str, str]:
+    """Parse ``name=qq,name=qq`` pairs into a replacement mapping.
+
+    Only integer QQ numbers are accepted so deployers never accidentally
+    commit their real account into source.
+    """
+    if value is None:
+        return {}
+
+    text = value.strip()
+    if not text:
+        return {}
+
+    replacements: dict[str, str] = {}
+    for part in text.split(","):
+        item = part.strip()
+        if not item:
+            continue
+        pieces = item.split("=", 1)
+        if len(pieces) != 2:
+            raise ValueError("named_mention_replacements must use name=qq comma-separated pairs")
+        name = pieces[0].strip()
+        account = pieces[1].strip()
+        if not name or not account.isdigit():
+            raise ValueError("named_mention_replacements must use name=qq comma-separated pairs")
+        replacements[name] = account
+    return replacements
+
+
 class BotSettings(BaseSettings):
     allowed_group_ids: str = ""
     admin_user_ids: str = ""
@@ -61,6 +90,9 @@ class BotSettings(BaseSettings):
     scheduled_cron_times: str = ""
     scheduled_cron_hour: int = 9
     scheduled_cron_minute: int = 0
+    # "@昵称=QQ号,@昵称2=QQ号2" pairs; only integer QQ numbers are accepted
+    # so deployers never commit their real account into source.
+    named_mention_replacements: str = ""
 
     ai_api_key: str = Field(default="", repr=False)
     ai_base_url: str = "https://api.openai.com/v1"
@@ -82,13 +114,31 @@ class BotSettings(BaseSettings):
     search_max_results: int = 5
     search_timeout_seconds: float = 10.0
 
+    # Reliability configuration (S1-RET-01). Attempts include the first call;
+    # delays follow capped exponential backoff with jitter; breakers count only
+    # transient dependency failures and recover after the recovery window.
+    ai_max_attempts: int = 2
+    ai_retry_base_delay_seconds: float = 0.5
+    ai_retry_max_delay_seconds: float = 4.0
+    search_max_attempts: int = 3
+    search_retry_base_delay_seconds: float = 0.5
+    search_retry_max_delay_seconds: float = 4.0
+    send_max_attempts: int = 2
+    send_retry_base_delay_seconds: float = 0.5
+    send_retry_max_delay_seconds: float = 3.0
+    retry_jitter_ratio: float = 0.1
+    breaker_failure_threshold: int = 3
+    breaker_recovery_seconds: float = 30.0
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
-    @field_validator("allowed_group_ids", "admin_user_ids", "scheduled_group_ids", "ai_ignored_user_ids")
+    @field_validator(
+        "allowed_group_ids", "admin_user_ids", "scheduled_group_ids", "ai_ignored_user_ids"
+    )
     @classmethod
     def validate_id_list(cls, value: str) -> str:
         parse_id_list(value)
@@ -98,6 +148,12 @@ class BotSettings(BaseSettings):
     @classmethod
     def validate_schedule_times(cls, value: str) -> str:
         parse_schedule_time_list(value)
+        return value.strip()
+
+    @field_validator("named_mention_replacements")
+    @classmethod
+    def validate_named_mention_replacements(cls, value: str) -> str:
+        parse_named_mention_replacements(value)
         return value.strip()
 
     @field_validator("scheduled_cron_hour")
@@ -120,6 +176,57 @@ class BotSettings(BaseSettings):
         if value < 1 or value > 20:
             raise ValueError("search_max_results must be between 1 and 20")
         return value
+
+    @field_validator("ai_max_attempts", "search_max_attempts", "send_max_attempts")
+    @classmethod
+    def validate_positive_attempts(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("max attempts must be a positive integer")
+        return value
+
+    @field_validator(
+        "ai_retry_base_delay_seconds",
+        "ai_retry_max_delay_seconds",
+        "search_retry_base_delay_seconds",
+        "search_retry_max_delay_seconds",
+        "send_retry_base_delay_seconds",
+        "send_retry_max_delay_seconds",
+        "breaker_recovery_seconds",
+    )
+    @classmethod
+    def validate_positive_delays(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("retry delays and recovery must be greater than 0")
+        return value
+
+    @field_validator("retry_jitter_ratio")
+    @classmethod
+    def validate_jitter_ratio(cls, value: float) -> float:
+        if value < 0 or value > 1:
+            raise ValueError("retry_jitter_ratio must be between 0 and 1")
+        return value
+
+    @field_validator("breaker_failure_threshold")
+    @classmethod
+    def validate_breaker_threshold(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("breaker_failure_threshold must be a positive integer")
+        return value
+
+    @model_validator(mode="after")
+    def validate_delay_ranges(self) -> "BotSettings":
+        pairs = (
+            ("ai", self.ai_retry_base_delay_seconds, self.ai_retry_max_delay_seconds),
+            ("search", self.search_retry_base_delay_seconds, self.search_retry_max_delay_seconds),
+            ("send", self.send_retry_base_delay_seconds, self.send_retry_max_delay_seconds),
+        )
+        for name, base, maximum in pairs:
+            if base > maximum:
+                raise ValueError(
+                    f"{name}_retry_base_delay_seconds must not exceed "
+                    f"{name}_retry_max_delay_seconds"
+                )
+        return self
 
     @field_validator("search_timeout_seconds")
     @classmethod
@@ -171,6 +278,10 @@ class BotSettings(BaseSettings):
         if configured_times:
             return configured_times
         return [(self.scheduled_cron_hour, self.scheduled_cron_minute)]
+
+    @property
+    def named_mention_replacement_map(self) -> dict[str, str]:
+        return parse_named_mention_replacements(self.named_mention_replacements)
 
     @property
     def normalized_ai_base_url(self) -> str:

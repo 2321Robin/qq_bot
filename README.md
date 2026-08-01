@@ -82,6 +82,7 @@ flowchart LR
 | AI 对话 | `ai 你好` 或 @机器人 | 多模型支持，群聊记忆，本地知识增强 |
 | 联网搜索 | 含"今天""搜索"等词的提问 | 可选 Tavily 搜索增强 |
 | 定时消息 | 环境变量配置 | 按 Cron 时间向指定群发送消息 |
+| 命名提及 | `NAMED_MENTION_REPLACEMENTS` | 定时消息与 AI 回复中的 `@昵称` 替换为真正的 @提及（账号仅从配置读取，不写死在源码） |
 
 ### AI 对话能力
 
@@ -170,10 +171,38 @@ ws://127.0.0.1:8081/onebot/v11/ws
 
 ```powershell
 .\.venv\Scripts\python -m pytest -v
-.\.venv\Scripts\python -m ruff check .
+.\venv\Scripts\python -m ruff check .
+.\venv\Scripts\python -m ruff format --check .
+.\venv\Scripts\python -m pytest --cov=qq_bot --cov-branch --cov-report=term-missing
 ```
 
-当前自动化测试 289 个，Ruff 静态检查通过。
+当前自动化测试 388 个，Ruff 静态检查通过；分支覆盖率门槛 `fail_under` 由首次实测基线设定（当前 82%，见 `pyproject.toml`），未经明确评审不得下调。
+
+开发前建议启用 pre-commit（含 ruff 与 Gitleaks 秘密扫描）：
+
+```powershell
+.\venv\Scripts\python -m pre_commit install
+```
+
+## Docker 部署
+
+后端镜像以非 root 用户运行，容器不包含 NapCat、`.env` 或私有数据：
+
+```powershell
+docker compose up -d --build
+```
+
+- 数据目录 `data/` 挂载为命名卷 `qq-bot-data`，配置文件通过 `env_file` 注入（不存在时跳过，用环境变量或默认值）
+- 健康检查：`GET /healthz`（存活）与 `GET /readyz`（就绪，含 SQLite 迁移与依赖可用性），由镜像内 Python 标准库探测
+- 查看状态：`docker compose ps`；日志：`docker compose logs -f backend`
+- 本机开发请改用上方“启动”一节的 `python bot.py`（NapCat 需在宿主机或同网络可访问）
+
+## 可靠性语义
+
+- **重试**：AI / Tavily / QQ 发送使用带抖动（jitter）的指数退避，`*_MAX_ATTEMPTS` 含首次调用；超时与连接错误分而治之
+- **QQ 发送超时永不重试**：消息可能已被服务端接受，自动重发会导致重复；只有确证发送前失败的连接级错误（如 WebSocket 断开）才重试
+- **熔断**：连续瞬时故障达到 `BREAKER_FAILURE_THRESHOLD` 后熔断，恢复窗口后单次探测；熔断器只统计瞬时故障，业务拒绝不计入
+- 参数见 `.env.example` 的“可靠性”段
 
 ## 公开发布门禁
 
@@ -214,5 +243,5 @@ Gitleaks 安装参考：<https://gitleaks.io>。
 - **AI：** OpenAI 兼容 Chat Completions API（主备切换）
 - **搜索：** Tavily Search API
 - **数据：** SQLite、JSON、Pillow 图卡渲染
-- **工程：** pytest、Ruff、pydantic-settings、httpx
-- **环境：** Windows / Python 3.11+
+- **工程：** pytest（含覆盖率门槛）、Ruff、pre-commit、Gitleaks、pydantic-settings、httpx、tenacity
+- **部署：** Docker / Docker Compose（非 root 后端镜像）、Python 3.11+（CI 验证 3.11 / 3.12）

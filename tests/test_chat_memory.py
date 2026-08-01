@@ -1,29 +1,78 @@
+"""Async chat memory repository tests (S1-DB-01..05, S1-GATE-03)."""
+
+from __future__ import annotations
+
+import asyncio
+
+import pytest
 from datetime import datetime, timedelta, timezone
 
-from qq_bot.services.chat_memory import ChatMemoryStore
+from qq_bot.services.chat_memory import ChatMemoryRepository, RepositoryClosedError
+
+_UTC = timezone.utc
 
 
-def test_add_message_initializes_database_and_reads_user_history(tmp_path) -> None:
-    store = ChatMemoryStore(tmp_path / "memory.sqlite3", retention_days=3)
-    now = datetime(2026, 5, 11, 12, 2, tzinfo=timezone.utc)
-    message_id = store.add_message(
+@pytest.fixture
+async def repository(tmp_path) -> ChatMemoryRepository:
+    repo = ChatMemoryRepository(tmp_path / "memory.sqlite3", retention_days=3)
+    await repo.open()
+    yield repo
+    await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_open_runs_migrations_and_enables_foreign_keys(tmp_path) -> None:
+    repo = ChatMemoryRepository(tmp_path / "memory.sqlite3", retention_days=3)
+    assert not repo.is_open
+    await repo.open()
+    try:
+        assert repo.is_open
+        assert repo.journal_mode == "wal"
+        cursor = await repo._connection.execute(  # noqa: SLF001 - test-only peek
+            "SELECT version FROM schema_migrations ORDER BY version"
+        )
+        versions = [int(row[0]) for row in await cursor.fetchall()]
+        assert versions == [1]
+    finally:
+        await repo.close()
+    assert not repo.is_open
+
+
+@pytest.mark.asyncio
+async def test_open_failure_closes_connection(tmp_path) -> None:
+    # a directory in place of the db file makes open fail
+    blocker = tmp_path / "blocker.sqlite3"
+    blocker.mkdir()
+    broken = ChatMemoryRepository(blocker, retention_days=3)
+    with pytest.raises(Exception):
+        await broken.open()
+    assert not broken.is_open
+    await broken.close()  # must be safe
+
+
+@pytest.mark.asyncio
+async def test_add_message_initializes_database_and_reads_user_history(
+    repository,
+) -> None:
+    now = datetime(2026, 5, 11, 12, 2, tzinfo=_UTC)
+    message_id = await repository.add_message(
         group_id=1001,
         user_id=2001,
         message_text="ai 你好",
         is_ai_prompt=True,
-        created_at=datetime(2026, 5, 11, 12, 0, tzinfo=timezone.utc),
+        created_at=datetime(2026, 5, 11, 12, 0, tzinfo=_UTC),
         now=now,
     )
-    store.update_ai_reply(message_id, "你好呀")
-    store.add_message(
+    await repository.update_ai_reply(message_id, "你好呀")
+    await repository.add_message(
         group_id=1001,
         user_id=2002,
         message_text="别人的消息",
-        created_at=datetime(2026, 5, 11, 12, 1, tzinfo=timezone.utc),
+        created_at=datetime(2026, 5, 11, 12, 1, tzinfo=_UTC),
         now=now,
     )
 
-    rows = store.recent_user_turns(group_id=1001, user_id=2001, limit=10, now=now)
+    rows = await repository.recent_user_turns(group_id=1001, user_id=2001, limit=10, now=now)
 
     assert len(rows) == 1
     assert rows[0].message_text == "ai 你好"
@@ -31,18 +80,18 @@ def test_add_message_initializes_database_and_reads_user_history(tmp_path) -> No
     assert rows[0].is_ai_prompt is True
 
 
-def test_recent_user_turns_excludes_non_ai_group_messages(tmp_path) -> None:
-    store = ChatMemoryStore(tmp_path / "memory.sqlite3", retention_days=3)
-    base = datetime(2026, 5, 11, 12, 0, tzinfo=timezone.utc)
+@pytest.mark.asyncio
+async def test_recent_user_turns_excludes_non_ai_group_messages(repository) -> None:
+    base = datetime(2026, 5, 11, 12, 0, tzinfo=_UTC)
     now = base + timedelta(minutes=3)
-    store.add_message(
+    await repository.add_message(
         group_id=1001,
         user_id=2001,
         message_text="普通聊天",
         created_at=base,
         now=now,
     )
-    store.add_message(
+    await repository.add_message(
         group_id=1001,
         user_id=2001,
         message_text="ai 之前的问题",
@@ -51,19 +100,19 @@ def test_recent_user_turns_excludes_non_ai_group_messages(tmp_path) -> None:
         now=now,
     )
 
-    rows = store.recent_user_turns(group_id=1001, user_id=2001, limit=10, now=now)
+    rows = await repository.recent_user_turns(group_id=1001, user_id=2001, limit=10, now=now)
 
     assert [row.message_text for row in rows] == ["ai 之前的问题"]
 
 
-def test_recent_group_messages_returns_newest_limited_rows_in_chronological_order(
-    tmp_path,
+@pytest.mark.asyncio
+async def test_recent_group_messages_returns_newest_limited_rows_in_chronological_order(
+    repository,
 ) -> None:
-    store = ChatMemoryStore(tmp_path / "memory.sqlite3", retention_days=3)
-    base = datetime(2026, 5, 11, 12, 0, tzinfo=timezone.utc)
+    base = datetime(2026, 5, 11, 12, 0, tzinfo=_UTC)
     now = base + timedelta(minutes=5)
     for index in range(5):
-        store.add_message(
+        await repository.add_message(
             group_id=1001,
             user_id=2001 + index,
             message_text=f"消息{index}",
@@ -71,19 +120,19 @@ def test_recent_group_messages_returns_newest_limited_rows_in_chronological_orde
             now=now,
         )
 
-    rows = store.recent_group_messages(group_id=1001, limit=3, now=now)
+    rows = await repository.recent_group_messages(group_id=1001, limit=3, now=now)
 
     assert [row.message_text for row in rows] == ["消息2", "消息3", "消息4"]
 
 
-def test_search_group_messages_filters_keyword_and_user(tmp_path) -> None:
-    store = ChatMemoryStore(tmp_path / "memory.sqlite3", retention_days=3)
-    created_at = datetime(2026, 5, 11, 12, 0, tzinfo=timezone.utc)
-    store.add_message(1001, 2001, "洛克王国 迪莫", created_at=created_at, now=created_at)
-    store.add_message(1001, 2002, "洛克王国 火花", created_at=created_at, now=created_at)
-    store.add_message(1001, 2001, "别的话题", created_at=created_at, now=created_at)
+@pytest.mark.asyncio
+async def test_search_group_messages_filters_keyword_and_user(repository) -> None:
+    created_at = datetime(2026, 5, 11, 12, 0, tzinfo=_UTC)
+    await repository.add_message(1001, 2001, "洛克王国 迪莫", created_at=created_at, now=created_at)
+    await repository.add_message(1001, 2002, "洛克王国 火花", created_at=created_at, now=created_at)
+    await repository.add_message(1001, 2001, "别的话题", created_at=created_at, now=created_at)
 
-    rows = store.search_messages(
+    rows = await repository.search_messages(
         group_id=1001,
         keyword="洛克",
         user_id=2001,
@@ -94,23 +143,76 @@ def test_search_group_messages_filters_keyword_and_user(tmp_path) -> None:
     assert [row.message_text for row in rows] == ["洛克王国 迪莫"]
 
 
-def test_search_group_messages_treats_percent_as_literal(tmp_path) -> None:
-    store = ChatMemoryStore(tmp_path / "memory.sqlite3", retention_days=3)
-    created_at = datetime(2026, 5, 11, 12, 0, tzinfo=timezone.utc)
-    store.add_message(1001, 2001, "百分比 50%", created_at=created_at, now=created_at)
-    store.add_message(1001, 2001, "没有百分号", created_at=created_at, now=created_at)
+@pytest.mark.asyncio
+async def test_search_treats_percent_and_underscore_as_literals(repository) -> None:
+    created_at = datetime(2026, 5, 11, 12, 0, tzinfo=_UTC)
+    await repository.add_message(1001, 2001, "百分比 50%", created_at=created_at, now=created_at)
+    await repository.add_message(1001, 2001, "下划线 a_b", created_at=created_at, now=created_at)
+    await repository.add_message(1001, 2001, "没有特殊字符", created_at=created_at, now=created_at)
 
-    rows = store.search_messages(group_id=1001, keyword="%", limit=10, now=created_at)
+    percent_rows = await repository.search_messages(
+        group_id=1001, keyword="%", limit=10, now=created_at
+    )
+    underscore_rows = await repository.search_messages(
+        group_id=1001, keyword="_", limit=10, now=created_at
+    )
 
-    assert [row.message_text for row in rows] == ["百分比 50%"]
+    assert [row.message_text for row in percent_rows] == ["百分比 50%"]
+    assert [row.message_text for row in underscore_rows] == ["下划线 a_b"]
 
 
-def test_cleanup_removes_records_older_than_retention(tmp_path) -> None:
-    store = ChatMemoryStore(tmp_path / "memory.sqlite3", retention_days=3)
-    now = datetime(2026, 5, 11, 12, 0, tzinfo=timezone.utc)
-    store.add_message(1001, 2001, "旧消息", created_at=now - timedelta(days=4), now=now)
-    store.add_message(1001, 2001, "新消息", created_at=now - timedelta(days=1), now=now)
+@pytest.mark.asyncio
+async def test_cleanup_removes_records_older_than_retention(repository) -> None:
+    now = datetime(2026, 5, 11, 12, 0, tzinfo=_UTC)
+    await repository.add_message(1001, 2001, "旧消息", created_at=now - timedelta(days=4), now=now)
+    await repository.add_message(1001, 2001, "新消息", created_at=now - timedelta(days=1), now=now)
 
-    rows = store.recent_group_messages(group_id=1001, limit=10, now=now)
+    rows = await repository.recent_group_messages(group_id=1001, limit=10, now=now)
 
     assert [row.message_text for row in rows] == ["新消息"]
+
+
+@pytest.mark.asyncio
+async def test_closed_repository_rejects_operations(repository) -> None:
+    await repository.close()
+    with pytest.raises(RepositoryClosedError):
+        await repository.add_message(1001, 2001, "x", now=datetime(2026, 5, 11, tzinfo=_UTC))
+    with pytest.raises(RepositoryClosedError):
+        await repository.recent_group_messages(group_id=1001, limit=5)
+    with pytest.raises(RepositoryClosedError):
+        await repository.search_messages(group_id=1001, limit=5)
+    with pytest.raises(RepositoryClosedError):
+        await repository.update_ai_reply(1, "reply")
+    await repository.close()  # double close is a no-op
+
+
+@pytest.mark.asyncio
+async def test_concurrent_writes_do_not_corrupt(repository) -> None:
+    now = datetime(2026, 5, 11, 12, 0, tzinfo=_UTC)
+
+    async def write(index: int) -> None:
+        await repository.add_message(1001, 2001, f"并发{index}", created_at=now, now=now)
+
+    await asyncio.gather(*(write(index) for index in range(20)))
+
+    rows = await repository.recent_group_messages(group_id=1001, limit=20, now=now)
+    assert len(rows) == 20
+    assert {row.message_text for row in rows} == {f"并发{index}" for index in range(20)}
+
+
+@pytest.mark.asyncio
+async def test_event_loop_remains_schedulable_during_operations(repository) -> None:
+    """A blocking SQLite implementation would starve concurrent tasks."""
+    progress = {"ticks": 0}
+
+    async def ticker() -> None:
+        for _ in range(30):
+            progress["ticks"] += 1
+            await asyncio.sleep(0)
+
+    task = asyncio.create_task(ticker())
+    now = datetime(2026, 5, 11, 12, 0, tzinfo=_UTC)
+    for index in range(30):
+        await repository.add_message(1001, 2001, f"m{index}", created_at=now, now=now)
+    await task
+    assert progress["ticks"] > 0

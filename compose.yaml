@@ -1,0 +1,35 @@
+# Stage 1 backend Compose definition (S1-CTR-05..07).
+# NapCat stays external: this file only describes the bot backend, its port,
+# data volume and health check. Secrets come exclusively from the runtime
+# environment (env_file); nothing secret is baked into the image or defaults.
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: qq-bot:stage1
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      HOST: 0.0.0.0
+      PORT: ${PORT:-8081}
+    ports:
+      - "${PORT:-8081}:${PORT:-8081}"
+    volumes:
+      - qq-bot-data:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os,sys,urllib.request; port=os.environ.get('PORT','8081'); url='http://127.0.0.1:'+port+'/healthz'; sys.exit(0 if urllib.request.urlopen(url, timeout=3).status==200 else 1)"
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+volumes:
+  qq-bot-data:

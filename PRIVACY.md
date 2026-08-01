@@ -27,6 +27,11 @@ When the bot is running, it may process the following categories of data:
 - Expired records are cleaned up on each read or write operation.
 - The database is **not** encrypted at rest.
 - The database file is excluded from version control (`.gitignore`).
+- **Logs contain no message bodies.** Runtime logs record only counts
+  and category-level outcomes (retry attempts, circuit-breaker state,
+  per-group failure counts); message text, raw QQ group/user numbers,
+  access tokens, and WebSocket URLs with credentials are never written
+  to logs.
 
 ## 3. External data transmission
 

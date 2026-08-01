@@ -1,0 +1,35 @@
+# Build context exclusions — the image must only contain backend runtime
+# needs (S1-CTR-01): no VCS, secrets, local configs, tests, caches or data.
+
+.git
+.gitignore
+.gitattributes
+.env
+.env.*
+!.env.example
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.coverage
+coverage.xml
+htmlcov
+logs
+data
+container-data
+*.bundle
+docs
+tests
+scripts
+.agent
+.superpowers
+.worktrees
+start_all.ps1
+stop_all.ps1
+startup.example.ps1
+startup.local.ps1
+停止.bat
+一键启动.bat
+PROJECT_RESUME_GUIDE.md
+qq-bot-retry.bundle

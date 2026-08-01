@@ -37,19 +37,20 @@ async def send_daily_messages() -> None:
         logger.info("Scheduled messages skipped because no configured target groups are allowed.")
         return
 
-    logger.info(f"Sending scheduled message to {len(group_ids)} group(s): {group_ids}.")
+    logger.info(f"Sending scheduled message to {len(group_ids)} group(s).")
 
     failures = await send_group_messages(
         bot,
         group_ids,
         settings.scheduled_message,
+        named_mention_replacements=settings.named_mention_replacement_map,
     )
     successful_count = len(group_ids) - len(failures)
     logger.info(
         f"Scheduled message job finished: {successful_count} succeeded, {len(failures)} failed."
     )
-    for group_id in failures:
-        logger.warning(f"Scheduled message failed for group {group_id}.")
+    if failures:
+        logger.warning(f"Scheduled message failed for {len(failures)} group(s).")
 
 
 settings = get_settings()
@@ -58,4 +59,6 @@ if settings.scheduled_enabled():
         scheduler.add_job(send_daily_messages, **job_kwargs)
         logger.info(f"Registered scheduled message job: {describe_scheduler_job(job_kwargs)}.")
 else:
-    logger.info("Scheduled message jobs were not registered because scheduled messages are disabled.")
+    logger.info(
+        "Scheduled message jobs were not registered because scheduled messages are disabled."
+    )

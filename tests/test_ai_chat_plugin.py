@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from nonebot.adapters.onebot.v11 import Message
 
@@ -16,7 +18,7 @@ class FakeEvent:
         segments: list[object] | None = None,
         *,
         to_me: bool = False,
-        self_id: int = ACCOUNT_PLACEHOLDER,
+        self_id: int = 2880000001,
         user_id: int | None = None,
     ):
         self.text = text
@@ -59,17 +61,27 @@ class FinishCalled(Exception):
 
 
 class EmptyMemoryStore:
-    def add_message(self, *args, **kwargs) -> int:
+    async def add_message(self, *args, **kwargs) -> int:
         return 123
 
-    def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
+    async def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
         return None
 
-    def recent_user_turns(self, *, group_id: int, user_id: int, limit: int):
+    async def recent_user_turns(self, *, group_id: int, user_id: int, limit: int):
         return []
 
-    def recent_group_messages(self, *, group_id: int, limit: int):
+    async def recent_group_messages(self, *, group_id: int, limit: int):
         return []
+
+
+class FakeHttpClient:
+    """Stand-in for the runtime-owned shared httpx client."""
+
+
+@pytest.fixture(autouse=True)
+def _patch_http_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Runtime is not started in these tests; stub the client getter."""
+    monkeypatch.setattr(ai_chat_plugin, "get_http_client", lambda: FakeHttpClient())
 
 
 def memory_row(
@@ -98,6 +110,7 @@ async def test_ai_chat_formats_named_mentions_in_final_reply(
         prompt: str,
         *,
         settings: BotSettings,
+        client: object | None = None,
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
@@ -114,12 +127,16 @@ async def test_ai_chat_formats_named_mentions_in_final_reply(
     monkeypatch.setattr(
         ai_chat_plugin,
         "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+        lambda: BotSettings(
+            allowed_group_ids="1001",
+            ai_api_key="secret",
+            named_mention_replacements="@小呱呱=2880000001",
+        ),
     )
     monkeypatch.setattr(
         ai_chat_plugin,
-        "ChatMemoryStore",
-        lambda path, retention_days: EmptyMemoryStore(),
+        "get_chat_repository",
+        lambda: EmptyMemoryStore(),
     )
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
     monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
@@ -132,7 +149,7 @@ async def test_ai_chat_formats_named_mentions_in_final_reply(
     assert message[0].type == "text"
     assert message[0].data["text"] == "好的，"
     assert message[1].type == "at"
-    assert message[1].data["qq"] == "ACCOUNT_PLACEHOLDER"
+    assert message[1].data["qq"] == "2880000001"
     assert message[2].type == "text"
     assert message[2].data["text"] == " 会收到提醒"
 
@@ -145,6 +162,7 @@ async def test_ai_chat_replies_when_group_message_mentions_bot_without_to_me(
         prompt: str,
         *,
         settings: BotSettings,
+        client: object | None = None,
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
@@ -162,8 +180,8 @@ async def test_ai_chat_replies_when_group_message_mentions_bot_without_to_me(
     )
     monkeypatch.setattr(
         ai_chat_plugin,
-        "ChatMemoryStore",
-        lambda path, retention_days: EmptyMemoryStore(),
+        "get_chat_repository",
+        lambda: EmptyMemoryStore(),
     )
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
     monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
@@ -172,7 +190,7 @@ async def test_ai_chat_replies_when_group_message_mentions_bot_without_to_me(
         await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
             FakeEvent(
                 "你好",
-                [FakeAtSegment(ACCOUNT_PLACEHOLDER), FakeTextSegment(" 你好")],
+                [FakeAtSegment(2880000001), FakeTextSegment(" 你好")],
                 to_me=False,
             )
         )
@@ -187,7 +205,7 @@ async def test_ai_chat_ignores_configured_sender_even_when_message_mentions_bot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeStore:
-        def add_message(self, *args, **kwargs) -> int:
+        async def add_message(self, *args, **kwargs) -> int:
             raise AssertionError("ignored sender should not be recorded")
 
     async def fake_request_ai_reply(*args, **kwargs) -> str:
@@ -199,23 +217,23 @@ async def test_ai_chat_ignores_configured_sender_even_when_message_mentions_bot(
         lambda: BotSettings(
             allowed_group_ids="1001",
             ai_api_key="secret",
-            ai_ignored_user_ids="ACCOUNT_PLACEHOLDER",
+            ai_ignored_user_ids="2880000002",
         ),
     )
     monkeypatch.setattr(
         ai_chat_plugin,
-        "ChatMemoryStore",
-        lambda path, retention_days: FakeStore(),
+        "get_chat_repository",
+        lambda: FakeStore(),
     )
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
 
     await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
         FakeEvent(
             "投票成功\n今日票数：81\n总票数：7196",
-            [FakeAtSegment(ACCOUNT_PLACEHOLDER), FakeTextSegment(" 投票成功")],
+            [FakeAtSegment(2880000001), FakeTextSegment(" 投票成功")],
             to_me=True,
-            self_id=ACCOUNT_PLACEHOLDER,
-            user_id=ACCOUNT_PLACEHOLDER,
+            self_id=2880000001,
+            user_id=2880000002,
         )
     )
 
@@ -225,13 +243,13 @@ async def test_ai_chat_ignores_self_mention_for_explicit_user_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeStore:
-        def add_message(self, *args, **kwargs) -> int:
+        async def add_message(self, *args, **kwargs) -> int:
             return 123
 
-        def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
+        async def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
             return None
 
-        def search_messages(
+        async def search_messages(
             self,
             *,
             group_id: int,
@@ -246,6 +264,7 @@ async def test_ai_chat_ignores_self_mention_for_explicit_user_history(
         prompt: str,
         *,
         settings: BotSettings,
+        client: object | None = None,
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
@@ -264,8 +283,8 @@ async def test_ai_chat_ignores_self_mention_for_explicit_user_history(
     )
     monkeypatch.setattr(
         ai_chat_plugin,
-        "ChatMemoryStore",
-        lambda path, retention_days: FakeStore(),
+        "get_chat_repository",
+        lambda: FakeStore(),
     )
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
     monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
@@ -275,7 +294,7 @@ async def test_ai_chat_ignores_self_mention_for_explicit_user_history(
             FakeEvent(
                 "参考  的最近5条：总结他的观点",
                 [
-                    FakeAtSegment(ACCOUNT_PLACEHOLDER),
+                    FakeAtSegment(2880000001),
                     FakeTextSegment(" 参考 "),
                     FakeAtSegment(2002),
                     FakeTextSegment(" 的最近5条：总结他的观点"),
@@ -291,7 +310,7 @@ async def test_ai_chat_uses_search_context_for_search_trigger(
 ) -> None:
     from qq_bot.services.search import SearchResult
 
-    async def fake_search_web(prompt: str, *, settings: BotSettings):
+    async def fake_search_web(prompt: str, *, settings: BotSettings, client: object | None = None):
         assert prompt == "今天 DeepSeek 有什么新闻"
         assert settings.tavily_api_key == "tvly-secret"
         return [SearchResult("DeepSeek News", "https://example.com/news", "news summary")]
@@ -300,6 +319,7 @@ async def test_ai_chat_uses_search_context_for_search_trigger(
         prompt: str,
         *,
         settings: BotSettings,
+        client: object | None = None,
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
@@ -325,8 +345,8 @@ async def test_ai_chat_uses_search_context_for_search_trigger(
     )
     monkeypatch.setattr(
         ai_chat_plugin,
-        "ChatMemoryStore",
-        lambda path, retention_days: EmptyMemoryStore(),
+        "get_chat_repository",
+        lambda: EmptyMemoryStore(),
     )
     monkeypatch.setattr(ai_chat_plugin, "search_web", fake_search_web)
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
@@ -340,13 +360,14 @@ async def test_ai_chat_uses_search_context_for_search_trigger(
 async def test_ai_chat_skips_search_for_normal_chat(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_search_web(prompt: str, *, settings: BotSettings):
+    async def fake_search_web(prompt: str, *, settings: BotSettings, client: object | None = None):
         raise AssertionError("search should not be called")
 
     async def fake_request_ai_reply(
         prompt: str,
         *,
         settings: BotSettings,
+        client: object | None = None,
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
@@ -372,8 +393,8 @@ async def test_ai_chat_skips_search_for_normal_chat(
     )
     monkeypatch.setattr(
         ai_chat_plugin,
-        "ChatMemoryStore",
-        lambda path, retention_days: EmptyMemoryStore(),
+        "get_chat_repository",
+        lambda: EmptyMemoryStore(),
     )
     monkeypatch.setattr(ai_chat_plugin, "search_web", fake_search_web)
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
@@ -389,13 +410,14 @@ async def test_ai_chat_falls_back_when_search_fails(
 ) -> None:
     from qq_bot.services.search import SearchError
 
-    async def fake_search_web(prompt: str, *, settings: BotSettings):
+    async def fake_search_web(prompt: str, *, settings: BotSettings, client: object | None = None):
         raise SearchError("search down")
 
     async def fake_request_ai_reply(
         prompt: str,
         *,
         settings: BotSettings,
+        client: object | None = None,
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
@@ -420,8 +442,8 @@ async def test_ai_chat_falls_back_when_search_fails(
     )
     monkeypatch.setattr(
         ai_chat_plugin,
-        "ChatMemoryStore",
-        lambda path, retention_days: EmptyMemoryStore(),
+        "get_chat_repository",
+        lambda: EmptyMemoryStore(),
     )
     monkeypatch.setattr(ai_chat_plugin, "search_web", fake_search_web)
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
@@ -453,8 +475,8 @@ async def test_ai_chat_refuses_current_events_without_search_config(
     )
     monkeypatch.setattr(
         ai_chat_plugin,
-        "ChatMemoryStore",
-        lambda path, retention_days: EmptyMemoryStore(),
+        "get_chat_repository",
+        lambda: EmptyMemoryStore(),
     )
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
     monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
@@ -471,7 +493,7 @@ async def test_ai_chat_refuses_current_events_when_search_fails(
 ) -> None:
     from qq_bot.services.search import SearchError
 
-    async def fake_search_web(prompt: str, *, settings: BotSettings):
+    async def fake_search_web(prompt: str, *, settings: BotSettings, client: object | None = None):
         raise SearchError("search down")
 
     async def fake_request_ai_reply(*args, **kwargs) -> str:
@@ -492,8 +514,8 @@ async def test_ai_chat_refuses_current_events_when_search_fails(
     )
     monkeypatch.setattr(
         ai_chat_plugin,
-        "ChatMemoryStore",
-        lambda path, retention_days: EmptyMemoryStore(),
+        "get_chat_repository",
+        lambda: EmptyMemoryStore(),
     )
     monkeypatch.setattr(ai_chat_plugin, "search_web", fake_search_web)
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
@@ -513,6 +535,7 @@ async def test_ai_chat_passes_roco_context_for_roco_question(
         prompt: str,
         *,
         settings: BotSettings,
+        client: object | None = None,
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
@@ -537,8 +560,8 @@ async def test_ai_chat_passes_roco_context_for_roco_question(
     )
     monkeypatch.setattr(
         ai_chat_plugin,
-        "ChatMemoryStore",
-        lambda path, retention_days: EmptyMemoryStore(),
+        "get_chat_repository",
+        lambda: EmptyMemoryStore(),
     )
     monkeypatch.setattr(ai_chat_plugin, "build_roco_context", fake_build_roco_context)
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
@@ -547,19 +570,20 @@ async def test_ai_chat_passes_roco_context_for_roco_question(
     with pytest.raises(FinishCalled):
         await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 画精灵怎么进化？"))  # type: ignore[arg-type]
 
+
 @pytest.mark.asyncio
 async def test_ai_chat_passes_default_group_memory_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeStore:
-        def add_message(self, *args, **kwargs) -> int:
+        async def add_message(self, *args, **kwargs) -> int:
             return 123
 
-        def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
+        async def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
             assert message_id == 123
             assert ai_reply == "带记忆回复"
 
-        def recent_group_messages(self, *, group_id: int, limit: int):
+        async def recent_group_messages(self, *, group_id: int, limit: int):
             assert group_id == 1001
             assert limit == 10
             return [memory_row(message_text="之前的问题", ai_reply="之前的回答", user_id=2002)]
@@ -568,6 +592,7 @@ async def test_ai_chat_passes_default_group_memory_context(
         prompt: str,
         *,
         settings: BotSettings,
+        client: object | None = None,
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
@@ -587,8 +612,8 @@ async def test_ai_chat_passes_default_group_memory_context(
     )
     monkeypatch.setattr(
         ai_chat_plugin,
-        "ChatMemoryStore",
-        lambda path, retention_days: FakeStore(),
+        "get_chat_repository",
+        lambda: FakeStore(),
     )
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
     monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
@@ -604,13 +629,13 @@ async def test_ai_chat_uses_recent_group_messages_by_default(
     calls = {"recent_group_messages": False, "recent_user_turns": False}
 
     class FakeStore:
-        def add_message(self, *args, **kwargs) -> int:
+        async def add_message(self, *args, **kwargs) -> int:
             return 123
 
-        def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
+        async def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
             return None
 
-        def recent_group_messages(self, *, group_id: int, limit: int):
+        async def recent_group_messages(self, *, group_id: int, limit: int):
             calls["recent_group_messages"] = True
             assert group_id == 1001
             assert limit == 10
@@ -619,7 +644,7 @@ async def test_ai_chat_uses_recent_group_messages_by_default(
                 memory_row(message_text="另一个群友发言", row_id=2, user_id=2003),
             ]
 
-        def recent_user_turns(self, *, group_id: int, user_id: int, limit: int):
+        async def recent_user_turns(self, *, group_id: int, user_id: int, limit: int):
             calls["recent_user_turns"] = True
             return []
 
@@ -627,6 +652,7 @@ async def test_ai_chat_uses_recent_group_messages_by_default(
         prompt: str,
         *,
         settings: BotSettings,
+        client: object | None = None,
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
@@ -646,8 +672,8 @@ async def test_ai_chat_uses_recent_group_messages_by_default(
     )
     monkeypatch.setattr(
         ai_chat_plugin,
-        "ChatMemoryStore",
-        lambda path, retention_days: FakeStore(),
+        "get_chat_repository",
+        lambda: FakeStore(),
     )
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
     monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
@@ -667,13 +693,13 @@ async def test_ai_chat_uses_explicit_recent_group_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeStore:
-        def add_message(self, *args, **kwargs) -> int:
+        async def add_message(self, *args, **kwargs) -> int:
             return 123
 
-        def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
+        async def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
             return None
 
-        def recent_group_messages(self, *, group_id: int, limit: int):
+        async def recent_group_messages(self, *, group_id: int, limit: int):
             assert group_id == 1001
             assert limit == 5
             return []
@@ -682,6 +708,7 @@ async def test_ai_chat_uses_explicit_recent_group_history(
         prompt: str,
         *,
         settings: BotSettings,
+        client: object | None = None,
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
@@ -700,8 +727,8 @@ async def test_ai_chat_uses_explicit_recent_group_history(
     )
     monkeypatch.setattr(
         ai_chat_plugin,
-        "ChatMemoryStore",
-        lambda path, retention_days: FakeStore(),
+        "get_chat_repository",
+        lambda: FakeStore(),
     )
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
     monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
@@ -715,13 +742,13 @@ async def test_ai_chat_uses_actual_at_segment_for_explicit_user_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeStore:
-        def add_message(self, *args, **kwargs) -> int:
+        async def add_message(self, *args, **kwargs) -> int:
             return 123
 
-        def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
+        async def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
             return None
 
-        def search_messages(
+        async def search_messages(
             self,
             *,
             group_id: int,
@@ -735,13 +762,14 @@ async def test_ai_chat_uses_actual_at_segment_for_explicit_user_history(
             assert limit == 5
             return [memory_row(message_text="他的观点", user_id=2002)]
 
-        def recent_group_messages(self, *args, **kwargs):
+        async def recent_group_messages(self, *args, **kwargs):
             raise AssertionError("should not use group history for explicit at reference")
 
     async def fake_request_ai_reply(
         prompt: str,
         *,
         settings: BotSettings,
+        client: object | None = None,
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
@@ -760,8 +788,8 @@ async def test_ai_chat_uses_actual_at_segment_for_explicit_user_history(
     )
     monkeypatch.setattr(
         ai_chat_plugin,
-        "ChatMemoryStore",
-        lambda path, retention_days: FakeStore(),
+        "get_chat_repository",
+        lambda: FakeStore(),
     )
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
     monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
@@ -784,13 +812,13 @@ async def test_ai_chat_summarizes_mentioned_user_recent_messages_in_natural_prom
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeStore:
-        def add_message(self, *args, **kwargs) -> int:
+        async def add_message(self, *args, **kwargs) -> int:
             return 123
 
-        def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
+        async def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
             return None
 
-        def search_messages(
+        async def search_messages(
             self,
             *,
             group_id: int,
@@ -804,13 +832,14 @@ async def test_ai_chat_summarizes_mentioned_user_recent_messages_in_natural_prom
             assert limit == 3
             return [memory_row(message_text="目标用户的信息", user_id=2002)]
 
-        def recent_user_turns(self, *args, **kwargs):
+        async def recent_user_turns(self, *args, **kwargs):
             raise AssertionError("should not use sender history for mentioned-user summary")
 
     async def fake_request_ai_reply(
         prompt: str,
         *,
         settings: BotSettings,
+        client: object | None = None,
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
@@ -829,8 +858,8 @@ async def test_ai_chat_summarizes_mentioned_user_recent_messages_in_natural_prom
     )
     monkeypatch.setattr(
         ai_chat_plugin,
-        "ChatMemoryStore",
-        lambda path, retention_days: FakeStore(),
+        "get_chat_repository",
+        lambda: FakeStore(),
     )
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
     monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
@@ -840,7 +869,7 @@ async def test_ai_chat_summarizes_mentioned_user_recent_messages_in_natural_prom
             FakeEvent(
                 "总结  最近三条消息",
                 [
-                    FakeAtSegment(ACCOUNT_PLACEHOLDER),
+                    FakeAtSegment(2880000001),
                     FakeTextSegment(" 总结 "),
                     FakeAtSegment(2002),
                     FakeTextSegment(" 最近三条消息"),
@@ -855,24 +884,25 @@ async def test_ai_chat_does_not_scope_group_history_to_at_after_separator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeStore:
-        def add_message(self, *args, **kwargs) -> int:
+        async def add_message(self, *args, **kwargs) -> int:
             return 123
 
-        def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
+        async def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
             return None
 
-        def recent_group_messages(self, *, group_id: int, limit: int):
+        async def recent_group_messages(self, *, group_id: int, limit: int):
             assert group_id == 1001
             assert limit == 5
             return [memory_row(message_text="群聊观点", user_id=2003)]
 
-        def search_messages(self, *args, **kwargs):
+        async def search_messages(self, *args, **kwargs):
             raise AssertionError("question mention should not scope group history")
 
     async def fake_request_ai_reply(
         prompt: str,
         *,
         settings: BotSettings,
+        client: object | None = None,
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
@@ -891,8 +921,8 @@ async def test_ai_chat_does_not_scope_group_history_to_at_after_separator(
     )
     monkeypatch.setattr(
         ai_chat_plugin,
-        "ChatMemoryStore",
-        lambda path, retention_days: FakeStore(),
+        "get_chat_repository",
+        lambda: FakeStore(),
     )
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
     monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
@@ -915,16 +945,17 @@ async def test_ai_chat_memory_failure_does_not_block_reply(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class BrokenStore:
-        def add_message(self, *args, **kwargs) -> int:
+        async def add_message(self, *args, **kwargs) -> int:
             raise OSError("database locked")
 
-        def recent_group_messages(self, *args, **kwargs):
+        async def recent_group_messages(self, *args, **kwargs):
             raise OSError("database locked")
 
     async def fake_request_ai_reply(
         prompt: str,
         *,
         settings: BotSettings,
+        client: object | None = None,
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
@@ -943,8 +974,8 @@ async def test_ai_chat_memory_failure_does_not_block_reply(
     )
     monkeypatch.setattr(
         ai_chat_plugin,
-        "ChatMemoryStore",
-        lambda path, retention_days: BrokenStore(),
+        "get_chat_repository",
+        lambda: BrokenStore(),
     )
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
     monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
@@ -957,13 +988,14 @@ async def test_ai_chat_memory_failure_does_not_block_reply(
 async def test_ai_chat_memory_store_construction_failure_does_not_block_reply(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def broken_store(path, retention_days):
-        raise OSError("cannot initialize database")
+    def broken_repository():
+        raise OSError("cannot open database")
 
     async def fake_request_ai_reply(
         prompt: str,
         *,
         settings: BotSettings,
+        client: object | None = None,
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
@@ -980,7 +1012,7 @@ async def test_ai_chat_memory_store_construction_failure_does_not_block_reply(
         "get_settings",
         lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
     )
-    monkeypatch.setattr(ai_chat_plugin, "ChatMemoryStore", broken_store)
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", broken_repository)
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
     monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
 
@@ -997,7 +1029,7 @@ async def test_ai_chat_records_ordinary_group_message_without_reply(
     finish_called = False
 
     class FakeStore:
-        def add_message(self, **kwargs) -> int:
+        async def add_message(self, **kwargs) -> int:
             recorded.append(kwargs)
             return 123
 
@@ -1018,8 +1050,8 @@ async def test_ai_chat_records_ordinary_group_message_without_reply(
     )
     monkeypatch.setattr(
         ai_chat_plugin,
-        "ChatMemoryStore",
-        lambda path, retention_days: FakeStore(),
+        "get_chat_repository",
+        lambda: FakeStore(),
     )
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
     monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
@@ -1045,7 +1077,7 @@ async def test_ai_chat_records_non_ai_group_messages(
     recorded: list[dict[str, object]] = []
 
     class FakeStore:
-        def add_message(self, **kwargs) -> int:
+        async def add_message(self, **kwargs) -> int:
             recorded.append(kwargs)
             return 123
 
@@ -1056,8 +1088,8 @@ async def test_ai_chat_records_non_ai_group_messages(
     )
     monkeypatch.setattr(
         ai_chat_plugin,
-        "ChatMemoryStore",
-        lambda path, retention_days: FakeStore(),
+        "get_chat_repository",
+        lambda: FakeStore(),
     )
 
     await ai_chat_plugin.handle_ai_chat(FakeEvent("普通聊天"))  # type: ignore[arg-type]
@@ -1080,14 +1112,14 @@ async def test_ai_chat_excludes_current_prompt_from_memory_context(
         def __init__(self) -> None:
             self.rows = [memory_row(message_text="旧问题", row_id=1)]
 
-        def add_message(self, *, message_text: str, **kwargs) -> int:
+        async def add_message(self, *, message_text: str, **kwargs) -> int:
             self.rows.append(memory_row(message_text=message_text, row_id=2))
             return 2
 
-        def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
+        async def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
             return None
 
-        def recent_group_messages(self, *, group_id: int, limit: int):
+        async def recent_group_messages(self, *, group_id: int, limit: int):
             return self.rows[-limit:]
 
     store = FakeStore()
@@ -1096,6 +1128,7 @@ async def test_ai_chat_excludes_current_prompt_from_memory_context(
         prompt: str,
         *,
         settings: BotSettings,
+        client: object | None = None,
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
@@ -1113,7 +1146,7 @@ async def test_ai_chat_excludes_current_prompt_from_memory_context(
         "get_settings",
         lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
     )
-    monkeypatch.setattr(ai_chat_plugin, "ChatMemoryStore", lambda path, retention_days: store)
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: store)
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
     monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
 
@@ -1126,16 +1159,17 @@ async def test_ai_chat_rejects_empty_question_after_memory_reference(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class FakeStore:
-        def add_message(self, *args, **kwargs) -> int:
+        async def add_message(self, *args, **kwargs) -> int:
             return 123
 
-        def recent_group_messages(self, *, group_id: int, limit: int):
+        async def recent_group_messages(self, *, group_id: int, limit: int):
             return []
 
     async def fake_request_ai_reply(
         prompt: str,
         *,
         settings: BotSettings,
+        client: object | None = None,
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
@@ -1152,8 +1186,8 @@ async def test_ai_chat_rejects_empty_question_after_memory_reference(
     )
     monkeypatch.setattr(
         ai_chat_plugin,
-        "ChatMemoryStore",
-        lambda path, retention_days: FakeStore(),
+        "get_chat_repository",
+        lambda: FakeStore(),
     )
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
     monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
@@ -1162,3 +1196,65 @@ async def test_ai_chat_rejects_empty_question_after_memory_reference(
         await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 参考最近5条："))  # type: ignore[arg-type]
 
     assert exc_info.value.message == "请输入要问的问题"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_events_reuse_same_repository(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two concurrent events must share one repository instance, not create per-message stores."""
+
+    class FakeStore:
+        def __init__(self) -> None:
+            self.writes: list[dict] = []
+
+        async def add_message(self, *, message_text: str, **kwargs) -> int:
+            self.writes.append({"message_text": message_text, **kwargs})
+            return len(self.writes)
+
+        async def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
+            return None
+
+        async def recent_group_messages(self, *, group_id: int, limit: int):
+            return []
+
+    store = FakeStore()
+    repository_lookups = {"count": 0}
+
+    def get_repository():
+        repository_lookups["count"] += 1
+        return store
+
+    async def fake_request_ai_reply(
+        prompt: str,
+        *,
+        settings: BotSettings,
+        client: object | None = None,
+        search_context: str = "",
+        chat_context: str = "",
+        roco_context: str = "",
+    ) -> str:
+        return f"回复：{prompt[:2]}"
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", get_repository)
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    async def run_event() -> None:
+        with pytest.raises(FinishCalled):
+            await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 并发消息"))  # type: ignore[arg-type]
+
+    await asyncio.gather(run_event(), run_event())
+
+    assert repository_lookups["count"] == 2  # one lookup per event...
+    assert len(store.writes) == 2  # ...but the same shared instance
+    assert store.writes[0]["message_text"] == "ai 并发消息"
+    assert store.writes[1]["message_text"] == "ai 并发消息"

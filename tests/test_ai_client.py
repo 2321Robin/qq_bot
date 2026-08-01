@@ -3,16 +3,31 @@ from datetime import datetime
 import pytest
 
 from qq_bot.config import BotSettings
+from qq_bot.runtime import BREAKER_AI_PRIMARY
 from qq_bot.services import ai_client
 from qq_bot.services.ai_client import AIReplyError, build_chat_payload, request_ai_reply
+from qq_bot.services.reliability import TRANSIENT, CircuitBreaker
 
 
 class FakeResponse:
-    def __init__(self, payload: dict):
+    def __init__(
+        self,
+        payload: dict,
+        status_code: int = 200,
+        headers: dict[str, str] | None = None,
+    ):
         self.payload = payload
+        self.status_code = status_code
+        self.headers = headers or {}
 
     def raise_for_status(self) -> None:
-        return None
+        if 400 <= self.status_code < 600:
+            request = httpx.Request("POST", "https://api.example.com/v1/chat/completions")
+            raise httpx.HTTPStatusError(
+                f"HTTP {self.status_code}",
+                request=request,
+                response=httpx.Response(self.status_code, request=request, headers=self.headers),
+            )
 
     def json(self) -> dict:
         return self.payload
@@ -24,12 +39,10 @@ class InvalidJsonResponse(FakeResponse):
 
 
 class HttpErrorResponse(FakeResponse):
-    def raise_for_status(self) -> None:
-        raise httpx.HTTPStatusError(
-            "server error",
-            request=httpx.Request("POST", "https://api.example.com/v1/chat/completions"),
-            response=httpx.Response(500),
-        )
+    """Server-side failure (5xx): transient, retried before fallback."""
+
+    def __init__(self, payload: dict, status_code: int = 500):
+        super().__init__(payload, status_code=status_code)
 
 
 class SequenceClient:
@@ -37,7 +50,9 @@ class SequenceClient:
         self.responses = responses
         self.calls: list[dict] = []
 
-    async def post(self, url: str, *, headers: dict, json: dict) -> FakeResponse:
+    async def post(
+        self, url: str, *, headers: dict, json: dict, timeout: float | None = None
+    ) -> FakeResponse:
         self.calls.append({"url": url, "headers": headers, "json": json})
         return self.responses.pop(0)
 
@@ -53,9 +68,23 @@ class FakeClient:
         self.response = response
         self.calls: list[dict] = []
 
-    async def post(self, url: str, *, headers: dict, json: dict) -> FakeResponse:
+    async def post(
+        self, url: str, *, headers: dict, json: dict, timeout: float | None = None
+    ) -> FakeResponse:
         self.calls.append({"url": url, "headers": headers, "json": json})
         return self.response
+
+
+def _fast_retry_settings(**overrides) -> BotSettings:
+    """Retry tests must not actually sleep: near-zero delays, no jitter."""
+    defaults = {
+        "ai_max_attempts": 2,
+        "ai_retry_base_delay_seconds": 0.001,
+        "ai_retry_max_delay_seconds": 0.002,
+        "retry_jitter_ratio": 0.0,
+    }
+    defaults.update(overrides)
+    return BotSettings(**defaults)
 
 
 def test_build_chat_payload_uses_model_and_prompt() -> None:
@@ -130,8 +159,9 @@ def test_build_chat_payload_injects_current_local_time() -> None:
     assert "当前本地时间：2026-05-09 19:30" in system_prompt
 
 
-
-def test_format_current_local_time_includes_matching_weekday(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_format_current_local_time_includes_matching_weekday(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class FixedDatetime:
         @classmethod
         def now(cls) -> datetime:
@@ -154,6 +184,7 @@ def test_build_chat_payload_tells_model_not_to_recalculate_current_time() -> Non
     system_prompt = payload["messages"][0]["content"]
     assert "当前本地时间：2026-06-06 21:30，星期六" in system_prompt
     assert "回答当前日期、时间、星期时必须以该本地时间为准" in system_prompt
+
 
 def test_build_chat_payload_uses_reliability_rules_with_search_context() -> None:
     settings = BotSettings(ai_model="test-model")
@@ -185,10 +216,7 @@ def test_build_chat_payload_includes_chat_context_when_provided() -> None:
     user_message = payload["messages"][-1]["content"]
     system_prompt = payload["messages"][0]["content"]
     assert user_message == (
-        "当前用户问题：继续刚才的话题\n\n"
-        "历史聊天记录：\n"
-        "用户2001：ai 你好\n"
-        "机器人：你好呀"
+        "当前用户问题：继续刚才的话题\n\n历史聊天记录：\n用户2001：ai 你好\n机器人：你好呀"
     )
     assert user_message.count("历史聊天记录") == 1
     assert "不要编造不存在的历史聊天记录" in system_prompt
@@ -267,9 +295,7 @@ async def test_request_ai_reply_posts_openai_compatible_payload() -> None:
         ai_base_url="https://api.example.com/v1/",
         ai_model="test-model",
     )
-    client = FakeClient(
-        FakeResponse({"choices": [{"message": {"content": "机器人回复"}}]})
-    )
+    client = FakeClient(FakeResponse({"choices": [{"message": {"content": "机器人回复"}}]}))
 
     reply = await request_ai_reply("你好", settings=settings, client=client)
 
@@ -289,9 +315,7 @@ async def test_request_ai_reply_does_not_call_fallback_when_primary_succeeds() -
         ai_fallback_base_url="https://fallback.example.com/v1",
         ai_fallback_model="fallback-model",
     )
-    client = SequenceClient(
-        [FakeResponse({"choices": [{"message": {"content": "主服务回复"}}]})]
-    )
+    client = SequenceClient([FakeResponse({"choices": [{"message": {"content": "主服务回复"}}]})])
 
     reply = await request_ai_reply("你好", settings=settings, client=client)
 
@@ -303,7 +327,7 @@ async def test_request_ai_reply_does_not_call_fallback_when_primary_succeeds() -
 
 @pytest.mark.asyncio
 async def test_request_ai_reply_uses_fallback_when_primary_fails() -> None:
-    settings = BotSettings(
+    settings = _fast_retry_settings(
         ai_api_key="primary-secret",
         ai_base_url="https://primary.example.com/v1",
         ai_model="primary-model",
@@ -314,6 +338,7 @@ async def test_request_ai_reply_uses_fallback_when_primary_fails() -> None:
     client = SequenceClient(
         [
             HttpErrorResponse({}),
+            HttpErrorResponse({}),
             FakeResponse({"choices": [{"message": {"content": "备用服务回复"}}]}),
         ]
     )
@@ -321,26 +346,160 @@ async def test_request_ai_reply_uses_fallback_when_primary_fails() -> None:
     reply = await request_ai_reply("你好", settings=settings, client=client)
 
     assert reply == "备用服务回复"
-    assert len(client.calls) == 2
+    # primary exhausts its 2 attempts, then the fallback succeeds once
+    assert len(client.calls) == 3
     assert client.calls[0]["url"] == "https://primary.example.com/v1/chat/completions"
     assert client.calls[0]["headers"]["Authorization"] == "Bearer primary-secret"
     assert client.calls[0]["json"]["model"] == "primary-model"
-    assert client.calls[1]["url"] == "https://fallback.example.com/v1/chat/completions"
-    assert client.calls[1]["headers"]["Authorization"] == "Bearer fallback-secret"
-    assert client.calls[1]["json"]["model"] == "fallback-model"
+    assert client.calls[1]["url"] == "https://primary.example.com/v1/chat/completions"
+    assert client.calls[2]["url"] == "https://fallback.example.com/v1/chat/completions"
+    assert client.calls[2]["headers"]["Authorization"] == "Bearer fallback-secret"
+    assert client.calls[2]["json"]["model"] == "fallback-model"
 
 
 @pytest.mark.asyncio
 async def test_request_ai_reply_preserves_failure_when_fallback_is_not_configured() -> None:
-    settings = BotSettings(
+    settings = _fast_retry_settings(
         ai_api_key="primary-secret",
         ai_base_url="https://primary.example.com/v1",
         ai_model="primary-model",
         ai_fallback_api_key="",
     )
-    client = SequenceClient([HttpErrorResponse({})])
+    client = SequenceClient([HttpErrorResponse({}), HttpErrorResponse({})])
 
     with pytest.raises(AIReplyError, match="AI API request failed"):
+        await request_ai_reply("你好", settings=settings, client=client)
+
+    assert len(client.calls) == 2  # both attempts exhausted
+
+
+@pytest.mark.asyncio
+async def test_request_ai_reply_retries_transient_failure_then_succeeds() -> None:
+    settings = _fast_retry_settings(
+        ai_api_key="secret",
+        ai_base_url="https://primary.example.com/v1",
+        ai_model="primary-model",
+        ai_max_attempts=3,
+    )
+    client = SequenceClient(
+        [
+            HttpErrorResponse({}),
+            HttpErrorResponse({}),
+            FakeResponse({"choices": [{"message": {"content": "重试后成功"}}]}),
+        ]
+    )
+
+    reply = await request_ai_reply("你好", settings=settings, client=client)
+
+    assert reply == "重试后成功"
+    assert len(client.calls) == 3
+    assert all(
+        call["url"] == "https://primary.example.com/v1/chat/completions" for call in client.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_request_ai_reply_does_not_retry_401_and_falls_back_once() -> None:
+    settings = _fast_retry_settings(
+        ai_api_key="primary-secret",
+        ai_base_url="https://primary.example.com/v1",
+        ai_model="primary-model",
+        ai_fallback_api_key="fallback-secret",
+        ai_fallback_base_url="https://fallback.example.com/v1",
+        ai_fallback_model="fallback-model",
+    )
+    client = SequenceClient(
+        [
+            HttpErrorResponse({}, status_code=401),
+            FakeResponse({"choices": [{"message": {"content": "备用回复"}}]}),
+        ]
+    )
+
+    reply = await request_ai_reply("你好", settings=settings, client=client)
+
+    assert reply == "备用回复"
+    # 401 is permanent: exactly one primary call, no retry
+    assert len(client.calls) == 2
+    assert client.calls[0]["url"] == "https://primary.example.com/v1/chat/completions"
+    assert client.calls[1]["url"] == "https://fallback.example.com/v1/chat/completions"
+
+
+@pytest.mark.asyncio
+async def test_request_ai_reply_both_providers_exhausted_raises() -> None:
+    settings = _fast_retry_settings(
+        ai_api_key="primary-secret",
+        ai_base_url="https://primary.example.com/v1",
+        ai_model="primary-model",
+        ai_fallback_api_key="fallback-secret",
+        ai_fallback_base_url="https://fallback.example.com/v1",
+        ai_fallback_model="fallback-model",
+    )
+    client = SequenceClient([HttpErrorResponse({}) for _ in range(4)])
+
+    with pytest.raises(AIReplyError, match="AI API request failed"):
+        await request_ai_reply("你好", settings=settings, client=client)
+
+    assert len(client.calls) == 4  # 2 primary + 2 fallback attempts
+
+
+@pytest.mark.asyncio
+async def test_request_ai_reply_primary_circuit_open_skips_primary_and_falls_back(
+    monkeypatch,
+) -> None:
+    settings = _fast_retry_settings(
+        ai_api_key="primary-secret",
+        ai_base_url="https://primary.example.com/v1",
+        ai_model="primary-model",
+        ai_fallback_api_key="fallback-secret",
+        ai_fallback_base_url="https://fallback.example.com/v1",
+        ai_fallback_model="fallback-model",
+    )
+
+    open_breaker = CircuitBreaker(name="ai_primary", failure_threshold=1, recovery_seconds=30)
+    await open_breaker.on_failure(TRANSIENT)  # open now
+
+    def fake_breaker_for(name: str):
+        if name == BREAKER_AI_PRIMARY:
+            return open_breaker
+        return CircuitBreaker(name=name, failure_threshold=3, recovery_seconds=30)
+
+    monkeypatch.setattr(ai_client, "_breaker_for", fake_breaker_for)
+    client = SequenceClient([FakeResponse({"choices": [{"message": {"content": "备用回复"}}]})])
+
+    reply = await request_ai_reply("你好", settings=settings, client=client)
+
+    assert reply == "备用回复"
+    assert len(client.calls) == 1
+    assert client.calls[0]["url"] == "https://fallback.example.com/v1/chat/completions"
+
+
+@pytest.mark.asyncio
+async def test_request_ai_reply_invalid_response_is_not_retried() -> None:
+    settings = _fast_retry_settings(
+        ai_api_key="secret",
+        ai_base_url="https://primary.example.com/v1",
+        ai_model="primary-model",
+        ai_max_attempts=3,
+    )
+    client = FakeClient(InvalidJsonResponse({}))
+
+    with pytest.raises(AIReplyError, match="invalid response"):
+        await request_ai_reply("你好", settings=settings, client=client)
+
+    assert len(client.calls) == 1  # parsing failures are permanent
+
+
+@pytest.mark.asyncio
+async def test_request_ai_reply_empty_content_is_not_retried() -> None:
+    settings = _fast_retry_settings(
+        ai_api_key="secret",
+        ai_base_url="https://primary.example.com/v1",
+        ai_model="primary-model",
+        ai_max_attempts=3,
+    )
+    client = FakeClient(FakeResponse({"choices": [{"message": {"content": "   "}}]}))
+
+    with pytest.raises(AIReplyError, match="empty response"):
         await request_ai_reply("你好", settings=settings, client=client)
 
     assert len(client.calls) == 1

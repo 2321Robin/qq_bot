@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Added CI pipeline (GitHub Actions) with quality, test matrix (Python 3.11 / 3.12), security (Gitleaks) and container jobs.
+- Added pre-commit hooks (ruff format/check, Gitleaks secret scan).
+- Added Dockerfile and Compose deployment for a non-root backend image with named data volume.
+- Added `/healthz` and `/readyz` health endpoints (liveness / readiness incl. SQLite migrations).
+- Added asyncio SQLite chat-memory repository with versioned, transactional migrations.
+- Added reliability layer: classified retries (AI / Tavily / QQ send) with capped exponential backoff and jitter, per-dependency circuit breakers, and explicit never-retry semantics for ambiguous QQ send timeouts.
+- Added branch-coverage gate with a measured baseline (`fail_under = 82`).
 - Added maintainable runtime version lookup backed by the project version.
 - Added `/version` and `/版本` commands for checking the running bot version.
 - Added help text and README references for version and changelog support.
@@ -21,10 +28,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Included the computed weekday in AI current-time grounding to avoid mismatched date and weekday replies.
 - Refreshed local 洛克王国精灵 details through 图鉴编号 375.
+- Chat memory reads/writes are now fully asynchronous; event handlers no longer block the event loop on SQLite.
+- Scheduled-message sending and interactive sending share the same error classification and breaker; logs are redacted to counts and categories (no message bodies, raw ids, or credentials).
+- Named mentions in scheduled messages and AI replies (`@昵称` → @at) now resolve through `NAMED_MENTION_REPLACEMENTS` configuration instead of hardcoded accounts, so deployers keep real QQ numbers out of the public repository.
 
 ### Removed
 
 - Removed obsolete `/计数` capture counting command and local counter configuration.
+
+## [0.1.0] - 2026-06-04
 
 ## [0.1.0] - 2026-06-04
 

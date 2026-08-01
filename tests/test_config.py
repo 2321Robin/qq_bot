@@ -1,7 +1,13 @@
 import pytest
 from pydantic import ValidationError
 
-from qq_bot.config import BotSettings, get_settings, parse_id_list, parse_schedule_time_list
+from qq_bot.config import (
+    parse_named_mention_replacements,
+    BotSettings,
+    get_settings,
+    parse_id_list,
+    parse_schedule_time_list,
+)
 
 
 def test_parse_id_list_accepts_comma_separated_values() -> None:
@@ -206,3 +212,73 @@ def test_chat_memory_settings_validate_positive_limits() -> None:
 
     with pytest.raises(ValidationError, match="chat_memory_max_results"):
         BotSettings(chat_memory_max_results=0)
+
+
+def test_reliability_settings_defaults() -> None:
+    settings = BotSettings()
+    assert settings.ai_max_attempts == 2
+    assert settings.ai_retry_base_delay_seconds == 0.5
+    assert settings.ai_retry_max_delay_seconds == 4.0
+    assert settings.search_max_attempts == 3
+    assert settings.search_retry_base_delay_seconds == 0.5
+    assert settings.search_retry_max_delay_seconds == 4.0
+    assert settings.send_max_attempts == 2
+    assert settings.send_retry_base_delay_seconds == 0.5
+    assert settings.send_retry_max_delay_seconds == 3.0
+    assert settings.retry_jitter_ratio == 0.1
+    assert settings.breaker_failure_threshold == 3
+    assert settings.breaker_recovery_seconds == 30.0
+
+
+def test_reliability_settings_reject_invalid_values() -> None:
+    with pytest.raises(ValidationError, match="max attempts"):
+        BotSettings(ai_max_attempts=0)
+    with pytest.raises(ValidationError, match="max attempts"):
+        BotSettings(send_max_attempts=-1)
+    with pytest.raises(ValidationError, match="greater than 0"):
+        BotSettings(ai_retry_base_delay_seconds=0)
+    with pytest.raises(ValidationError, match="greater than 0"):
+        BotSettings(breaker_recovery_seconds=-5)
+    with pytest.raises(ValidationError, match="between 0 and 1"):
+        BotSettings(retry_jitter_ratio=-0.1)
+    with pytest.raises(ValidationError, match="between 0 and 1"):
+        BotSettings(retry_jitter_ratio=1.5)
+    with pytest.raises(ValidationError, match="breaker_failure_threshold"):
+        BotSettings(breaker_failure_threshold=0)
+
+
+def test_reliability_base_delay_must_not_exceed_max() -> None:
+    with pytest.raises(ValidationError, match="must not exceed"):
+        BotSettings(ai_retry_base_delay_seconds=5.0, ai_retry_max_delay_seconds=2.0)
+    with pytest.raises(ValidationError, match="must not exceed"):
+        BotSettings(send_retry_base_delay_seconds=9.0, send_retry_max_delay_seconds=3.0)
+    # equal values are allowed (no backoff growth)
+    BotSettings(ai_retry_base_delay_seconds=2.0, ai_retry_max_delay_seconds=2.0)
+
+
+def test_parse_named_mention_replacements_accepts_pairs() -> None:
+    assert parse_named_mention_replacements("@小呱呱=2880000001, @提醒=2880000002") == {
+        "@小呱呱": "2880000001",
+        "@提醒": "2880000002",
+    }
+
+
+def test_parse_named_mention_replacements_accepts_empty_value() -> None:
+    assert parse_named_mention_replacements("") == {}
+    assert parse_named_mention_replacements(None) == {}
+
+
+def test_named_mention_replacements_reject_non_integer_accounts() -> None:
+    with pytest.raises(ValidationError, match="name=qq"):
+        BotSettings(named_mention_replacements="@小呱呱=abc")
+
+
+def test_named_mention_replacements_reject_missing_equals() -> None:
+    with pytest.raises(ValidationError, match="name=qq"):
+        BotSettings(named_mention_replacements="@小呱呱")
+
+
+def test_named_mention_replacement_map_property() -> None:
+    settings = BotSettings(named_mention_replacements="@小呱呱=2880000001")
+    assert settings.named_mention_replacement_map == {"@小呱呱": "2880000001"}
+    assert BotSettings().named_mention_replacement_map == {}

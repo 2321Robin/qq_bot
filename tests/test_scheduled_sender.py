@@ -1,8 +1,14 @@
+"""Scheduled sender retry and breaker tests (S1-SEND-01..05)."""
+
+from __future__ import annotations
+
 import pytest
 from nonebot.adapters.onebot.v11 import Message
 from nonebot.adapters.onebot.v11.exception import NetworkError
 
 from qq_bot.config import BotSettings
+from qq_bot.services.reliability import TRANSIENT, CircuitBreaker
+import qq_bot.services.scheduled_sender as scheduled_sender_module
 from qq_bot.services.scheduled_sender import (
     build_scheduler_jobs_kwargs,
     build_scheduler_job_kwargs,
@@ -10,6 +16,14 @@ from qq_bot.services.scheduled_sender import (
     filter_allowed_group_ids,
     send_group_messages,
 )
+
+
+@pytest.fixture(autouse=True)
+def _fresh_onebot_breaker(monkeypatch):
+    """Isolate each test from the shared module-level OneBot breaker."""
+    breaker = CircuitBreaker(name="onebot", failure_threshold=3, recovery_seconds=30)
+    monkeypatch.setattr(scheduled_sender_module, "_onebot_breaker", lambda: breaker)
+    return breaker
 
 
 class FakeBot:
@@ -24,6 +38,8 @@ class FakeBot:
 
 
 class TimeoutBot:
+    """Ambiguous send timeout: the message may already have been accepted."""
+
     def __init__(self):
         self.sent: list[tuple[int, object]] = []
 
@@ -33,6 +49,8 @@ class TimeoutBot:
 
 
 class FlakyBot:
+    """Connection-level failure before acceptance: safe to retry."""
+
     def __init__(self, failures_before_success: int):
         self.failures_before_success = failures_before_success
         self.attempts: list[tuple[int, object]] = []
@@ -40,7 +58,7 @@ class FlakyBot:
     async def send_group_msg(self, *, group_id: int, message: object) -> None:
         self.attempts.append((group_id, message))
         if len(self.attempts) <= self.failures_before_success:
-            raise RuntimeError("send failed")
+            raise NetworkError("WebSocket connection closed")
 
 
 class AlwaysFailingBot:
@@ -49,7 +67,15 @@ class AlwaysFailingBot:
 
     async def send_group_msg(self, *, group_id: int, message: object) -> None:
         self.attempts.append((group_id, message))
-        raise RuntimeError("send failed")
+        raise NetworkError("WebSocket connection closed")
+
+
+def _noop_sleep(sleeps: list[float]):
+    async def _sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    return _sleep
+
 
 def test_build_scheduler_job_kwargs_uses_configured_time() -> None:
     settings = BotSettings(scheduled_cron_hour=8, scheduled_cron_minute=30)
@@ -103,15 +129,18 @@ def test_build_scheduler_jobs_kwargs_uses_configured_times() -> None:
 
 
 def test_describe_scheduler_job_includes_configured_time() -> None:
-    assert describe_scheduler_job(
-        {
-            "trigger": "cron",
-            "hour": 16,
-            "minute": 10,
-            "id": "daily_group_message_1610",
-            "replace_existing": True,
-        }
-    ) == "daily_group_message_1610 at 16:10"
+    assert (
+        describe_scheduler_job(
+            {
+                "trigger": "cron",
+                "hour": 16,
+                "minute": 10,
+                "id": "daily_group_message_1610",
+                "replace_existing": True,
+            }
+        )
+        == "daily_group_message_1610 at 16:10"
+    )
 
 
 def test_filter_allowed_group_ids_allows_all_when_allowlist_is_empty() -> None:
@@ -149,13 +178,18 @@ async def test_send_group_messages_sends_to_each_group() -> None:
 async def test_send_group_messages_replaces_named_mentions() -> None:
     bot = FakeBot()
 
-    failures = await send_group_messages(bot, [1001], "@小呱呱 /远行商人")
+    failures = await send_group_messages(
+        bot,
+        [1001],
+        "@小呱呱 /远行商人",
+        named_mention_replacements={"@小呱呱": "2880000001"},
+    )
 
     assert failures == []
     sent_message = bot.sent[0][1]
     assert isinstance(sent_message, Message)
     assert sent_message[0].type == "at"
-    assert sent_message[0].data["qq"] == "ACCOUNT_PLACEHOLDER"
+    assert sent_message[0].data["qq"] == "2880000001"
     assert sent_message[1].type == "text"
     assert sent_message[1].data["text"] == " /远行商人"
 
@@ -189,16 +223,15 @@ async def test_send_group_messages_does_not_retry_timeout() -> None:
     bot = TimeoutBot()
     sleep_calls: list[float] = []
 
-    async def fake_sleep(seconds: float) -> None:
-        sleep_calls.append(seconds)
-
     failures = await send_group_messages(
         bot,
         [1001],
         "早上好",
         max_attempts=3,
-        retry_delay_seconds=1.0,
-        sleep=fake_sleep,
+        base_delay_seconds=1.0,
+        max_delay_seconds=2.0,
+        sleep=_noop_sleep(sleep_calls),
+        random_source=lambda: 0.5,
     )
 
     assert failures == [1001]
@@ -207,25 +240,24 @@ async def test_send_group_messages_does_not_retry_timeout() -> None:
 
 
 @pytest.mark.asyncio
-async def test_send_group_messages_retries_failed_send() -> None:
+async def test_send_group_messages_retries_retryable_failure() -> None:
     bot = FlakyBot(failures_before_success=2)
     sleep_calls: list[float] = []
-
-    async def fake_sleep(seconds: float) -> None:
-        sleep_calls.append(seconds)
 
     failures = await send_group_messages(
         bot,
         [1001],
         "早上好",
         max_attempts=3,
-        retry_delay_seconds=0.5,
-        sleep=fake_sleep,
+        base_delay_seconds=0.5,
+        max_delay_seconds=1.0,
+        sleep=_noop_sleep(sleep_calls),
+        random_source=lambda: 0.5,
     )
 
     assert failures == []
     assert [group_id for group_id, _ in bot.attempts] == [1001, 1001, 1001]
-    assert sleep_calls == [0.5, 0.5]
+    assert sleep_calls == [0.5, 1.0]  # capped exponential backoff, zero jitter
 
 
 @pytest.mark.asyncio
@@ -233,18 +265,70 @@ async def test_send_group_messages_marks_failure_after_retries_exhausted() -> No
     bot = AlwaysFailingBot()
     sleep_calls: list[float] = []
 
-    async def fake_sleep(seconds: float) -> None:
-        sleep_calls.append(seconds)
-
     failures = await send_group_messages(
         bot,
         [1001],
         "早上好",
         max_attempts=2,
-        retry_delay_seconds=1.0,
-        sleep=fake_sleep,
+        base_delay_seconds=1.0,
+        max_delay_seconds=2.0,
+        sleep=_noop_sleep(sleep_calls),
+        random_source=lambda: 0.5,
     )
 
     assert failures == [1001]
     assert [group_id for group_id, _ in bot.attempts] == [1001, 1001]
     assert sleep_calls == [1.0]
+
+
+@pytest.mark.asyncio
+async def test_send_group_messages_uses_independent_retry_sequences_per_group() -> None:
+    """Tenacity policies keep per-attempt state; each group needs its own."""
+
+    class PerGroupFlakyBot:
+        def __init__(self):
+            self.attempts: list[tuple[int, object]] = []
+            self.failed_groups: set[int] = set()
+
+        async def send_group_msg(self, *, group_id: int, message: object) -> None:
+            self.attempts.append((group_id, message))
+            if group_id not in self.failed_groups:
+                self.failed_groups.add(group_id)
+                raise NetworkError("WebSocket connection closed")
+
+    bot = PerGroupFlakyBot()
+    sleep_calls: list[float] = []
+
+    failures = await send_group_messages(
+        bot,
+        [1001, 1002],
+        "早上好",
+        max_attempts=2,
+        base_delay_seconds=0.5,
+        max_delay_seconds=1.0,
+        sleep=_noop_sleep(sleep_calls),
+        random_source=lambda: 0.5,
+    )
+
+    assert failures == []
+    # each group fails once before succeeding: 4 attempts, 2 waits
+    assert [group_id for group_id, _ in bot.attempts] == [1001, 1001, 1002, 1002]
+    assert sleep_calls == [0.5, 0.5]
+
+
+@pytest.mark.asyncio
+async def test_send_group_messages_skips_groups_when_circuit_open() -> None:
+    bot = FakeBot()
+    open_breaker = CircuitBreaker(name="onebot", failure_threshold=1, recovery_seconds=30)
+    await open_breaker.on_failure(TRANSIENT)
+
+    failures = await send_group_messages(
+        bot,
+        [1001, 1002],
+        "早上好",
+        max_attempts=2,
+        breaker=open_breaker,
+    )
+
+    assert failures == [1001, 1002]
+    assert bot.sent == []  # nothing was attempted while the circuit is open

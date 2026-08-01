@@ -2,8 +2,9 @@ from nonebot import logger, on_message
 from nonebot.adapters.onebot.v11 import GroupMessageEvent
 
 from qq_bot.config import get_settings
+from qq_bot.runtime import get_chat_repository, get_http_client
 from qq_bot.services.ai_client import AIReplyError, request_ai_reply
-from qq_bot.services.chat_memory import ChatMemoryStore
+from qq_bot.services.chat_memory import ChatMemoryRepository
 from qq_bot.services.memory_prompt import (
     extract_at_user_ids,
     extract_at_user_ids_before_separator,
@@ -33,14 +34,15 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
     if event.user_id in settings.ai_ignored_user_id_list:
         return
 
-    memory_store: ChatMemoryStore | None = None
+    memory_store: ChatMemoryRepository | None = None
+    http_client = None
     try:
-        memory_store = ChatMemoryStore(
-            settings.chat_memory_path,
-            retention_days=settings.chat_memory_retention_days,
-        )
+        memory_store = get_chat_repository()
+        http_client = get_http_client()
     except Exception:
-        logger.exception("Chat memory initialization failed; continuing without memory")
+        logger.exception(
+            "Runtime resources unavailable; continuing without memory or shared client"
+        )
 
     raw_text = event.get_message().extract_plain_text().strip()
     prompt = extract_ai_prompt(raw_text, prefix=settings.ai_prefix)
@@ -56,7 +58,7 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
     if prompt is None:
         if memory_store is not None:
             try:
-                memory_store.add_message(
+                await memory_store.add_message(
                     group_id=event.group_id,
                     user_id=event.user_id,
                     message_text=raw_text,
@@ -96,14 +98,16 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
                 settings.chat_memory_max_results,
             )
             if memory_reference.user_id is not None or memory_reference.keyword:
-                rows = memory_store.search_messages(
+                rows = await memory_store.search_messages(
                     group_id=event.group_id,
                     user_id=memory_reference.user_id,
                     keyword=memory_reference.keyword,
                     limit=limit,
                 )
             else:
-                rows = memory_store.recent_group_messages(group_id=event.group_id, limit=limit)
+                rows = await memory_store.recent_group_messages(
+                    group_id=event.group_id, limit=limit
+                )
             chat_context = format_chat_context(rows)
         except Exception:
             logger.exception("Chat memory read failed; continuing without chat context")
@@ -111,7 +115,7 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
     memory_message_id: int | None = None
     if memory_store is not None:
         try:
-            memory_message_id = memory_store.add_message(
+            memory_message_id = await memory_store.add_message(
                 group_id=event.group_id,
                 user_id=event.user_id,
                 message_text=raw_text,
@@ -136,20 +140,25 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
 
     if needs_search:
         try:
-            search_results = await search_web(prompt, settings=settings)
+            search_results = await search_web(prompt, settings=settings, client=http_client)
         except SearchError:
             logger.exception("Web search failed for current-event prompt")
-            await finish_with_send_errors_logged(ai_chat, "联网搜索失败了，先不乱编；稍后再问我试试。")
+            await finish_with_send_errors_logged(
+                ai_chat, "联网搜索失败了，先不乱编；稍后再问我试试。"
+            )
         else:
             if search_results:
                 search_context = format_search_context(search_results)
             else:
-                await finish_with_send_errors_logged(ai_chat, "联网搜索没有找到可靠结果，先不乱编。")
+                await finish_with_send_errors_logged(
+                    ai_chat, "联网搜索没有找到可靠结果，先不乱编。"
+                )
 
     try:
         reply = await request_ai_reply(
             prompt,
             settings=settings,
+            client=http_client,
             search_context=search_context,
             chat_context=chat_context,
             roco_context=roco_context,
@@ -159,11 +168,13 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
 
     if memory_message_id is not None:
         try:
-            memory_store.update_ai_reply(memory_message_id, reply)
+            await memory_store.update_ai_reply(memory_message_id, reply)
         except Exception:
             logger.exception("Chat memory reply update failed")
 
-    await finish_with_send_errors_logged(ai_chat, replace_named_mentions(reply))
+    await finish_with_send_errors_logged(
+        ai_chat, replace_named_mentions(reply, settings.named_mention_replacement_map)
+    )
 
 
 def _mentions_self(event: GroupMessageEvent) -> bool:
@@ -185,9 +196,7 @@ def _strip_leading_self_mention_text(event: GroupMessageEvent) -> str:
         return event.get_message().extract_plain_text()
 
     return "".join(
-        str(segment.data.get("text", ""))
-        for segment in segments
-        if segment.type == "text"
+        str(segment.data.get("text", "")) for segment in segments if segment.type == "text"
     )
 
 
