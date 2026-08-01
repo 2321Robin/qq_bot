@@ -174,7 +174,9 @@ def test_render_pet_card_png_draws_all_attribute_icons(tmp_path: Path) -> None:
     Image.new("RGBA", (26, 26), (255, 0, 255, 255)).save(icon_dir / "attribute-光.png")
     Image.new("RGBA", (26, 26), (0, 255, 255, 255)).save(icon_dir / "attribute-火.png")
 
-    image = Image.open(BytesIO(render_pet_card_png(record, asset_directory=tmp_path))).convert("RGB")
+    image = Image.open(BytesIO(render_pet_card_png(record, asset_directory=tmp_path))).convert(
+        "RGB"
+    )
 
     magenta_pixels = sum(
         1
@@ -208,7 +210,9 @@ def test_multi_attribute_text_is_drawn_next_to_each_icon(tmp_path: Path) -> None
     Image.new("RGBA", (26, 26), (255, 0, 255, 255)).save(icon_dir / "attribute-光.png")
     Image.new("RGBA", (26, 26), (0, 255, 255, 255)).save(icon_dir / "attribute-火.png")
 
-    image = Image.open(BytesIO(render_pet_card_png(record, asset_directory=tmp_path))).convert("RGB")
+    image = Image.open(BytesIO(render_pet_card_png(record, asset_directory=tmp_path))).convert(
+        "RGB"
+    )
     attr_pixels = [
         x
         for y in range(72, 100)
@@ -232,7 +236,9 @@ def test_render_pet_card_png_falls_back_for_missing_attribute_icon(tmp_path: Pat
         source_url="https://wiki.biligame.com/rocom/鸭吉吉国王",
     )
 
-    image = Image.open(BytesIO(render_pet_card_png(record, asset_directory=tmp_path))).convert("RGB")
+    image = Image.open(BytesIO(render_pet_card_png(record, asset_directory=tmp_path))).convert(
+        "RGB"
+    )
 
     orange_pixels = sum(
         1
@@ -260,7 +266,9 @@ def test_render_pet_card_png_does_not_draw_trait_icon(tmp_path: Path) -> None:
     icon_dir.mkdir()
     Image.new("RGBA", (24, 24), (255, 0, 255, 255)).save(icon_dir / "trait-best-partner.png")
 
-    image = Image.open(BytesIO(render_pet_card_png(record, asset_directory=tmp_path))).convert("RGB")
+    image = Image.open(BytesIO(render_pet_card_png(record, asset_directory=tmp_path))).convert(
+        "RGB"
+    )
 
     assert image.getpixel((83, 181)) != (255, 0, 255)
 
@@ -287,7 +295,10 @@ def test_pet_name_uses_uniform_font_size_and_wraps_before_attributes() -> None:
 
     assert fitted_font.size == 20
     assert len(lines) >= 2
-    assert all(name_box[0] + draw.textbbox((0, 0), line, font=fitted_font)[2] <= attr_box[0] - 10 for line in lines)
+    assert all(
+        name_box[0] + draw.textbbox((0, 0), line, font=fitted_font)[2] <= attr_box[0] - 10
+        for line in lines
+    )
 
 
 def test_pet_name_never_shrinks_below_uniform_size() -> None:
@@ -319,7 +330,10 @@ def test_011_title_has_gap_before_attribute_box() -> None:
     fitted, lines = _fit_name_lines_to_box(draw, "鸭吉吉国王", font, name_box)
 
     assert fitted.size == 20
-    assert all(name_box[0] + draw.textbbox((0, 0), line, font=fitted)[2] <= attr_box[0] - 10 for line in lines)
+    assert all(
+        name_box[0] + draw.textbbox((0, 0), line, font=fitted)[2] <= attr_box[0] - 10
+        for line in lines
+    )
 
 
 def test_attribute_pill_box_is_compact_for_single_attribute() -> None:
@@ -353,8 +367,14 @@ def test_fit_wrapped_text_to_box_keeps_long_trait_description_inside_box() -> No
     font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", size=24)
     text = "鸭吉吉国王的种族资质大幅增加，能耗为1的技能威力+50%。"
 
-    fitted_font, lines = _fit_wrapped_text_to_box(draw, text, font, (78, 204, 625, 250), line_spacing=4)
-    total_height = sum(draw.textbbox((0, 0), line, font=fitted_font)[3] - draw.textbbox((0, 0), line, font=fitted_font)[1] for line in lines)
+    fitted_font, lines = _fit_wrapped_text_to_box(
+        draw, text, font, (78, 204, 625, 250), line_spacing=4
+    )
+    total_height = sum(
+        draw.textbbox((0, 0), line, font=fitted_font)[3]
+        - draw.textbbox((0, 0), line, font=fitted_font)[1]
+        for line in lines
+    )
     total_height += 4 * max(0, len(lines) - 1)
 
     assert total_height <= 46
@@ -375,7 +395,9 @@ def test_trait_label_text_fits_inside_pill() -> None:
     trait_box = (70, 164, 220, 198)
     text = "“国王”的威严"
 
-    fitted = _fit_icon_text_font_to_box(draw, text, font, trait_box, icon_width=0, gap=8, padding=20)
+    fitted = _fit_icon_text_font_to_box(
+        draw, text, font, trait_box, icon_width=0, gap=8, padding=20
+    )
     bbox = draw.textbbox((0, 0), text, font=fitted)
 
     assert bbox[2] - bbox[0] <= trait_box[2] - trait_box[0] - 20
@@ -643,7 +665,9 @@ def test_generate_pet_card_files_accepts_output_and_asset_directories(tmp_path: 
     pet_art_path(record, asset_dir).parent.mkdir(parents=True, exist_ok=True)
     pet_art_path(record, asset_dir).write_bytes(_tiny_png_bytes())
 
-    paths = generate_pet_card_files([record], output_directory=output_dir, asset_directory=asset_dir)
+    paths = generate_pet_card_files(
+        [record], output_directory=output_dir, asset_directory=asset_dir
+    )
 
     assert paths == [output_dir / "001-迪莫.png"]
     image = Image.open(paths[0])
@@ -652,7 +676,7 @@ def test_generate_pet_card_files_accepts_output_and_asset_directories(tmp_path: 
 
 def test_pet_card_path_sanitizes_file_name(tmp_path: Path) -> None:
     record = PetRecord(
-        name='测/试:宠*物?',
+        name="测/试:宠*物?",
         aliases=[],
         number="9/9",
         attributes=[],
@@ -667,7 +691,7 @@ def test_pet_card_path_sanitizes_file_name(tmp_path: Path) -> None:
 
 def test_pet_art_path_sanitizes_file_name(tmp_path: Path) -> None:
     record = PetRecord(
-        name='测/试:宠*物?',
+        name="测/试:宠*物?",
         aliases=[],
         number="9/9",
         attributes=[],
@@ -765,7 +789,9 @@ def test_ensure_pet_art_assets_downloads_missing_file(tmp_path: Path) -> None:
         [record],
         asset_directory=tmp_path,
         fetch_html_func=lambda url: html,
-        fetch_bytes_func=lambda url: _tiny_png_bytes() if url.endswith("/rocom/images/1/11/Dimo.png") else b"",
+        fetch_bytes_func=lambda url: (
+            _tiny_png_bytes() if url.endswith("/rocom/images/1/11/Dimo.png") else b""
+        ),
     )
 
     assert result == {"existing": 0, "fetched": 1, "failed": 0}
@@ -801,7 +827,9 @@ def test_ensure_pet_art_assets_prefers_pet_art_over_logo(tmp_path: Path) -> None
     )
 
     assert result == {"existing": 0, "fetched": 1, "failed": 0}
-    assert requested_urls == ["https://wiki.biligame.com/rocom/images/2/22/页面_宠物_立绘_迪莫_1.png"]
+    assert requested_urls == [
+        "https://wiki.biligame.com/rocom/images/2/22/页面_宠物_立绘_迪莫_1.png"
+    ]
 
 
 def test_ensure_pet_art_assets_accepts_positional_optional_arguments(tmp_path: Path) -> None:
@@ -842,7 +870,9 @@ def test_ensure_pet_art_assets_rejects_invalid_image_bytes(tmp_path: Path, capsy
     result = ensure_pet_art_assets(
         [record],
         asset_directory=tmp_path,
-        fetch_html_func=lambda url: '<img alt="页面 宠物 立绘 迪莫 1.png" src="/rocom/images/1/11/Dimo.png">',
+        fetch_html_func=lambda url: (
+            '<img alt="页面 宠物 立绘 迪莫 1.png" src="/rocom/images/1/11/Dimo.png">'
+        ),
         fetch_bytes_func=lambda url: b"not an image",
     )
 
@@ -960,7 +990,9 @@ def test_load_pet_records_from_details_skips_invalid_json(tmp_path: Path, capsys
 
     records = load_pet_records_from_details(tmp_path)
 
-    assert [(record.name, record.evolution_chain, record.stage) for record in records] == [("喵喵", ["喵喵"], "")]
+    assert [(record.name, record.evolution_chain, record.stage) for record in records] == [
+        ("喵喵", ["喵喵"], "")
+    ]
     captured = capsys.readouterr()
     assert "Skipped" in captured.err
     assert "broken.json" in captured.err

@@ -20,7 +20,9 @@ def main() -> None:
     records = load_pet_records_from_details(DETAIL_DIR)
     attribute_icon_stats = ensure_attribute_icon_assets(records, asset_directory=ASSET_DIR)
     asset_stats = ensure_pet_art_assets(records, asset_directory=ASSET_DIR)
-    generated_paths = generate_pet_card_files(records, output_directory=CARD_DIR, asset_directory=ASSET_DIR)
+    generated_paths = generate_pet_card_files(
+        records, output_directory=CARD_DIR, asset_directory=ASSET_DIR
+    )
     generated_count = len(generated_paths)
     print(
         f"Loaded {len(records)} pet record(s); "

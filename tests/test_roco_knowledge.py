@@ -120,7 +120,6 @@ def test_roco_context_includes_full_downstream_evolution_routes() -> None:
     assert "- 画像守护 -> 画间沉铁兽：达到36级并击败3个幻系精灵" in context
 
 
-
 def test_roco_context_matches_pet_by_number_in_evolution_question() -> None:
     records = [
         pet(
@@ -129,7 +128,12 @@ def test_roco_context_matches_pet_by_number_in_evolution_question() -> None:
             chain=["钨丝贝贝", "辉光幕机"],
             number="348",
         ),
-        pet("辉光幕机", condition="可由钨丝贝贝提升为1星进化得", chain=["钨丝贝贝", "辉光幕机"], number="349"),
+        pet(
+            "辉光幕机",
+            condition="可由钨丝贝贝提升为1星进化得",
+            chain=["钨丝贝贝", "辉光幕机"],
+            number="349",
+        ),
     ]
 
     context = build_roco_context("序号348怎么进化？", pet_records=records, skill_records=[])
@@ -137,13 +141,18 @@ def test_roco_context_matches_pet_by_number_in_evolution_question() -> None:
     assert "匹配精灵：钨丝贝贝" in context
     assert "进化条件：提升为1星可进化为辉光幕机" in context
 
+
 def test_roco_context_describes_how_target_evolves_from_local_record() -> None:
     records = [
         pet("画精灵", chain=["画精灵"], number="299"),
-        pet("画间沉铁兽", condition="击败三只幻系精灵", chain=["画精灵", "画间沉铁兽"], number="302"),
+        pet(
+            "画间沉铁兽", condition="击败三只幻系精灵", chain=["画精灵", "画间沉铁兽"], number="302"
+        ),
     ]
 
-    context = build_roco_context("画间沉铁兽是怎么进化得到的？", pet_records=records, skill_records=[])
+    context = build_roco_context(
+        "画间沉铁兽是怎么进化得到的？", pet_records=records, skill_records=[]
+    )
 
     assert "匹配精灵：画间沉铁兽" in context
     assert "进化链：画精灵 -> 画间沉铁兽" in context

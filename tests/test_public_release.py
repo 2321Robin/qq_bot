@@ -74,7 +74,7 @@ def test_no_qq_account_literal() -> None:
             if stripped.startswith("#"):
                 continue
             # Check NapCatAccount assignment with a literal number value
-            if re.search(r'NapCatAccount\s*=\s*\d', stripped):
+            if re.search(r"NapCatAccount\s*=\s*\d", stripped):
                 hits.append(f"{path_str}: NapCatAccount assignment with literal number")
             # Check standalone quoted numbers (6+ digits)
             matches = re.findall(r'["\']\d\d\d\d\d\d+["\']', stripped)
@@ -88,9 +88,7 @@ def test_no_qq_account_literal() -> None:
 
 def test_no_webui_token_url() -> None:
     """Controlled files must not contain NapCat WebUI token URLs."""
-    hits = _check_controlled_files(
-        "webui?token=", "a NapCat WebUI token URL (webui?token=)"
-    )
+    hits = _check_controlled_files("webui?token=", "a NapCat WebUI token URL (webui?token=)")
     assert not hits, "\n".join(hits)
 
 
@@ -148,13 +146,14 @@ def test_gitleaks_toml_no_tokens() -> None:
     if not path.exists():
         return  # will be caught by test_required_files_exist
     import re
+
     text = path.read_text(encoding="utf-8")
     # Must not contain a NapCat token (hex token preceded by webui)
-    assert not re.search(r"webui\\?token=['\"]?[0-9a-f]{12,}", text), \
+    assert not re.search(r"webui\\?token=['\"]?[0-9a-f]{12,}", text), (
         ".gitleaks.toml contains a NapCat WebUI token"
+    )
     # Must not contain a QQ account number literal
-    assert not re.search(r"\d{9,}", text), \
-        ".gitleaks.toml contains a QQ account number"
+    assert not re.search(r"\d{9,}", text), ".gitleaks.toml contains a QQ account number"
 
 
 def test_startup_example_no_real_values() -> None:

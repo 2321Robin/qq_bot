@@ -6,7 +6,13 @@ from nonebot.params import CommandArg
 from qq_bot.config import get_settings
 from qq_bot.services.onebot_send import finish_with_send_errors_logged
 from qq_bot.services.roco_pet_cards import pet_card_path
-from qq_bot.services.roco_pets import PetRecord, find_pet, format_pet_query_result, format_pet_record, get_pet_records
+from qq_bot.services.roco_pets import (
+    PetRecord,
+    find_pet,
+    format_pet_query_result,
+    format_pet_record,
+    get_pet_records,
+)
 from qq_bot.services.roco_skills import SkillRecord, format_skill_query_result, get_skill_records
 
 

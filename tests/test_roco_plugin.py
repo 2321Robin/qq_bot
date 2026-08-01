@@ -79,7 +79,9 @@ async def test_roco_pet_command_replies_with_detail_derived_card(
     async def fake_finish(message: object) -> None:
         raise FinishCalled(message)
 
-    records = tuple(load_pet_records(Path(__file__).resolve().parent / "fixtures" / "roco_pet_details"))
+    records = tuple(
+        load_pet_records(Path(__file__).resolve().parent / "fixtures" / "roco_pet_details")
+    )
 
     def fake_card_path(record: PetRecord) -> object:
         assert record.name == "TestPetA"
@@ -285,9 +287,7 @@ async def test_roco_mention_lookup_prefers_pet_when_pet_and_skill_match(
             source_url="https://example.com/pet",
         ),
     )
-    skill_records = (
-        SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "TestPetA"),
-    )
+    skill_records = (SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "TestPetA"),)
 
     def fake_card_path(record: PetRecord) -> object:
         assert record.name == "闪光"
@@ -340,9 +340,7 @@ async def test_roco_mention_lookup_ignores_sentences_containing_pet_or_skill_nam
             source_url="https://example.com/pet",
         ),
     )
-    skill_records = (
-        SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "TestPetA"),
-    )
+    skill_records = (SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "TestPetA"),)
 
     monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
     monkeypatch.setattr(roco_plugin, "get_pet_records", lambda: pet_records)

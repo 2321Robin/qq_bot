@@ -17,6 +17,8 @@ def test_load_pet_records_reads_detail_json_directory() -> None:
 
     assert len(records) >= 5
     assert any(record.name == "TestPetA" for record in records)
+
+
 def test_load_pet_records_maps_detail_fields_to_pet_record() -> None:
     records = load_pet_records(FIXTURE_DIR)
     pet = next(record for record in records if record.name == "TestPetA")
@@ -130,7 +132,6 @@ def test_load_pet_records_preserves_detail_evolution_chain() -> None:
     assert pet_b.evolution_chain == ["TestPetB"]
 
 
-
 def test_load_pet_records_prefers_detail_evolution_object() -> None:
     records = load_pet_records(FIXTURE_DIR)
     pet_c = find_pet(records, "TestPetC")
@@ -144,7 +145,11 @@ def test_load_pet_records_prefers_detail_evolution_object_from_tmp(tmp_path) -> 
         "source_url": "https://example.com/miaowu",
         "attributes": ["草"],
         "evolution_condition": "由喵喵等级16级进化",
-        "evolution": {"from": [], "to": [], "evolution_condition": "可由喵喵升至16级进化得；升至36级可进化为魔力猫"},
+        "evolution": {
+            "from": [],
+            "to": [],
+            "evolution_condition": "可由喵喵升至16级进化得；升至36级可进化为魔力猫",
+        },
         "evolution_chain": ["喵喵", "喵呜", "魔力猫"],
         "profile": {"编号": "003"},
         "stats": {},
@@ -157,7 +162,6 @@ def test_load_pet_records_prefers_detail_evolution_object_from_tmp(tmp_path) -> 
 
     assert records[0].evolution_chain == ["喵喵", "喵呜", "魔力猫"]
     assert records[0].evolution_condition == "可由喵喵升至16级进化得；升至36级可进化为魔力猫"
-
 
 
 def test_load_pet_records_maps_structured_evolution_relations(tmp_path) -> None:
@@ -198,6 +202,7 @@ def test_load_pet_records_maps_structured_evolution_relations(tmp_path) -> None:
     assert record.evolution_from[0].text == "可由喵喵升至16级进化得"
     assert record.evolution_to[0].target == "魔力猫"
     assert record.evolution_to[0].text == "升至36级可进化为魔力猫"
+
 
 def test_format_pet_record_includes_evolution_condition_and_source() -> None:
     record = PetRecord(

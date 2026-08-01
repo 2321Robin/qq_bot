@@ -20,13 +20,17 @@ def test_parse_keyword_reference() -> None:
 
 
 def test_parse_mentioned_user_recent_reference() -> None:
-    parsed = parse_memory_reference("参考 @小明 的最近20条：总结他的想法", mentioned_user_ids=[2001])
+    parsed = parse_memory_reference(
+        "参考 @小明 的最近20条：总结他的想法", mentioned_user_ids=[2001]
+    )
 
     assert parsed == MemoryReference(question="总结他的想法", user_id=2001, limit=20)
 
 
 def test_parse_mentioned_user_keyword_reference() -> None:
-    parsed = parse_memory_reference("参考 @小明 关于 洛克王国 的聊天：整理重点", mentioned_user_ids=[2001])
+    parsed = parse_memory_reference(
+        "参考 @小明 关于 洛克王国 的聊天：整理重点", mentioned_user_ids=[2001]
+    )
 
     assert parsed == MemoryReference(question="整理重点", user_id=2001, keyword="洛克王国")
 
@@ -73,7 +77,9 @@ def test_extract_at_user_ids_from_message_segments() -> None:
             self.type = segment_type
             self.data = {"qq": qq}
 
-    assert extract_at_user_ids([FakeSegment("at", "2001"), FakeSegment("text", "ignored")]) == [2001]
+    assert extract_at_user_ids([FakeSegment("at", "2001"), FakeSegment("text", "ignored")]) == [
+        2001
+    ]
 
 
 def test_extract_at_user_ids_skips_invalid_payloads() -> None:
@@ -91,11 +97,16 @@ def test_extract_at_user_ids_preserves_valid_mention_order() -> None:
             self.type = segment_type
             self.data = {"qq": qq}
 
-    assert extract_at_user_ids([FakeSegment("at", "2002"), FakeSegment("at", "2001")]) == [2002, 2001]
+    assert extract_at_user_ids([FakeSegment("at", "2002"), FakeSegment("at", "2001")]) == [
+        2002,
+        2001,
+    ]
 
 
 def test_parse_uses_first_valid_mentioned_user_id() -> None:
-    parsed = parse_memory_reference("参考 @小明 的最近20条：总结他的想法", mentioned_user_ids=[2002, 2001])
+    parsed = parse_memory_reference(
+        "参考 @小明 的最近20条：总结他的想法", mentioned_user_ids=[2002, 2001]
+    )
 
     assert parsed == MemoryReference(question="总结他的想法", user_id=2002, limit=20)
 

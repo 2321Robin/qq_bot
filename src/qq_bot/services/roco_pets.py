@@ -177,11 +177,11 @@ def _record_from_detail(item: Any) -> PetRecord:
         evolution_chain=_detail_evolution_chain(item, name),
         evolution_condition=_detail_evolution_condition(item),
         source_url=_string_value(item, "source_url"),
-        height_weight=_string_from_mapping(profile, "体重") or _string_from_mapping(profile, "身高体重"),
+        height_weight=_string_from_mapping(profile, "体重")
+        or _string_from_mapping(profile, "身高体重"),
         body_length=_string_from_mapping(profile, "体长"),
         favorite_partner=(
-            _string_from_mapping(profile, "最好的伙伴")
-            or _string_from_mapping(profile, "最佳拍档")
+            _string_from_mapping(profile, "最好的伙伴") or _string_from_mapping(profile, "最佳拍档")
         ),
         description=_string_from_mapping(profile, "简介") or _first_skill_effect(item),
         race_value=_optional_int(item, "total_race_value"),
@@ -357,7 +357,9 @@ def _stats_value(item: dict[str, Any]) -> dict[str, int] | None:
 
 
 def _query_number_candidates(query: str) -> list[str]:
-    explicit_matches = re.findall(r"(?:序号|编号|图鉴编号|图鉴|No\.?|NO\.?|no\.?|#)\s*0*(\d{1,3})(?!\d)", query)
+    explicit_matches = re.findall(
+        r"(?:序号|编号|图鉴编号|图鉴|No\.?|NO\.?|no\.?|#)\s*0*(\d{1,3})(?!\d)", query
+    )
     if explicit_matches:
         return [_normalize_number(match) for match in explicit_matches]
 
@@ -409,11 +411,15 @@ def _same_number(record_number: str, query_number: str) -> bool:
         return record_number == query_number
 
 
-def _best_direct_name_match(records: list[PetRecord] | tuple[PetRecord, ...], query: str) -> PetRecord | None:
+def _best_direct_name_match(
+    records: list[PetRecord] | tuple[PetRecord, ...], query: str
+) -> PetRecord | None:
     return _best_named_match(records, query, include_chain=False)
 
 
-def _best_chain_match(records: list[PetRecord] | tuple[PetRecord, ...], query: str) -> PetRecord | None:
+def _best_chain_match(
+    records: list[PetRecord] | tuple[PetRecord, ...], query: str
+) -> PetRecord | None:
     return _best_named_match(records, query, include_chain=True)
 
 
@@ -443,6 +449,7 @@ def _best_named_match(
             if best is None or candidate[:3] > best[:3]:
                 best = candidate
     return best[3] if best is not None else None
+
 
 def _value_or_unknown(value: str) -> str:
     return value or "未知"

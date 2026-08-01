@@ -112,9 +112,7 @@ def _format_skill_intersection_context(
     selected_names = skill_names[:MAX_CONTEXT_SKILLS]
     pets_by_skill = {
         skill_name: {
-            record.pet_name
-            for record in records
-            if record.name == skill_name and record.pet_name
+            record.pet_name for record in records if record.name == skill_name and record.pet_name
         }
         for skill_name in selected_names
     }
@@ -127,7 +125,9 @@ def _format_skill_intersection_context(
         f"同时可学习精灵：{_format_pet_names(common_pets, records)}",
     ]
     for skill_name in selected_names:
-        lines.append(f"{skill_name} 可学习精灵：{_format_pet_names(pets_by_skill[skill_name], records)}")
+        lines.append(
+            f"{skill_name} 可学习精灵：{_format_pet_names(pets_by_skill[skill_name], records)}"
+        )
     lines.append("回答时只能依据以上本地技能表；没有交集就说明本地数据没有记录。")
     return "\n".join(lines)
 
@@ -210,10 +210,10 @@ def _format_evolution_context(record: PetRecord, records: Sequence[PetRecord]) -
 
     if record.source_url:
         lines.append(f"来源：{record.source_url}")
-    lines.append("回答时优先说明完整进化路线；只能依据以上本地图鉴字段，字段为空或未写明就说明本地数据没有记录。")
+    lines.append(
+        "回答时优先说明完整进化路线；只能依据以上本地图鉴字段，字段为空或未写明就说明本地数据没有记录。"
+    )
     return "\n".join(lines)
-
-
 
 
 def _full_evolution_routes(record: PetRecord, records: Sequence[PetRecord]) -> list[str]:
@@ -267,7 +267,9 @@ def _collect_evolution_routes(
         _collect_evolution_routes(successor, records, routes, seen_edges, next_visiting)
 
 
-def _direct_evolution_successors(record: PetRecord, records: Sequence[PetRecord]) -> list[PetRecord]:
+def _direct_evolution_successors(
+    record: PetRecord, records: Sequence[PetRecord]
+) -> list[PetRecord]:
     successors: list[PetRecord] = []
     seen: set[str] = set()
 
@@ -344,6 +346,7 @@ def _dedupe_records(records: Sequence[PetRecord]) -> list[PetRecord]:
         deduped.append(record)
         seen.add(record.name)
     return deduped
+
 
 def _format_pet_context(record: PetRecord) -> str:
     lines = [

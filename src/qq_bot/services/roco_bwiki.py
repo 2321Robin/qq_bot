@@ -138,7 +138,10 @@ class _BwikiParser(HTMLParser):
                     self.class_texts[class_name].append(text)
                     if self._skill_stack and class_name in SKILL_FIELD_CLASSES:
                         self._skill_stack[-1][SKILL_FIELD_CLASSES[class_name]] = text
-                    if self._evolution_box_stack and class_name == "rocom_spirit_evolution_level_num":
+                    if (
+                        self._evolution_box_stack
+                        and class_name == "rocom_spirit_evolution_level_num"
+                    ):
                         self._evolution_box_stack[-1]["conditions"].append(text)
             if element["skill_box"] and self._skill_stack:
                 skill_row = self._skill_stack.pop()
@@ -171,14 +174,15 @@ class _BwikiParser(HTMLParser):
 
     def _capture_evolution_anchor(self) -> None:
         anchor = self._anchor_stack.pop()
-        title = _attr_value(anchor["attrs"], "title") or _normalize_text("".join(anchor["text_parts"]))
+        title = _attr_value(anchor["attrs"], "title") or _normalize_text(
+            "".join(anchor["text_parts"])
+        )
         if not title or not self._evolution_box_stack:
             return
         if any("rocom_spirit_evolution_1" in element["classes"] for element in self._element_stack):
             self._evolution_box_stack[-1]["sources"].append(title)
         if any("rocom_spirit_evolution_2" in element["classes"] for element in self._element_stack):
             self._evolution_box_stack[-1]["targets"].append(title)
-
 
 
 def _build_evolution_edges_from_box(box: dict[str, Any]) -> list[dict[str, str]]:
@@ -194,7 +198,9 @@ def _build_evolution_edges_from_box(box: dict[str, Any]) -> list[dict[str, str]]
         source = _indexed_or_single(sources, index)
         target = _indexed_or_single(targets, index)
         if source and target:
-            edges.append(build_evolution_edge(source, target, _indexed_or_single(conditions, index)))
+            edges.append(
+                build_evolution_edge(source, target, _indexed_or_single(conditions, index))
+            )
     return edges
 
 
@@ -204,6 +210,7 @@ def _indexed_or_single(values: list[str], index: int) -> str:
     if len(values) == 1:
         return values[0]
     return ""
+
 
 def parse_pet_detail(source_url: str, html: str) -> dict[str, Any]:
     """Parse a BWiki pet detail page into normalized pet detail data."""
@@ -233,8 +240,12 @@ def parse_pet_detail(source_url: str, html: str) -> dict[str, Any]:
     div_attributes = _parse_component_attributes(parser)
     physique = _parse_component_physique(parser)
     evolution_edges = parser.evolution_edges
-    component_evolution_condition = _parse_component_evolution_condition(evolution_edges, _extract_name(parser))
-    div_evolution_condition = _first_class_text(parser, "rocom_evolution_data") or component_evolution_condition
+    component_evolution_condition = _parse_component_evolution_condition(
+        evolution_edges, _extract_name(parser)
+    )
+    div_evolution_condition = (
+        _first_class_text(parser, "rocom_evolution_data") or component_evolution_condition
+    )
     for key, value in _parse_component_profile(parser, div_attributes, physique).items():
         profile.setdefault(key, value)
     for key, value in _parse_component_trait(parser).items():
@@ -265,7 +276,6 @@ def parse_pet_detail(source_url: str, html: str) -> dict[str, Any]:
             "generated_at": datetime.now(UTC).isoformat(),
         },
     }
-
 
 
 def _looks_like_raw_pet_template(source: str) -> bool:
@@ -417,7 +427,6 @@ def _raw_skill_level(value: str) -> str:
     return f"LV{text}" if text.isdigit() else text
 
 
-
 def _without_raw_action(source_url: str) -> str:
     return re.sub(r"([?&])action=raw&?", lambda match: match.group(1), source_url).rstrip("?&")
 
@@ -527,7 +536,9 @@ def _parse_component_attributes(parser: _BwikiParser) -> list[str]:
     return _dedupe_values(attributes)
 
 
-def _parse_component_evolution_condition(evolution_edges: list[dict[str, str]], current_name: str) -> str:
+def _parse_component_evolution_condition(
+    evolution_edges: list[dict[str, str]], current_name: str
+) -> str:
     for edge in evolution_edges:
         if edge["target"] == current_name:
             return legacy_evolution_condition(edge)
@@ -591,7 +602,15 @@ def _parse_component_trait(parser: _BwikiParser) -> dict[str, str]:
         for candidate in parser.visible_texts[index + 1 :]:
             if candidate in {"精灵属性", "进化链", "克制表"}:
                 break
-            if candidate.startswith("等级:") or candidate in {"选择性格", "生命:", "速度:", "物攻:", "物防:", "魔攻:", "魔防:"}:
+            if candidate.startswith("等级:") or candidate in {
+                "选择性格",
+                "生命:",
+                "速度:",
+                "物攻:",
+                "物防:",
+                "魔攻:",
+                "魔防:",
+            }:
                 break
             values.append(candidate)
         if len(values) >= 2:

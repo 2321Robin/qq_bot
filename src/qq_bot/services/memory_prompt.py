@@ -60,7 +60,9 @@ def parse_memory_reference(prompt: str, *, mentioned_user_ids: list[int]) -> Mem
     limit_match = re.search(r"最近\s*(\d+)\s*条", head)
     limit = int(limit_match.group(1)) if limit_match else None
     keyword = _extract_keyword(head)
-    user_id = mentioned_user_ids[0] if _references_mentioned_user(head, mentioned_user_ids) else None
+    user_id = (
+        mentioned_user_ids[0] if _references_mentioned_user(head, mentioned_user_ids) else None
+    )
     if limit is None and keyword is None and user_id is None:
         return MemoryReference(question=text)
 

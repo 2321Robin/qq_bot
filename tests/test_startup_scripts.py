@@ -77,11 +77,14 @@ def test_start_all_script_no_hardcoded_values() -> None:
     # Must not contain a NapCat WebUI token URL (any token value)
     # The token pattern matches gitleaks rule "napcat-webui-token"
     import re
-    assert not re.search(r"(?i)webui\\?token=['\"]?[0-9a-f]{12,}", script), \
+
+    assert not re.search(r"(?i)webui\\?token=['\"]?[0-9a-f]{12,}", script), (
         "start_all.ps1 contains a WebUI token URL"
+    )
     # Must not contain any QQ account number literal
-    assert not re.search(r"QQAccount\s*=\s*\d{6,}", script), \
+    assert not re.search(r"QQAccount\s*=\s*\d{6,}", script), (
         "start_all.ps1 contains a QQ account number"
+    )
     assert "webui?token=" not in script
 
 
@@ -141,12 +144,12 @@ def test_start_all_script_stops_existing_services_before_starting() -> None:
     assert main_script.index("Stop-BotProcesses -Processes $botProcesses") < main_script.index(
         "Start-BotBackend"
     )
-    assert main_script.index("Stop-NapCatProcesses -Processes $napCatProcesses") < main_script.index(
-        "Start-BotBackend"
-    )
-    assert main_script.index("Stop-NapCatProcesses -Processes $napCatProcesses") < main_script.index(
-        "Start-NapCat"
-    )
+    assert main_script.index(
+        "Stop-NapCatProcesses -Processes $napCatProcesses"
+    ) < main_script.index("Start-BotBackend")
+    assert main_script.index(
+        "Stop-NapCatProcesses -Processes $napCatProcesses"
+    ) < main_script.index("Start-NapCat")
 
 
 def test_batch_entrypoint_invokes_hidden_powershell_script() -> None:

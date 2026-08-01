@@ -30,4 +30,3 @@ async def handle_version(event: GroupMessageEvent) -> None:
         version_command,
         f"当前版本：{get_version()}",
     )
-

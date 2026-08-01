@@ -146,7 +146,9 @@ def load_bwiki_index_target_records(html: str) -> list[tuple[str, str, dict[str,
 
         name = values[name_index]
         if name and name not in {"精灵名称", ""}:
-            metadata = {headers[index]: value for index, value in enumerate(values) if index < len(headers)}
+            metadata = {
+                headers[index]: value for index, value in enumerate(values) if index < len(headers)
+            }
             targets.append((name, _quote_url(f"https://wiki.biligame.com/rocom/{name}"), metadata))
     return _dedupe_target_records(targets)
 
@@ -159,11 +161,14 @@ def _quote_url(url: str) -> str:
 
 
 def _dedupe_targets(targets: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    return [(name, url) for name, url, _ in _dedupe_target_records([(name, url, {}) for name, url in targets])]
+    return [
+        (name, url)
+        for name, url, _ in _dedupe_target_records([(name, url, {}) for name, url in targets])
+    ]
 
 
 def _dedupe_target_records(
-    targets: list[tuple[str, str, dict[str, str]]]
+    targets: list[tuple[str, str, dict[str, str]]],
 ) -> list[tuple[str, str, dict[str, str]]]:
     unique_targets: list[tuple[str, str, dict[str, str]]] = []
     seen: set[str] = set()
@@ -191,7 +196,11 @@ def fetch_pet_details(
     for target in targets:
         name, url, index_metadata = _target_parts(target)
         output_path = _existing_output_path(output_dir, name) or output_dir / f"{name}.json"
-        if output_path.exists() and not force and _is_current_detail(output_path, min_parser_version):
+        if (
+            output_path.exists()
+            and not force
+            and _is_current_detail(output_path, min_parser_version)
+        ):
             print(f"Skipped {output_path}")
             continue
         try:
@@ -219,7 +228,9 @@ def fetch_pet_details(
     return errors
 
 
-def _target_parts(target: tuple[str, str] | tuple[str, str, dict[str, str]]) -> tuple[str, str, dict[str, str]]:
+def _target_parts(
+    target: tuple[str, str] | tuple[str, str, dict[str, str]],
+) -> tuple[str, str, dict[str, str]]:
     if len(target) == 2:
         name, url = target
         return name, url, {}
@@ -361,6 +372,7 @@ def _has_skill_effects(groups: list) -> bool:
 def _is_raw_page_url(url: str) -> bool:
     return "action=raw" in urlparse(url).query
 
+
 def _raw_page_url(url: str) -> str:
     parsed = urlparse(url)
     if parsed.netloc != "wiki.biligame.com" or not parsed.path.startswith("/rocom/"):
@@ -390,10 +402,14 @@ def _validate_detail(detail: dict, fallback_name: str) -> None:
     if _contains_bwiki_placeholder(name):
         raise ValueError(f"placeholder data returned for {fallback_name}")
     attributes = detail.get("attributes", [])
-    if isinstance(attributes, list) and any(_contains_bwiki_placeholder(str(value)) for value in attributes):
+    if isinstance(attributes, list) and any(
+        _contains_bwiki_placeholder(str(value)) for value in attributes
+    ):
         raise ValueError(f"placeholder attributes returned for {fallback_name}")
     profile = detail.get("profile", {})
-    if isinstance(profile, dict) and any(_contains_bwiki_placeholder(str(value)) for value in profile.values()):
+    if isinstance(profile, dict) and any(
+        _contains_bwiki_placeholder(str(value)) for value in profile.values()
+    ):
         raise ValueError(f"placeholder profile returned for {fallback_name}")
 
 
@@ -433,7 +449,9 @@ def _existing_output_path(output_dir: Path, name: str) -> Path | None:
     return None
 
 
-def _numbered_output_path(output_dir: Path, fallback_name: str, detail: dict, existing_path: Path) -> Path:
+def _numbered_output_path(
+    output_dir: Path, fallback_name: str, detail: dict, existing_path: Path
+) -> Path:
     name = str(detail.get("name") or fallback_name)
     number = str(detail.get("profile", {}).get("编号", "")).strip()
     if number:

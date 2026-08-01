@@ -81,14 +81,12 @@ def find_skills(
         return exact_matches
 
     return [
-        record
-        for record in records
-        if cleaned_query in record.name or record.name in cleaned_query
+        record for record in records if cleaned_query in record.name or record.name in cleaned_query
     ]
 
 
 def group_skill_variants(
-    records: list[SkillRecord] | tuple[SkillRecord, ...]
+    records: list[SkillRecord] | tuple[SkillRecord, ...],
 ) -> list[SkillVariant]:
     variants: list[SkillVariant] = []
     variant_by_key: dict[tuple[str, str, str, str, str], SkillVariant] = {}
@@ -102,7 +100,15 @@ def group_skill_variants(
         )
         variant = variant_by_key.get(key)
         if variant is None:
-            variant = SkillVariant(record.name, "", record.energy, record.category, record.power, record.effect, pet_names=[])
+            variant = SkillVariant(
+                record.name,
+                "",
+                record.energy,
+                record.category,
+                record.power,
+                record.effect,
+                pet_names=[],
+            )
             variant_by_key[key] = variant
             variants.append(variant)
         if record.pet_name and record.pet_name not in variant.pet_names:

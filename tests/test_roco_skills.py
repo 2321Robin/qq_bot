@@ -22,7 +22,9 @@ def test_load_skill_records_reads_detail_directory() -> None:
 
 def test_load_skill_records_maps_dimo_skill_fields() -> None:
     records = load_skill_records(FIXTURE_DIR)
-    skill = next(record for record in records if record.pet_name == "TestPetA" and record.name == "测试技能A")
+    skill = next(
+        record for record in records if record.pet_name == "TestPetA" and record.name == "测试技能A"
+    )
 
     assert skill.level == "LV1"
     assert skill.energy == "1"

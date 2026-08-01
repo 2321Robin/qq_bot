@@ -10,8 +10,16 @@ LEVEL_CONDITION_RE = re.compile(r"^(?:(?:等级|升至)\s*)?(\d+)\s*级?(?:进�
 ATTRIBUTE_BATTLE_RE = re.compile(
     r"^(?:打败|击败)([一二两三四五六七八九十\d]+)(?:只|个)?(.+?系)(?:精灵|宠物)?(?:进化)?$"
 )
-EVOLUTION_EDGE_KEYS = ("source", "target", "condition", "raw_condition", "forward_text", "backward_text")
+EVOLUTION_EDGE_KEYS = (
+    "source",
+    "target",
+    "condition",
+    "raw_condition",
+    "forward_text",
+    "backward_text",
+)
 FINAL_EVOLUTION_NOTES = {"无法进化", "暂无普通等级进化条件。"}
+
 
 def normalize_evolution_condition(condition: str) -> str:
     """Normalize a raw evolution condition into a reusable edge condition."""
@@ -96,10 +104,12 @@ def normalize_pet_details(details: list[dict[str, Any]]) -> list[dict[str, Any]]
     """Attach normalized evolution relations to each detail."""
     names = [_string_value(detail.get("name")) for detail in details]
     global_edges = _collect_global_evolution_edges(details, names)
-    edges = _dedupe_edges([
-        *global_edges,
-        *_infer_sourceless_evolution_edges(details, global_edges),
-    ])
+    edges = _dedupe_edges(
+        [
+            *global_edges,
+            *_infer_sourceless_evolution_edges(details, global_edges),
+        ]
+    )
     incoming: dict[str, list[dict[str, str]]] = {}
     outgoing: dict[str, list[dict[str, str]]] = {}
     for edge in edges:
@@ -108,8 +118,12 @@ def normalize_pet_details(details: list[dict[str, Any]]) -> list[dict[str, Any]]
 
     for detail in details:
         name = _string_value(detail.get("name"))
-        incoming_relations = [_relation_from_edge(edge, edge["backward_text"]) for edge in incoming.get(name, [])]
-        outgoing_relations = [_relation_from_edge(edge, edge["forward_text"]) for edge in outgoing.get(name, [])]
+        incoming_relations = [
+            _relation_from_edge(edge, edge["backward_text"]) for edge in incoming.get(name, [])
+        ]
+        outgoing_relations = [
+            _relation_from_edge(edge, edge["forward_text"]) for edge in outgoing.get(name, [])
+        ]
         evolution_condition = _complete_evolution_condition(
             incoming_relations,
             outgoing_relations,
@@ -124,7 +138,9 @@ def normalize_pet_details(details: list[dict[str, Any]]) -> list[dict[str, Any]]
     return details
 
 
-def _collect_global_evolution_edges(details: list[dict[str, Any]], names: list[str]) -> list[dict[str, str]]:
+def _collect_global_evolution_edges(
+    details: list[dict[str, Any]], names: list[str]
+) -> list[dict[str, str]]:
     edges: list[dict[str, str]] = []
     seen: set[tuple[str, str, str]] = set()
 
@@ -261,7 +277,9 @@ def _edge_from_mapping(value: Any) -> dict[str, str] | None:
     return build_evolution_edge(source, target, raw_condition)
 
 
-def _edge_from_compat_condition(target: str, condition: str, names: list[str]) -> dict[str, str] | None:
+def _edge_from_compat_condition(
+    target: str, condition: str, names: list[str]
+) -> dict[str, str] | None:
     if not condition.startswith("由"):
         return None
 

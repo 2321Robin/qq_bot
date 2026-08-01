@@ -66,15 +66,11 @@ def test_parse_pet_detail_extracts_profile_stats_and_skill_groups() -> None:
     assert detail["skills"] == [
         {
             "source": "本身就有",
-            "rows": [
-                {"技能名": "闪光冲击", "属性": "光", "威力": "40", "说明": "造成光系伤害。"}
-            ],
+            "rows": [{"技能名": "闪光冲击", "属性": "光", "威力": "40", "说明": "造成光系伤害。"}],
         },
         {
             "source": "技能石学习",
-            "rows": [
-                {"技能名": "圣光守护", "属性": "光", "威力": "-", "说明": "提升防御。"}
-            ],
+            "rows": [{"技能名": "圣光守护", "属性": "光", "威力": "-", "说明": "提升防御。"}],
         },
     ]
     assert detail["evolution_edges"] == []
@@ -138,7 +134,9 @@ def test_parse_pet_detail_extracts_raw_template_page() -> None:
 
 
 def test_parse_pet_detail_uses_empty_values_for_missing_fields() -> None:
-    detail = parse_pet_detail("https://example.com/pet", "<html><body><h1>测试宠物</h1></body></html>")
+    detail = parse_pet_detail(
+        "https://example.com/pet", "<html><body><h1>测试宠物</h1></body></html>"
+    )
 
     assert detail["name"] == "测试宠物"
     assert detail["attributes"] == []
@@ -428,7 +426,6 @@ def test_parse_pet_detail_preserves_non_level_evolution_text_from_component_chai
     assert "进化条件" not in detail["profile"]
 
 
-
 def test_parse_pet_detail_extracts_middle_form_evolution_edges() -> None:
     html = """
     <html>
@@ -469,7 +466,6 @@ def test_parse_pet_detail_extracts_middle_form_evolution_edges() -> None:
             "backward_text": "可由喵呜升至36级进化得",
         },
     ]
-
 
 
 def test_parse_pet_detail_extracts_branching_component_edges() -> None:
@@ -570,7 +566,10 @@ def test_normalize_pet_details_builds_bidirectional_middle_form_text() -> None:
     assert details[0]["evolution_condition"] == "升至16级可进化为喵呜"
     assert details[0]["evolution"]["evolution_condition"] == "升至16级可进化为喵呜"
     assert details[1]["evolution_condition"] == "可由喵喵升至16级进化得；升至36级可进化为魔力猫"
-    assert details[1]["evolution"]["evolution_condition"] == "可由喵喵升至16级进化得；升至36级可进化为魔力猫"
+    assert (
+        details[1]["evolution"]["evolution_condition"]
+        == "可由喵喵升至16级进化得；升至36级可进化为魔力猫"
+    )
     assert details[2]["evolution_condition"] == "可由喵呜升至36级进化得"
     assert details[2]["evolution"]["evolution_condition"] == "可由喵呜升至36级进化得"
 
@@ -792,7 +791,10 @@ def test_fetch_html_falls_back_to_curl_when_urlopen_is_blocked(monkeypatch) -> N
     monkeypatch.setattr("scripts.fetch_roco_pet_detail.urlopen", fake_urlopen)
     monkeypatch.setattr("scripts.fetch_roco_pet_detail.subprocess.run", fake_run)
 
-    assert fetch_html("https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB") == "<html>备用抓取成功</html>"
+    assert (
+        fetch_html("https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB")
+        == "<html>备用抓取成功</html>"
+    )
     assert captured_command[:4] == ["curl.exe", "-L", "--retry", "2"]
     assert captured_command[-1] == "https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB"
 
@@ -1016,7 +1018,9 @@ def test_fetch_pet_details_normalizes_after_successful_refresh(tmp_path) -> None
 
 def test_main_can_normalize_existing_detail_directory(tmp_path, monkeypatch) -> None:
     (tmp_path / "喵喵.json").write_text(
-        json.dumps({"name": "喵喵", "evolution_condition": "", "evolution_edges": []}, ensure_ascii=False),
+        json.dumps(
+            {"name": "喵喵", "evolution_condition": "", "evolution_edges": []}, ensure_ascii=False
+        ),
         encoding="utf-8",
     )
     (tmp_path / "喵呜.json").write_text(
@@ -1030,7 +1034,10 @@ def test_main_can_normalize_existing_detail_directory(tmp_path, monkeypatch) -> 
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr("scripts.fetch_roco_pet_detail.sys.argv", ["fetch_roco_pet_detail.py", "--normalize-only", "--output-dir", str(tmp_path)])
+    monkeypatch.setattr(
+        "scripts.fetch_roco_pet_detail.sys.argv",
+        ["fetch_roco_pet_detail.py", "--normalize-only", "--output-dir", str(tmp_path)],
+    )
 
     assert main() == 0
 
