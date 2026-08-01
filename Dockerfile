@@ -15,6 +15,12 @@ COPY src ./src
 COPY bot.py ./bot.py
 RUN python -m pip install --no-cache-dir .
 
+# CJK fonts so pet-card rendering works outside Windows; font paths are
+# resolved cross-platform in roco_pet_cards._font_candidates.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/*
+
 # Bind all interfaces in the container; PORT stays user-configurable via env.
 ENV HOST=0.0.0.0
 

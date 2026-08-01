@@ -1449,21 +1449,36 @@ def _paste_icon(
     image.paste(resized, xy, resized)
 
 
-def _load_font(size: int, *, bold: bool = False) -> ImageFont.ImageFont:
-    candidates = (
-        [
+def _font_candidates(*, bold: bool) -> tuple[Path, ...]:
+    """Font search paths in preference order, covering Windows/Linux/macOS.
+
+    Windows keeps the original preference order; Linux/macOS get CJK-capable
+    fonts (Noto/PingFang) with DejaVu as a Latin fallback. An empty result
+    degrades to Pillow's built-in font via the caller.
+    """
+    if bold:
+        return (
             Path("C:/Windows/Fonts/msyhbd.ttc"),
             Path("C:/Windows/Fonts/simhei.ttf"),
             Path("C:/Windows/Fonts/arialbd.ttf"),
-        ]
-        if bold
-        else [
-            Path("C:/Windows/Fonts/msyh.ttc"),
-            Path("C:/Windows/Fonts/simhei.ttf"),
-            Path("C:/Windows/Fonts/arial.ttf"),
-        ]
+            Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc"),
+            Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc"),
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+            Path("/System/Library/Fonts/PingFang.ttc"),
+        )
+    return (
+        Path("C:/Windows/Fonts/msyh.ttc"),
+        Path("C:/Windows/Fonts/simhei.ttf"),
+        Path("C:/Windows/Fonts/arial.ttf"),
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+        Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+        Path("/System/Library/Fonts/PingFang.ttc"),
     )
-    for path in candidates:
+
+
+def _load_font(size: int, *, bold: bool = False) -> ImageFont.ImageFont:
+    for path in _font_candidates(bold=bold):
         if path.exists():
             return ImageFont.truetype(str(path), size=size)
     return ImageFont.load_default()

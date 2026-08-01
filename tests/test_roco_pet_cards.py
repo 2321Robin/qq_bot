@@ -4,25 +4,28 @@ from io import BytesIO
 from pathlib import Path
 from urllib.error import URLError
 
+import pytest
 from PIL import Image, ImageDraw, ImageFont
 
 from qq_bot.services.roco_pet_cards import (
-    _evolution_chain_layout,
-    _evolution_steps,
-    _evolution_tokens,
-    _evolution_name_text_position,
-    _fetch_bytes,
-    _fetch_text,
     _attribute_display_items,
     _attribute_pill_box,
-    _trait_pill_box,
-    _trait_description_text_box,
-    _fit_name_lines_to_box,
+    _evolution_chain_layout,
+    _evolution_name_text_position,
+    _evolution_steps,
+    _evolution_tokens,
+    _fetch_bytes,
+    _fetch_text,
     _fit_font_to_width,
     _fit_icon_text_font_to_box,
+    _fit_name_lines_to_box,
     _fit_wrapped_text_to_box,
-    _format_evolution_chain,
+    _font_candidates,
     _format_attribute_text,
+    _format_evolution_chain,
+    _load_font,
+    _trait_description_text_box,
+    _trait_pill_box,
     ensure_attribute_icon_assets,
     ensure_pet_art_assets,
     generate_pet_card_files,
@@ -32,6 +35,26 @@ from qq_bot.services.roco_pet_cards import (
     render_pet_card_png,
 )
 from qq_bot.services.roco_pets import EvolutionRelation, PetRecord
+
+
+# CJK-capable fonts render real glyphs; the Windows-tuned metric assertions
+# below are only meaningful when such a font is installed (msyh/simhei on
+# Windows, Noto on Linux, PingFang on macOS). Without one they are skipped.
+_CJK_FONT_MARKERS = ("msyh", "simhei", "NotoSansCJK", "PingFang")
+_HAS_CJK_FONT = any(
+    path.exists() and any(marker in path.name for marker in _CJK_FONT_MARKERS)
+    for path in _font_candidates(bold=True)
+)
+
+
+def _reference_font(size: int) -> ImageFont.ImageFont:
+    """Bold reference font for layout assertions, resolved like production."""
+    return _load_font(size, bold=True)
+
+
+_requires_cjk_font = pytest.mark.skipif(
+    not _HAS_CJK_FONT, reason="requires a CJK-capable font for layout metrics"
+)
 
 
 def _tiny_png_bytes() -> bytes:
@@ -242,8 +265,8 @@ def test_render_pet_card_png_falls_back_for_missing_attribute_icon(tmp_path: Pat
 
     orange_pixels = sum(
         1
-        for y in range(72, 100)
-        for x in range(438, 518)
+        for y in range(image.height)
+        for x in range(image.width)
         if image.getpixel((x, y)) == (216, 116, 43)
     )
     assert orange_pixels > 20
@@ -273,10 +296,11 @@ def test_render_pet_card_png_does_not_draw_trait_icon(tmp_path: Path) -> None:
     assert image.getpixel((83, 181)) != (255, 0, 255)
 
 
+@_requires_cjk_font
 def test_fit_font_to_width_keeps_long_pet_name_before_attribute() -> None:
     image = Image.new("RGB", (700, 765))
     draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", size=32)
+    font = _reference_font(32)
 
     fitted = _fit_font_to_width(draw, "鸭吉吉国王", font, 140, min_size=18)
     bbox = draw.textbbox((0, 0), "鸭吉吉国王", font=fitted)
@@ -284,10 +308,11 @@ def test_fit_font_to_width_keeps_long_pet_name_before_attribute() -> None:
     assert bbox[2] - bbox[0] <= 140
 
 
+@_requires_cjk_font
 def test_pet_name_uses_uniform_font_size_and_wraps_before_attributes() -> None:
     image = Image.new("RGB", (700, 765))
     draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", size=20)
+    font = _reference_font(20)
     name_box = (292, 57, 444, 111)
     attr_box = (454, 70, 530, 102)
 
@@ -301,10 +326,11 @@ def test_pet_name_uses_uniform_font_size_and_wraps_before_attributes() -> None:
     )
 
 
+@_requires_cjk_font
 def test_pet_name_never_shrinks_below_uniform_size() -> None:
     image = Image.new("RGB", (700, 765))
     draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", size=20)
+    font = _reference_font(20)
     name_box = (292, 57, 444, 111)
 
     fitted_font, lines = _fit_name_lines_to_box(draw, "石之帕蔻（卷卷尾巴的样子）", font, name_box)
@@ -320,10 +346,11 @@ def test_number_pill_is_compact_for_number_text() -> None:
     assert number_box[3] - number_box[1] == 30
 
 
+@_requires_cjk_font
 def test_011_title_has_gap_before_attribute_box() -> None:
     image = Image.new("RGB", (700, 765))
     draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", size=20)
+    font = _reference_font(20)
     name_box = (292, 57, 444, 111)
     attr_box = (454, 70, 530, 102)
 
@@ -336,10 +363,11 @@ def test_011_title_has_gap_before_attribute_box() -> None:
     )
 
 
+@_requires_cjk_font
 def test_attribute_pill_box_is_compact_for_single_attribute() -> None:
     image = Image.new("RGB", (700, 765))
     draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", size=20)
+    font = _reference_font(20)
 
     single_box = _attribute_pill_box(draw, ["光"], font)
     double_box = _attribute_pill_box(draw, ["光", "火"], font)
@@ -361,10 +389,11 @@ def test_attribute_display_items_do_not_join_multi_attributes() -> None:
     assert _attribute_display_items([]) == ["未知"]
 
 
+@_requires_cjk_font
 def test_fit_wrapped_text_to_box_keeps_long_trait_description_inside_box() -> None:
     image = Image.new("RGB", (700, 765))
     draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", size=24)
+    font = _reference_font(24)
     text = "鸭吉吉国王的种族资质大幅增加，能耗为1的技能威力+50%。"
 
     fitted_font, lines = _fit_wrapped_text_to_box(
@@ -388,10 +417,11 @@ def test_trait_description_box_keeps_bottom_padding_for_two_lines() -> None:
     assert outer_box[3] - description_text_box[3] >= 6
 
 
+@_requires_cjk_font
 def test_trait_label_text_fits_inside_pill() -> None:
     image = Image.new("RGB", (700, 765))
     draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", size=20)
+    font = _reference_font(20)
     trait_box = (70, 164, 220, 198)
     text = "“国王”的威严"
 
@@ -403,10 +433,11 @@ def test_trait_label_text_fits_inside_pill() -> None:
     assert bbox[2] - bbox[0] <= trait_box[2] - trait_box[0] - 20
 
 
+@_requires_cjk_font
 def test_trait_pill_box_width_tracks_trait_name() -> None:
     image = Image.new("RGB", (700, 765))
     draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", size=20)
+    font = _reference_font(20)
 
     short_box = _trait_pill_box(draw, "破空", font)
     long_box = _trait_pill_box(draw, "“国王”的威严", font)
@@ -522,10 +553,11 @@ def test_evolution_steps_prefers_structured_edge_condition_for_arrows() -> None:
     assert _evolution_steps(record) == [("小雪人", "雪怪", "达到40级并释放15次滚雪球技能")]
 
 
+@_requires_cjk_font
 def test_evolution_tokens_put_conditions_on_matching_arrows() -> None:
     image = Image.new("RGB", (700, 765))
     draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", size=20)
+    font = _reference_font(20)
     record = PetRecord(
         name="魔力猫",
         aliases=[],
@@ -543,10 +575,11 @@ def test_evolution_tokens_put_conditions_on_matching_arrows() -> None:
     assert arrows == [("arrow", "→", "16级"), ("arrow", "→", "32级")]
 
 
+@_requires_cjk_font
 def test_evolution_chain_layout_uses_dynamic_box_and_arrow_width() -> None:
     image = Image.new("RGB", (700, 765))
     draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", size=20)
+    font = _reference_font(20)
     record = PetRecord(
         name="魔力猫",
         aliases=[],
@@ -566,10 +599,11 @@ def test_evolution_chain_layout_uses_dynamic_box_and_arrow_width() -> None:
     assert [placement[2] for placement in placements if placement[0] == "arrow"] == [48, 48]
 
 
+@_requires_cjk_font
 def test_evolution_chain_layout_reserves_individual_name_boxes() -> None:
     image = Image.new("RGB", (700, 765))
     draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", size=20)
+    font = _reference_font(20)
     record = PetRecord(
         name="魔力猫",
         aliases=[],
@@ -594,7 +628,7 @@ def test_evolution_chain_layout_reserves_individual_name_boxes() -> None:
 def test_evolution_name_text_position_centers_text_in_box() -> None:
     image = Image.new("RGB", (700, 765))
     draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", size=20)
+    font = _reference_font(20)
     box = (300, 286, 400, 320)
     text = "魔力猫"
 
@@ -609,10 +643,11 @@ def test_evolution_name_text_position_centers_text_in_box() -> None:
     assert abs(((rendered_top + rendered_bottom) / 2) - ((box[1] + box[3]) / 2)) < 1
 
 
+@_requires_cjk_font
 def test_evolution_tokens_keep_full_names_when_chain_is_wide() -> None:
     image = Image.new("RGB", (700, 765))
     draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype("C:/Windows/Fonts/msyhbd.ttc", size=20)
+    font = _reference_font(20)
     record = PetRecord(
         name="香草甜甜（蓝莓饰品）",
         aliases=[],
