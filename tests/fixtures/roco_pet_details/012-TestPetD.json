@@ -1,0 +1,39 @@
+{
+  "name": "TestPetD",
+  "source_url": "https://example.com/test-pet-d",
+  "attributes": [
+    "合成属性"
+  ],
+  "evolution_condition": "",
+  "total_race_value": 60,
+  "profile": {
+    "编号": "012",
+    "系别": "合成属性",
+    "体长": "",
+    "体重": "",
+    "最佳拍档": "",
+    "简介": "完全合成的测试数据。"
+  },
+  "stats": {
+    "生命": 35,
+    "物攻": 35,
+    "魔攻": 35,
+    "物防": 35,
+    "魔防": 35,
+    "速度": 35
+  },
+  "skills": [
+    {
+      "source": "技能",
+      "rows": []
+    }
+  ],
+  "metadata": {
+    "parser_version": 5
+  },
+  "evolution": {
+    "from": [],
+    "to": [],
+    "evolution_condition": ""
+  }
+}

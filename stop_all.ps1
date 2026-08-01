@@ -1,12 +1,71 @@
+<#
+.SYNOPSIS
+    Stops the QQ bot backend and NapCatQQ processes.
+
+.DESCRIPTION
+    Loads startup configuration from startup.local.ps1 (or a custom path),
+    validates the NapCat directory, then stops matching bot and NapCat
+    processes. Does not require the Python virtual environment.
+
+.PARAMETER ConfigPath
+    Path to the startup configuration file. Defaults to startup.local.ps1
+    in the script directory.
+
+.PARAMETER ValidateOnly
+    When set, only validates the configuration without stopping any
+    processes. Exit code is 0 on success, non-zero on failure.
+#>
+param(
+    [string]$ConfigPath = "",
+    [switch]$ValidateOnly
+)
+
 $ErrorActionPreference = "Stop"
 [Console]::InputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
-$ProjectDir = "C:\Users\Robin\Documents\GitHub\qq_bot"
+# ---- Path derivation ----
+$ProjectDir = $PSScriptRoot
+if ($ConfigPath -eq "") {
+    $ConfigPath = Join-Path $ProjectDir "startup.local.ps1"
+}
 $BotScript = Join-Path $ProjectDir "bot.py"
-$NapCatDir = "C:\Users\Robin\Documents\NapCatQQ\NapCat.44498.Shell"
 
+# ---- Configuration loading ----
+if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
+    Write-Host "ERROR: Configuration file not found. Check the -ConfigPath parameter."
+    Write-Host "Copy startup.example.ps1 to startup.local.ps1 and fill in your local values."
+    exit 1
+}
+
+. $ConfigPath
+
+if (-not $StartupConfig) {
+    Write-Host "ERROR: Configuration file did not define `$StartupConfig."
+    Write-Host "Check startup.example.ps1 for the required format."
+    exit 1
+}
+
+# ---- Validate NapCatDir ----
+if (-not $StartupConfig.ContainsKey("NapCatDir") -or [string]::IsNullOrEmpty($StartupConfig["NapCatDir"])) {
+    Write-Host "ERROR: NapCatQQ directory (NapCatDir) is not configured."
+    exit 1
+}
+
+$NapCatDir = $StartupConfig["NapCatDir"]
+if (-not (Test-Path -LiteralPath $NapCatDir -PathType Container)) {
+    Write-Host "ERROR: Configured NapCatDir was not found. Check the path in your startup configuration."
+    exit 1
+}
+
+# ---- All validations passed; stop here if ValidateOnly ----
+if ($ValidateOnly) {
+    Write-Host "Configuration is valid."
+    exit 0
+}
+
+# ---- Process management functions ----
 function Get-BotProcess {
     param([string]$ScriptPath)
 

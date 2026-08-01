@@ -1,5 +1,7 @@
 .worktrees/
 .venv/
+.agent
+logs
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -7,8 +9,31 @@ __pycache__/
 .mypy_cache/
 .env
 .superpowers/
-docs/
+
+# docs/ — mostly ignored; only public-release markdown and screenshots tracked
+docs/*
+!docs/public-release/
+!docs/assets/
+docs/assets/*
+!docs/assets/screenshots/
+
 data/chat_memory.sqlite3
+# Game data — not redistributable
+/data/roco_pet_details/
+/data/roco_assets/
+/data/roco_pet_cards/
 dist/
 build/
 *.egg-info/
+
+# Local startup configuration (see startup.example.ps1)
+startup.local.ps1
+
+# Gitleaks scan reports (may contain secret patterns)
+gitleaks-report/
+
+# Project resume guide (contains personal project context)
+PROJECT_RESUME_GUIDE.md
+
+# Git bundle / backup
+*.bundle

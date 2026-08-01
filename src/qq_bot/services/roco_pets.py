@@ -68,6 +68,9 @@ class PetRecord:
 
 
 def load_pet_records(path: Path = DEFAULT_PET_DETAIL_DIR) -> list[PetRecord]:
+    if not path.exists():
+        return []
+
     if path.is_dir():
         records: list[PetRecord] = []
         for detail_path in sorted(path.glob("*.json")):

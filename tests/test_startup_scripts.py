@@ -32,20 +32,67 @@ def test_powershell_scripts_parse() -> None:
         assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_start_all_script_uses_psscriptroot() -> None:
+    script = (ROOT / "start_all.ps1").read_text(encoding="utf-8")
+
+    assert "$PSScriptRoot" in script
+    assert "C:\\Users\\" not in script
+
+
+def test_start_all_script_loads_local_config() -> None:
+    script = (ROOT / "start_all.ps1").read_text(encoding="utf-8")
+
+    assert "startup.local.ps1" in script
+    assert "ConfigPath" in script
+    assert "ValidateOnly" in script
+    assert "$StartupConfig" in script
+
+
+def test_start_all_script_validates_required_config_keys() -> None:
+    script = (ROOT / "start_all.ps1").read_text(encoding="utf-8")
+
+    assert "NapCatDir" in script
+    assert "NapCatAccount" in script
+    assert "BotPort" in script
+    assert "Assert-ConfigKey" in script
+    assert "NapCatWinBootMain.exe" in script
+
+
+def test_start_all_script_validates_account_is_numeric() -> None:
+    script = (ROOT / "start_all.ps1").read_text(encoding="utf-8")
+
+    assert "notmatch '^\\d+$'" in script
+
+
+def test_start_all_script_validates_port_range() -> None:
+    script = (ROOT / "start_all.ps1").read_text(encoding="utf-8")
+
+    assert "-lt 1" in script
+    assert "-gt 65535" in script
+
+
+def test_start_all_script_no_hardcoded_values() -> None:
+    script = (ROOT / "start_all.ps1").read_text(encoding="utf-8")
+
+    # Must not contain a NapCat WebUI token URL (any token value)
+    # The token pattern matches gitleaks rule "napcat-webui-token"
+    import re
+    assert not re.search(r"(?i)webui\\?token=['\"]?[0-9a-f]{12,}", script), \
+        "start_all.ps1 contains a WebUI token URL"
+    # Must not contain any QQ account number literal
+    assert not re.search(r"QQAccount\s*=\s*\d{6,}", script), \
+        "start_all.ps1 contains a QQ account number"
+    assert "webui?token=" not in script
+
+
 def test_start_all_script_contains_required_startup_targets() -> None:
     script = (ROOT / "start_all.ps1").read_text(encoding="utf-8")
 
-    assert "C:\\Users\\Robin\\Documents\\GitHub\\qq_bot" in script
-    assert "C:\\Users\\Robin\\Documents\\NapCatQQ\\NapCat.44498.Shell" in script
-    assert "NapCatWinBootMain.exe" in script
-    assert "ACCOUNT_PLACEHOLDER" in script
-    assert "http://127.0.0.1:6099/webui?token=TOKEN_PLACEHOLDER" in script
-    assert "8081" in script
     assert "Get-NetTCPConnection" in script
     assert "Get-BotProcess" in script
     assert "Get-NapCatProcess" in script
     assert "bot.py" in script
-    assert "Start-Process $WebUiUrl" not in script
+    assert "Start-Process" in script
     assert "chcp 65001" in script
     assert "OutputEncoding" in script
     assert "powershell.exe" in script
@@ -59,11 +106,14 @@ def test_start_all_script_contains_required_startup_targets() -> None:
 def test_start_all_script_does_not_keep_stale_backend_process() -> None:
     script = (ROOT / "start_all.ps1").read_text(encoding="utf-8")
 
-    main_script = script[script.index('Write-Host "Checking startup files..."') :]
-    assert "Warning: bot.py is running but port $BotPort is not listening." not in main_script
+    keyword = 'Write-Host "Checking startup files..."'
+    assert keyword in script
+    main_script = script[script.index(keyword) :]
     assert "Stop-BotProcesses -Processes $botProcesses" in main_script
     assert "Start-BotBackend" in main_script
-    assert main_script.index("Stop-BotProcesses -Processes $botProcesses") < main_script.index("Start-BotBackend")
+    assert main_script.index("Stop-BotProcesses -Processes $botProcesses") < main_script.index(
+        "Start-BotBackend"
+    )
 
 
 def test_start_all_script_restarts_when_multiple_bot_processes_exist() -> None:
@@ -86,10 +136,17 @@ def test_start_all_script_stops_existing_services_before_starting() -> None:
     assert "Stopping existing NapCat before fresh startup." in script
     assert "Stop-BotProcesses -Processes $botProcesses" in script
     assert "Stop-NapCatProcesses -Processes $napCatProcesses" in script
-    main_script = script[script.index('Write-Host "Checking startup files..."') :]
-    assert main_script.index("Stop-BotProcesses -Processes $botProcesses") < main_script.index("Start-BotBackend")
-    assert main_script.index("Stop-NapCatProcesses -Processes $napCatProcesses") < main_script.index("Start-BotBackend")
-    assert main_script.index("Stop-NapCatProcesses -Processes $napCatProcesses") < main_script.index("Start-NapCat")
+    keyword = 'Write-Host "Checking startup files..."'
+    main_script = script[script.index(keyword) :]
+    assert main_script.index("Stop-BotProcesses -Processes $botProcesses") < main_script.index(
+        "Start-BotBackend"
+    )
+    assert main_script.index("Stop-NapCatProcesses -Processes $napCatProcesses") < main_script.index(
+        "Start-BotBackend"
+    )
+    assert main_script.index("Stop-NapCatProcesses -Processes $napCatProcesses") < main_script.index(
+        "Start-NapCat"
+    )
 
 
 def test_batch_entrypoint_invokes_hidden_powershell_script() -> None:
@@ -107,8 +164,9 @@ def test_batch_entrypoint_invokes_hidden_powershell_script() -> None:
 def test_stop_all_script_stops_bot_and_napcat() -> None:
     script = (ROOT / "stop_all.ps1").read_text(encoding="utf-8")
 
-    assert "C:\\Users\\Robin\\Documents\\GitHub\\qq_bot" in script
-    assert "C:\\Users\\Robin\\Documents\\NapCatQQ\\NapCat.44498.Shell" in script
+    assert "$PSScriptRoot" in script
+    assert "startup.local.ps1" in script
+    assert "ConfigPath" in script
     assert "NapCatWinBootMain" in script
     assert "QQ" in script
     assert "Get-BotProcess" in script
@@ -116,6 +174,14 @@ def test_stop_all_script_stops_bot_and_napcat() -> None:
     assert "Stop-BotProcesses" in script
     assert "Stop-NapCatProcesses" in script
     assert "Stop-Process -Id" in script
+    assert "C:\\Users\\" not in script
+
+
+def test_stop_all_script_has_validate_only() -> None:
+    script = (ROOT / "stop_all.ps1").read_text(encoding="utf-8")
+
+    assert "ValidateOnly" in script
+    assert "$StartupConfig" in script
 
 
 def test_bot_process_matching_is_boundary_safe() -> None:

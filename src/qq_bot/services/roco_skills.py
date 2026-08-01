@@ -35,6 +35,9 @@ class SkillVariant:
 
 
 def load_skill_records(path: Path = DEFAULT_PET_DETAIL_DIR) -> list[SkillRecord]:
+    if not path.exists():
+        return []
+
     records: list[SkillRecord] = []
     for detail_path in sorted(path.glob("*.json")):
         detail = json.loads(detail_path.read_text(encoding="utf-8"))

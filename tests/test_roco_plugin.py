@@ -41,6 +41,9 @@ class FakeEvent:
         return True
 
 
+FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "roco_pet_details"
+
+
 @pytest.mark.asyncio
 async def test_roco_pet_command_replies_with_local_pet(
     monkeypatch: pytest.MonkeyPatch,
@@ -50,17 +53,18 @@ async def test_roco_pet_command_replies_with_local_pet(
         raise FinishCalled(message)
 
     def fake_card_path(record: PetRecord) -> object:
-        assert record.name == "迪莫"
+        assert record.name == "TestPetA"
         path = tmp_path / "001.png"
         path.write_bytes(b"png")
         return path
 
+    monkeypatch.setattr(roco_plugin, "get_pet_records", lambda: load_pet_records(FIXTURE_DIR))
     monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
     monkeypatch.setattr(roco_plugin, "pet_card_path", fake_card_path)
     monkeypatch.setattr(roco_plugin.roco_pet_command, "finish", fake_finish)
 
     with pytest.raises(FinishCalled) as exc_info:
-        await roco_plugin.handle_roco_pet(FakeEvent(), FakeArgs("迪莫"))  # type: ignore[arg-type]
+        await roco_plugin.handle_roco_pet(FakeEvent(), FakeArgs("TestPetA"))  # type: ignore[arg-type]
 
     message = exc_info.value.message
     assert "image" in str(message)
@@ -75,12 +79,12 @@ async def test_roco_pet_command_replies_with_detail_derived_card(
     async def fake_finish(message: object) -> None:
         raise FinishCalled(message)
 
-    records = tuple(load_pet_records(Path("data/roco_pet_details")))
+    records = tuple(load_pet_records(Path(__file__).resolve().parent / "fixtures" / "roco_pet_details"))
 
     def fake_card_path(record: PetRecord) -> object:
-        assert record.name == "迪莫"
+        assert record.name == "TestPetA"
         assert record.number == "001"
-        path = tmp_path / "001-迪莫.png"
+        path = tmp_path / "001-TestPetA.png"
         path.write_bytes(b"png")
         return path
 
@@ -90,11 +94,11 @@ async def test_roco_pet_command_replies_with_detail_derived_card(
     monkeypatch.setattr(roco_plugin.roco_pet_command, "finish", fake_finish)
 
     with pytest.raises(FinishCalled) as exc_info:
-        await roco_plugin.handle_roco_pet(FakeEvent(), FakeArgs("迪莫"))  # type: ignore[arg-type]
+        await roco_plugin.handle_roco_pet(FakeEvent(), FakeArgs("TestPetA"))  # type: ignore[arg-type]
 
     message = exc_info.value.message
     assert "image" in str(message)
-    assert (tmp_path / "001-迪莫.png").resolve().as_posix() in str(message)
+    assert (tmp_path / "001-TestPetA.png").resolve().as_posix() in str(message)
 
 
 @pytest.mark.asyncio
@@ -112,18 +116,19 @@ async def test_roco_mention_lookup_replies_when_pet_exists(
         stopped_propagation = True
 
     def fake_card_path(record: PetRecord) -> object:
-        assert record.name == "迪莫"
+        assert record.name == "TestPetA"
         path = tmp_path / "001.png"
         path.write_bytes(b"png")
         return path
 
+    monkeypatch.setattr(roco_plugin, "get_pet_records", lambda: load_pet_records(FIXTURE_DIR))
     monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
     monkeypatch.setattr(roco_plugin, "pet_card_path", fake_card_path)
     monkeypatch.setattr(roco_plugin, "_stop_roco_mention_propagation", fake_stop_propagation)
     monkeypatch.setattr(roco_plugin.roco_mention_pet, "finish", fake_finish)
 
     with pytest.raises(FinishCalled) as exc_info:
-        await roco_plugin.handle_roco_mention_pet(FakeEvent("迪莫"))  # type: ignore[arg-type]
+        await roco_plugin.handle_roco_mention_pet(FakeEvent("TestPetA"))  # type: ignore[arg-type]
 
     message = exc_info.value.message
     assert "image" in str(message)
@@ -139,17 +144,18 @@ async def test_roco_pet_command_falls_back_to_text_when_card_file_is_missing(
         raise FinishCalled(message)
 
     def fake_card_path(record: PetRecord) -> object:
-        assert record.name == "迪莫"
+        assert record.name == "TestPetA"
         return type("FakePath", (), {"exists": lambda self: False})()
 
+    monkeypatch.setattr(roco_plugin, "get_pet_records", lambda: load_pet_records(FIXTURE_DIR))
     monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
     monkeypatch.setattr(roco_plugin, "pet_card_path", fake_card_path)
     monkeypatch.setattr(roco_plugin.roco_pet_command, "finish", fake_finish)
 
     with pytest.raises(FinishCalled) as exc_info:
-        await roco_plugin.handle_roco_pet(FakeEvent(), FakeArgs("迪莫"))  # type: ignore[arg-type]
+        await roco_plugin.handle_roco_pet(FakeEvent(), FakeArgs("TestPetA"))  # type: ignore[arg-type]
 
-    assert "迪莫" in str(exc_info.value.message)
+    assert "TestPetA" in str(exc_info.value.message)
     assert "进化条件" in str(exc_info.value.message)
 
 
@@ -161,8 +167,8 @@ async def test_roco_skill_command_replies_with_skill_details(
         raise FinishCalled(message)
 
     records = (
-        SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "迪莫"),
-        SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "圣光迪莫"),
+        SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "TestPetA"),
+        SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "TestPetA2"),
     )
 
     monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
@@ -175,7 +181,7 @@ async def test_roco_skill_command_replies_with_skill_details(
     message = str(exc_info.value.message)
     assert "技能：闪光" in message
     assert "效果：造成魔法伤害。" in message
-    assert "可用精灵：迪莫、圣光迪莫" in message
+    assert "可用精灵：TestPetA、TestPetA2" in message
 
 
 @pytest.mark.asyncio
@@ -240,8 +246,8 @@ async def test_roco_mention_lookup_replies_when_skill_exists(
         stopped_propagation = True
 
     skill_records = (
-        SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "迪莫"),
-        SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "圣光迪莫"),
+        SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "TestPetA"),
+        SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "TestPetA2"),
     )
 
     monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
@@ -256,7 +262,7 @@ async def test_roco_mention_lookup_replies_when_skill_exists(
     message = str(exc_info.value.message)
     assert "技能：闪光" in message
     assert "效果：造成魔法伤害。" in message
-    assert "可用精灵：迪莫、圣光迪莫" in message
+    assert "可用精灵：TestPetA、TestPetA2" in message
     assert stopped_propagation
 
 
@@ -280,7 +286,7 @@ async def test_roco_mention_lookup_prefers_pet_when_pet_and_skill_match(
         ),
     )
     skill_records = (
-        SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "迪莫"),
+        SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "TestPetA"),
     )
 
     def fake_card_path(record: PetRecord) -> object:
@@ -335,7 +341,7 @@ async def test_roco_mention_lookup_ignores_sentences_containing_pet_or_skill_nam
         ),
     )
     skill_records = (
-        SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "迪莫"),
+        SkillRecord("闪光", "LV1", "1", "魔攻", "60", "造成魔法伤害。", "TestPetA"),
     )
 
     monkeypatch.setattr(roco_plugin, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))

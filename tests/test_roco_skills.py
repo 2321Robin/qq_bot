@@ -9,23 +9,26 @@ from qq_bot.services.roco_skills import (
 )
 
 
-def test_load_skill_records_reads_detail_directory() -> None:
-    records = load_skill_records(Path("data/roco_pet_details"))
+FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "roco_pet_details"
 
-    assert len(records) >= 100
-    assert any(record.name == "闪光" and record.pet_name == "迪莫" for record in records)
+
+def test_load_skill_records_reads_detail_directory() -> None:
+    records = load_skill_records(FIXTURE_DIR)
+
+    assert len(records) >= 2
+    assert any(record.name == "测试技能A" and record.pet_name == "TestPetA" for record in records)
     assert all(record.name for record in records)
 
 
 def test_load_skill_records_maps_dimo_skill_fields() -> None:
-    records = load_skill_records(Path("data/roco_pet_details"))
-    skill = next(record for record in records if record.pet_name == "迪莫" and record.name == "闪光")
+    records = load_skill_records(FIXTURE_DIR)
+    skill = next(record for record in records if record.pet_name == "TestPetA" and record.name == "测试技能A")
 
     assert skill.level == "LV1"
     assert skill.energy == "1"
     assert skill.category == "魔攻"
     assert skill.power == "60"
-    assert skill.effect == "✦对敌方精灵造成魔法伤害。"
+    assert skill.effect == "✦合成魔法伤害测试。"
 
 
 def test_find_skills_prefers_exact_matches() -> None:

@@ -1,0 +1,45 @@
+{
+  "name": "TestPetC",
+  "source_url": "https://example.com/test-pet-c",
+  "attributes": [
+    "合成属性"
+  ],
+  "evolution_condition": "由TestPetB进化（合成数据）",
+  "total_race_value": 100,
+  "profile": {
+    "编号": "011",
+    "系别": "合成属性",
+    "体长": "",
+    "体重": "",
+    "最佳拍档": "",
+    "简介": "完全合成的测试数据。"
+  },
+  "stats": {
+    "生命": 60,
+    "物攻": 60,
+    "魔攻": 60,
+    "物防": 60,
+    "魔防": 60,
+    "速度": 60
+  },
+  "skills": [
+    {
+      "source": "技能",
+      "rows": []
+    }
+  ],
+  "metadata": {
+    "parser_version": 5
+  },
+  "evolution": {
+    "from": [
+      {
+        "source": "TestPetB",
+        "condition": "等级16",
+        "text": "由TestPetB升至16级进化得（合成数据）"
+      }
+    ],
+    "to": [],
+    "evolution_condition": "由TestPetB进化（合成数据）"
+  }
+}

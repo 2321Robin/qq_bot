@@ -1,0 +1,31 @@
+# .gitleaks.toml — Project-specific secret detection rules
+#
+# Extends Gitleaks default rules with patterns specific to this project.
+# Allowlisted values are test/sample placeholders only — never real secrets.
+
+title = "qq-bot Gitleaks config"
+
+# Extend default rules (API keys, private keys, etc.)
+[extend]
+useDefault = true
+
+# ---- Custom rules ----
+
+[[rules]]
+id = "napcat-webui-token"
+description = "NapCat WebUI token passed as URL query parameter"
+# Require at least 8 alphanumeric characters after token= to avoid matching
+# test assertions that contain "webui?token=" as a literal string.
+regex = '''(?i)webui\?token=['"]?[a-zA-Z0-9_]{8,}'''
+tags = ["napcat", "token", "url"]
+
+# ---- Allowlist ----
+# Only known-safe test/sample values.  Never real tokens, accounts, or paths.
+
+[allowlist]
+description = "Known safe values used in example configs and test fixtures"
+
+# startup.example.ps1 uses empty strings and port 8081 — safe by design.
+regexes = [
+    '''NapCatDir\s*=\s*""''',
+]

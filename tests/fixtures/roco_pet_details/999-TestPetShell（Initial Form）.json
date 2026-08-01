@@ -1,0 +1,39 @@
+{
+  "name": "TestPetShell（Initial Form）",
+  "source_url": "https://example.com/test-pet-shell",
+  "attributes": [
+    "合成属性"
+  ],
+  "evolution_condition": "",
+  "total_race_value": 50,
+  "profile": {
+    "编号": "999",
+    "系别": "合成属性",
+    "体长": "",
+    "体重": "",
+    "最佳拍档": "",
+    "简介": "完全合成的测试数据。"
+  },
+  "stats": {
+    "生命": 30,
+    "物攻": 30,
+    "魔攻": 30,
+    "物防": 30,
+    "魔防": 30,
+    "速度": 30
+  },
+  "skills": [
+    {
+      "source": "技能",
+      "rows": []
+    }
+  ],
+  "metadata": {
+    "parser_version": 5
+  },
+  "evolution": {
+    "from": [],
+    "to": [],
+    "evolution_condition": ""
+  }
+}

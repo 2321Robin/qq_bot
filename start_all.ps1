@@ -1,23 +1,144 @@
+<#
+.SYNOPSIS
+    Starts the QQ bot backend and NapCatQQ using local configuration.
+
+.DESCRIPTION
+    Loads startup configuration from startup.local.ps1 (or a custom path),
+    validates all paths and parameters, then starts the bot and NapCat
+    as hidden background processes.
+
+.PARAMETER ConfigPath
+    Path to the startup configuration file. Defaults to startup.local.ps1
+    in the script directory.
+
+.PARAMETER ValidateOnly
+    When set, only validates the configuration without starting or stopping
+    any processes, creating log directories, or accessing the network.
+    Exit code is 0 on success, non-zero on failure.
+#>
+param(
+    [string]$ConfigPath = "",
+    [switch]$ValidateOnly
+)
+
 $ErrorActionPreference = "Stop"
 [Console]::InputEncoding = [System.Text.Encoding]::UTF8
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
-$ProjectDir = "C:\Users\Robin\Documents\GitHub\qq_bot"
+# ---- Path derivation ----
+$ProjectDir = $PSScriptRoot
+if ($ConfigPath -eq "") {
+    $ConfigPath = Join-Path $ProjectDir "startup.local.ps1"
+}
 $PythonExe = Join-Path $ProjectDir ".venv\Scripts\python.exe"
 $BotScript = Join-Path $ProjectDir "bot.py"
-$BotPort = 8081
 
-$NapCatDir = "C:\Users\Robin\Documents\NapCatQQ\NapCat.44498.Shell"
+# ---- Configuration loading ----
+if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
+    Write-Host "ERROR: Configuration file not found. Check the -ConfigPath parameter."
+    Write-Host "Copy startup.example.ps1 to startup.local.ps1 and fill in your local values."
+    exit 1
+}
+
+. $ConfigPath
+
+if (-not $StartupConfig) {
+    Write-Host "ERROR: Configuration file did not define `$StartupConfig."
+    Write-Host "Check startup.example.ps1 for the required format."
+    exit 1
+}
+
+# ---- Validation helpers ----
+function Assert-ConfigKey {
+    param(
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Config,
+        [Parameter(Mandatory = $true)]
+        [string]$Key,
+        [Parameter(Mandatory = $true)]
+        [string]$ErrorMessage
+    )
+
+    if (-not $Config.ContainsKey($Key) -or [string]::IsNullOrEmpty($Config[$Key])) {
+        Write-Host "ERROR: $ErrorMessage"
+        Write-Host "Check the '$Key' setting in your startup configuration."
+        exit 1
+    }
+}
+
+function Assert-ConfigFileExists {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$Key
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        Write-Host "ERROR: File configured in '$Key' was not found. Check the path in your startup configuration."
+        exit 1
+    }
+}
+
+function Assert-ConfigDirectoryExists {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [Parameter(Mandatory = $true)]
+        [string]$Key
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        Write-Host "ERROR: Directory configured in '$Key' was not found. Check the path in your startup configuration."
+        exit 1
+    }
+}
+
+# ---- Validate required configuration keys ----
+Assert-ConfigKey -Config $StartupConfig -Key "NapCatDir" -ErrorMessage "NapCatQQ directory (NapCatDir) is not configured."
+Assert-ConfigKey -Config $StartupConfig -Key "NapCatAccount" -ErrorMessage "NapCatQQ account (NapCatAccount) is not configured."
+Assert-ConfigKey -Config $StartupConfig -Key "BotPort" -ErrorMessage "Bot port (BotPort) is not configured."
+
+# ---- Validate NapCatDir exists and contains the boot executable ----
+$NapCatDir = $StartupConfig["NapCatDir"]
 $NapCatExe = Join-Path $NapCatDir "NapCatWinBootMain.exe"
-$NapCatAccount = "ACCOUNT_PLACEHOLDER"
-$WebUiUrl = "http://127.0.0.1:6099/webui?token=TOKEN_PLACEHOLDER"
-$StartupLogDir = Join-Path $ProjectDir "logs\startup"
-$BotStdoutLog = Join-Path $StartupLogDir "bot.out.log"
-$BotStderrLog = Join-Path $StartupLogDir "bot.err.log"
-$NapCatStdoutLog = Join-Path $StartupLogDir "napcat.out.log"
-$NapCatStderrLog = Join-Path $StartupLogDir "napcat.err.log"
+Assert-ConfigDirectoryExists -Path $NapCatDir -Key "NapCatDir"
+Assert-ConfigFileExists -Path $NapCatExe -Key "NapCatDir"
 
+# ---- Validate NapCatAccount is a numeric string ----
+$NapCatAccount = $StartupConfig["NapCatAccount"]
+if ($NapCatAccount -notmatch '^\d+$') {
+    Write-Host "ERROR: NapCatAccount must be a numeric string (QQ account number)."
+    exit 1
+}
+
+# ---- Validate BotPort ----
+$BotPort = $StartupConfig["BotPort"]
+if ($BotPort -notmatch '^\d+$' -or [int]$BotPort -lt 1 -or [int]$BotPort -gt 65535) {
+    Write-Host "ERROR: BotPort must be an integer between 1 and 65535."
+    exit 1
+}
+$BotPort = [int]$BotPort
+
+# ---- Validate Python and bot.py exist ----
+if (-not (Test-Path -LiteralPath $PythonExe -PathType Leaf)) {
+    Write-Host "ERROR: Python executable not found. Ensure the virtual environment exists at .venv\ in the project directory."
+    exit 1
+}
+
+if (-not (Test-Path -LiteralPath $BotScript -PathType Leaf)) {
+    Write-Host "ERROR: Bot script (bot.py) not found in the project directory."
+    exit 1
+}
+
+# ---- All validations passed; stop here if ValidateOnly ----
+if ($ValidateOnly) {
+    Write-Host "Configuration is valid."
+    exit 0
+}
+
+# ---- Process management functions ----
 function Assert-FileExists {
     param(
         [Parameter(Mandatory = $true)]
@@ -85,7 +206,7 @@ function Start-BotBackend {
 }
 
 function Start-NapCat {
-    Write-Host "Starting NapCat for account $NapCatAccount..."
+    Write-Host "Starting NapCat..."
     $napCatCommand = "chcp 65001 > `$null; [Console]::InputEncoding = [System.Text.Encoding]::UTF8; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; `$OutputEncoding = [System.Text.Encoding]::UTF8; Set-Location -LiteralPath '$NapCatDir'; & '$NapCatExe' $NapCatAccount"
     Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $napCatCommand -WorkingDirectory $NapCatDir -WindowStyle Hidden -RedirectStandardOutput $NapCatStdoutLog -RedirectStandardError $NapCatStderrLog
     Start-Sleep -Seconds 8
@@ -114,6 +235,13 @@ function Stop-NapCatProcesses {
         }
     }
 }
+
+# ---- Log directory ----
+$StartupLogDir = Join-Path $ProjectDir "logs\startup"
+$BotStdoutLog = Join-Path $StartupLogDir "bot.out.log"
+$BotStderrLog = Join-Path $StartupLogDir "bot.err.log"
+$NapCatStdoutLog = Join-Path $StartupLogDir "napcat.out.log"
+$NapCatStderrLog = Join-Path $StartupLogDir "napcat.err.log"
 
 Write-Host "Checking startup files..."
 Assert-DirectoryExists -Path $ProjectDir -Label "Project directory"
@@ -147,8 +275,6 @@ Start-BotBackend
 
 Start-NapCat
 
-Write-Host "NapCat WebUI: $WebUiUrl"
-
 Write-Host "Waiting for NapCat to connect to bot backend..."
 $connected = $false
 for ($i = 1; $i -le 12; $i++) {
@@ -165,6 +291,6 @@ if ($connected) {
     Write-Host "You can test in the QQ group with: /ping"
 } else {
     Write-Host "Warning: no Established connection to port $BotPort yet."
-    Write-Host "Keep NapCat logged in, then check the WebUI OneBot reverse WebSocket config."
+    Write-Host "Keep NapCat logged in, then check the OneBot reverse WebSocket config."
     Write-Host "Expected URL: ws://127.0.0.1:$BotPort/onebot/v11/ws"
 }
