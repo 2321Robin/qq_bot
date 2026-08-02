@@ -198,10 +198,15 @@ ws://127.0.0.1:8081/onebot/v11/ws
   --quarantine-dir tests/fixtures/data_pipeline/quarantine
 
 # 真实刷新（增量抓取 → 校验 → 质量门禁 → 差异报告 → 发布 → 图卡增量 → 搜索索引）
-.\.venv\Scripts\python scripts\refresh_roco_data.py
+.\\.venv\\Scripts\\python scripts\\refresh_roco_data.py
+# 并发抓取（--fetch-workers N，每个 worker 独立按 --delay-seconds 限流）与失败续抓：
+#   全量失败后（如源站反爬），用最新报告只重抓失败页，保留上次成功产物：
+#   .\\.venv\\Scripts\\python scripts\\refresh_roco_data.py --delay-seconds 2 --fetch-workers 2
+#   .\\.venv\\Scripts\\python scripts\\refresh_roco_data.py --retry-errors-from data/reports/refresh-<时间戳>.json
+# 抓取进度以 [fetch] N/M (P%) 行实时输出；门禁失败不发布（退出码 1）。
 
 # 只校验 manifest 与磁盘一致性（不一致退出码 1）
-.\.venv\Scripts\python scripts\refresh_roco_data.py --offline --verify-only
+.\\.venv\\Scripts\\python scripts\\refresh_roco_data.py --offline --verify-only
 ```
 
 要点：

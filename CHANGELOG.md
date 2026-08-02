@@ -35,6 +35,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
+- Added parallel BWiki fetching (`--fetch-workers`, default 2): each worker paces itself with `--delay-seconds`, results merge in index order; live progress output (`[fetch] N/M (P%)`).
+- Added `--retry-errors-from REPORT` to re-fetch only pages that failed in a previous run (keeps the previous run's successful artifacts; WAF-friendly gap fill after a partial refresh).
+- Fixed BWiki sprite-template migration parsing (empty stats), parenthesized form display names (dangling evolution edges), and `sprite-name2` form-name suffixes that produced 62 duplicate/polluted detail files; cleaned the 62 files and rebuilt the manifest.
+- Fixed fetch staging pollution: the staging fetch dir is cleared before each run, and retry runs keep prior artifacts so the merged set is a single parser version.
+- Published the first full real dataset refresh (2026-08-02): 618 records, all 8 quality gates pass (stats completeness 1.0, dangling edges 0), 618 cards, search index rebuilt.
 - Included the computed weekday in AI current-time grounding to avoid mismatched date and weekday replies.
 - Refreshed local 洛克王国精灵 details through 图鉴编号 375.
 - Chat memory reads/writes are now fully asynchronous; event handlers no longer block the event loop on SQLite.
