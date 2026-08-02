@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "models": {
+    "gpt-4o-mini": {
+      "input_per_1k_tokens": 0.0,
+      "output_per_1k_tokens": 0.0,
+      "currency": "USD",
+      "notes": "示例占位。真实价格未知时 input/output_per_1k_tokens 必须填字符串 \"unknown\"，禁止填入推测数字。"
+    }
+  }
+}

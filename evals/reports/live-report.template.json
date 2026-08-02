@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "mode": "live",
+  "created_at": "<UTC ISO timestamp of the run>",
+  "code_revision": "<git HEAD of the run>",
+  "dataset": "evals/cases/roco_agent_v1.jsonl",
+  "dataset_hash": "<sha256 of the frozen dataset; must match roco_agent_v1.manifest.json>",
+  "split": "test",
+  "case_count": 84,
+  "provider": {
+    "model": "<AI_MODEL>",
+    "fallback_model": "<AI_FALLBACK_MODEL or empty>"
+  },
+  "config": {
+    "router_confidence_threshold": 0.75,
+    "agent_max_rounds": 3,
+    "agent_max_tool_calls": 4,
+    "agent_tools_per_round": 2,
+    "agent_deadline_seconds": 60.0,
+    "context_window_tokens": 128000,
+    "output_reserve_tokens": 2048,
+    "token_safety_margin": 1024,
+    "semantic_verifier": false,
+    "refusal_detection": "marker heuristic (human review refines)",
+    "memory": "disabled (live eval never reads the production chat database)"
+  },
+  "temperature": {
+    "legacy_context": 0.7,
+    "tool_agent_structured": 0.2,
+    "tool_agent_plain": 0.7
+  },
+  "quality_gates": [
+    {
+      "metric": "tool_selection_exact_match",
+      "operator": "ge",
+      "threshold": 0.9,
+      "actual": 0.0,
+      "passed": false
+    },
+    {
+      "metric": "fact_accuracy",
+      "operator": "ge",
+      "threshold": 0.85,
+      "actual": 0.0,
+      "passed": false
+    },
+    {
+      "metric": "citation_provenance_rate",
+      "operator": "eq",
+      "threshold": 1.0,
+      "actual": 0.0,
+      "passed": false
+    },
+    {
+      "metric": "refusal_recall",
+      "operator": "ge",
+      "threshold": 0.9,
+      "actual": 0.0,
+      "passed": false
+    },
+    {
+      "metric": "fabrication_rate",
+      "operator": "le",
+      "threshold": 0.05,
+      "actual": 0.0,
+      "passed": false
+    }
+  ],
+  "results": {
+    "legacy_context": {
+      "mode": "legacy_context",
+      "case_count": 84,
+      "metrics": {
+        "fact_accuracy": 0.0,
+        "citation_provenance_rate": 0.0,
+        "url_syntax_rate": 0.0,
+        "url_domain_valid_rate": 0.0,
+        "refusal_recall": 0.0,
+        "over_refusal_rate": 0.0,
+        "fabrication_rate": 0.0,
+        "latency_p50": 0.0,
+        "latency_p95": 0.0
+      },
+      "token_summary": {
+        "prompt_tokens": null,
+        "completion_tokens": null,
+        "total_tokens": null,
+        "estimated": false,
+        "cases_with_usage": 0,
+        "total_cases": 84
+      },
+      "cost": {
+        "cost": null,
+        "currency": null,
+        "status": "unknown"
+      },
+      "latency": {
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "failures": []
+    },
+    "tool_agent": {
+      "mode": "tool_agent",
+      "case_count": 84,
+      "metrics": {
+        "route_accuracy": 0.0,
+        "tool_selection_exact_match": 0.0,
+        "illegal_tool_call_rate": 0.0,
+        "fact_accuracy": 0.0,
+        "citation_provenance_rate": 0.0,
+        "url_syntax_rate": 0.0,
+        "url_domain_valid_rate": 0.0,
+        "refusal_recall": 0.0,
+        "over_refusal_rate": 0.0,
+        "fabrication_rate": 0.0,
+        "latency_p50": 0.0,
+        "latency_p95": 0.0
+      },
+      "token_summary": {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "estimated": false,
+        "cases_with_usage": 84,
+        "total_cases": 84
+      },
+      "cost": {
+        "cost": null,
+        "currency": null,
+        "status": "unknown"
+      },
+      "latency": {
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "failures": []
+    }
+  },
+  "route_observations": [
+    {
+      "case_id": "<case id>",
+      "route": "<route value>",
+      "confidence": 0.9
+    }
+  ]
+}

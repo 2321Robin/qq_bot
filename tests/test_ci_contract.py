@@ -171,3 +171,76 @@ def test_gitignore_covers_coverage_and_container_outputs() -> None:
     text = (ROOT / ".gitignore").read_text(encoding="utf-8")
     for entry in (".coverage", "coverage.xml", "htmlcov/", "container-data/"):
         assert entry in text
+
+
+def test_eval_job_runs_validate_and_offline_gate() -> None:
+    eval_job = _workflow()["jobs"]["eval"]
+    runs = [step.get("run", "") for step in eval_job["steps"]]
+    assert any("--mode validate" in run for run in runs)
+    assert any("--mode offline" in run for run in runs)
+    assert any("--split test" in run for run in runs)
+    assert any("roco_agent_v1.jsonl" in run for run in runs)
+    # the gate must never touch the network or real providers
+    assert "AGENT_EVAL_LIVE" not in " ".join(runs)
+    assert "api_key" not in " ".join(runs).lower()
+
+
+def test_workflow_has_no_real_secret_environment() -> None:
+    """CI must not define or reference real credential variables (S2-GATE-02);
+    only GitHub's own token plumbing may appear."""
+    text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    lowered = text.lower()
+    for marker in ("ai_api_key", "tavily_api_key", "agent_eval_live", "qq_account", "qq_password"):
+        assert marker not in lowered, f"CI references real secret {marker!r}"
+
+
+def test_offline_gate_requires_frozen_manifest_hash() -> None:
+    """The eval job's offline command is the enforcement point: the runner
+    refuses a dataset whose hash does not match its frozen manifest
+    (S2-GATE-01). This pins the runner behavior the CI step depends on."""
+    import json as _json
+    import shutil
+
+    from qq_bot.evaluation.runner import OfflineRunner, RunConfig
+
+    def run(dataset: Path) -> int:
+        return OfflineRunner(
+            RunConfig(
+                dataset_path=dataset,
+                split="test",
+                report_path=ROOT / "evals" / "reports" / "ci-contract.json",
+            )
+        ).run()
+
+    temp_dir = Path(ROOT) / "evals" / "reports" / "_ci_contract_tmp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        dataset = temp_dir / "roco_agent_v1.jsonl"
+        shutil.copyfile(ROOT / "evals" / "cases" / "roco_agent_v1.jsonl", dataset)
+        shutil.copyfile(
+            ROOT / "evals" / "cases" / "roco_agent_v1.manifest.json",
+            temp_dir / "roco_agent_v1.manifest.json",
+        )
+        assert run(dataset) == 0  # untouched dataset passes the gate
+
+        # tampered dataset (schema-valid edit) must fail the hash gate
+        tampered = temp_dir / "tampered.jsonl"
+        shutil.copyfile(ROOT / "evals" / "cases" / "roco_agent_v1.jsonl", tampered)
+        shutil.copyfile(
+            ROOT / "evals" / "cases" / "roco_agent_v1.manifest.json",
+            temp_dir / "tampered.manifest.json",
+        )
+        lines = tampered.read_text(encoding="utf-8").splitlines()
+        last = _json.loads(lines[-1])
+        last["prompt"] = last["prompt"] + " 修改"
+        lines[-1] = _json.dumps(last, ensure_ascii=False)
+        tampered.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        assert run(tampered) == 1
+
+        # missing manifest must fail
+        orphan = temp_dir / "orphan.jsonl"
+        shutil.copyfile(ROOT / "evals" / "cases" / "roco_agent_v1.jsonl", orphan)
+        assert run(orphan) == 1
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        (ROOT / "evals" / "reports" / "ci-contract.json").unlink(missing_ok=True)

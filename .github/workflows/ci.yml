@@ -80,6 +80,28 @@ jobs:
           path: coverage.xml
           if-no-files-found: error
 
+  eval:
+    name: Offline eval gate (validate + frozen test split)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install dev dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Validate dataset schema, coverage and hash
+        run: python scripts/run_agent_eval.py --mode validate
+      - name: Offline eval over the frozen test split (no network, no API keys)
+        run: >-
+          python scripts/run_agent_eval.py --mode offline
+          --dataset evals/cases/roco_agent_v1.jsonl --split test
+
   security:
     name: Secret scan (Gitleaks)
     runs-on: ubuntu-latest
