@@ -292,6 +292,12 @@ def _run_refresh(
     # 4. merge validation: staged changes + untouched disk files, on the staging
     # copy; failures move into quarantine (S3-SCHEMA-03/06, official dir untouched)
     _merge(details_dir, fetch_dir, merged_dir)
+    # normalize on the staged set before gates: evolution relations are built
+    # against the full merged name set, and display-name annotations resolve
+    # (e.g. 黑化加尔（黑化的样子） -> 黑化加尔) so dangling-edge gating sees
+    # the published shape (S3-DIFF-05).
+    if not args.no_normalize:
+        normalize_pet_detail_directory(merged_dir)
     validation = validate_directory(merged_dir, quarantine_dir)
     validated = validation.ok
 

@@ -100,9 +100,29 @@ def normalize_pet_detail_directory(directory: Path) -> list[Path]:
     return paths
 
 
+PAREN_SUFFIX_RE = re.compile(r"[（(][^（）()]*[）)]$")
+
+
+def _resolve_known_name(name: str, known_names: set[str]) -> str:
+    """Drop a trailing parenthesized display annotation when the plain name
+    exists in the dataset.
+
+    BWiki evolution chains sometimes decorate a target with a note that is not
+    a separate entry (e.g. 黑化加尔（黑化的样子） while the index entry is
+    黑化加尔).  Form entries like 化蝶（幽冥眼的样子） ARE separate records,
+    so the annotation is only stripped when the bare name is known.
+    """
+    text = _string_value(name)
+    if not text or text in known_names:
+        return text
+    stripped = PAREN_SUFFIX_RE.sub("", text).strip()
+    return stripped if stripped in known_names else text
+
+
 def normalize_pet_details(details: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Attach normalized evolution relations to each detail."""
     names = [_string_value(detail.get("name")) for detail in details]
+    known_names = set(names)
     global_edges = _collect_global_evolution_edges(details, names)
     edges = _dedupe_edges(
         [
@@ -110,6 +130,14 @@ def normalize_pet_details(details: list[dict[str, Any]]) -> list[dict[str, Any]]
             *_infer_sourceless_evolution_edges(details, global_edges),
         ]
     )
+    for edge in edges:
+        edge["source"] = _resolve_known_name(edge["source"], known_names)
+        edge["target"] = _resolve_known_name(edge["target"], known_names)
+    edges = _dedupe_edges(edges)
+    # the generated texts embed the resolved names
+    for edge in edges:
+        edge["forward_text"] = evolution_forward_text(edge)
+        edge["backward_text"] = evolution_backward_text(edge)
     incoming: dict[str, list[dict[str, str]]] = {}
     outgoing: dict[str, list[dict[str, str]]] = {}
     for edge in edges:

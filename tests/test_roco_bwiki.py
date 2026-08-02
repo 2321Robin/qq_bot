@@ -638,6 +638,52 @@ def test_normalize_pet_details_infers_sourceless_branch_conditions_from_previous
     assert details[3]["evolution_condition"] == "可由画像守护击败3个幻系精灵进化得"
 
 
+def test_normalize_pet_details_resolves_parenthesized_display_names() -> None:
+    details = [
+        {
+            "name": "加益",
+            "evolution_condition": "",
+            "evolution_edges": [
+                {
+                    "source": "加益",
+                    "target": "黑化加尔（黑化的样子）",
+                    "condition": "Lv.40累计突破2次 + [幽]血脉",
+                    "raw_condition": "Lv.40累计突破2次 + [幽]血脉",
+                }
+            ],
+        },
+        {
+            "name": "黑化加尔",
+            "evolution_condition": "",
+            "evolution_edges": [],
+        },
+        # a parenthesized form that IS its own entry must be kept as-is
+        {
+            "name": "化蝶（幽冥眼的样子）",
+            "evolution_condition": "",
+            "evolution_edges": [],
+        },
+    ]
+
+    normalize_pet_details(details)
+
+    assert details[0]["evolution"]["to"] == [
+        {
+            "source": "加益",
+            "target": "黑化加尔",
+            "condition": "Lv.40累计突破2次 + [幽]血脉",
+            "raw_condition": "Lv.40累计突破2次 + [幽]血脉",
+            "forward_text": "Lv.40累计突破2次 + [幽]血脉可进化为黑化加尔",
+            "backward_text": "可由加益Lv.40累计突破2次 + [幽]血脉进化得",
+            "text": "Lv.40累计突破2次 + [幽]血脉可进化为黑化加尔",
+        }
+    ]
+    assert details[1]["evolution"]["from"] != []
+    # standalone form entries are untouched
+    assert details[2]["evolution"]["from"] == []
+    assert details[2]["evolution"]["to"] == []
+
+
 def test_parse_pet_detail_sums_stats_when_total_race_value_is_missing() -> None:
     html = """
     <html>
