@@ -262,6 +262,7 @@ def incremental_fetch(
     delay_seconds: float = 0.0,
     workers: int = 1,
     progress: Callable[[int, int], None] | None = None,
+    clean_output: bool = True,
 ) -> FetchOutcome:
     """Fetch changed targets into output_dir (publish moves them after gates pass).
 
@@ -275,10 +276,12 @@ def incremental_fetch(
       delay_seconds per request); results are merged in input order.
     - progress(done, total) is invoked once per target when given.
 
-    The output dir is emptied first: a previous failed run leaves stale files
-    behind that would otherwise be merged as if freshly fetched.
+    The output dir is emptied first unless clean_output is False: a previous
+    failed run leaves stale files behind that would otherwise be merged as if
+    freshly fetched; a retry run (--retry-errors-from) keeps the previous
+    run's successful artifacts and only fills the gaps.
     """
-    if output_dir.exists():
+    if clean_output and output_dir.exists():
         for stale in output_dir.glob("*"):
             if stale.is_file():
                 stale.unlink()

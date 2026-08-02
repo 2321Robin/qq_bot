@@ -333,6 +333,7 @@ def _run_refresh(
             delay_seconds=args.delay_seconds,
             workers=args.fetch_workers,
             progress=_fetch_progress,
+            clean_output=args.retry_errors_from is None,
         )
 
     # 4. merge validation: staged changes + untouched disk files, on the staging
