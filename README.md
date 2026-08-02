@@ -185,6 +185,49 @@ ws://127.0.0.1:8081/onebot/v11/ws
 
 抓取的详情数据、素材和图卡位于 `data/` 目录，**不随公开仓库分发**。
 
+### 数据管道（阶段 3）
+
+刷新、校验、门禁、差异报告与发布由 `scripts/refresh_roco_data.py` 编排（也提供 `refresh-roco-data` 控制台命令）：
+
+```powershell
+# 先在夹具数据上离线彩排（不写正式目录/manifest/索引，仍产出差异报告）
+.\.venv\Scripts\python scripts\refresh_roco_data.py --offline --dry-run `
+  --details-dir tests/fixtures/data_pipeline/details `
+  --manifest-dir tests/fixtures/data_pipeline/manifests `
+  --reports-dir tests/fixtures/data_pipeline/reports `
+  --quarantine-dir tests/fixtures/data_pipeline/quarantine
+
+# 真实刷新（增量抓取 → 校验 → 质量门禁 → 差异报告 → 发布 → 图卡增量 → 搜索索引）
+.\.venv\Scripts\python scripts\refresh_roco_data.py
+
+# 只校验 manifest 与磁盘一致性（不一致退出码 1）
+.\.venv\Scripts\python scripts\refresh_roco_data.py --offline --verify-only
+```
+
+要点：
+
+- **校验与隔离**：非法详情文件移入 `data/quarantine/`，同时写入 `{名称}.error.json` 记录失败原因；隔离文件不进 manifest、门禁、图卡与索引。
+- **Manifest**：`data/manifests/latest.json` 记录逐文件 sha256、`dataset_hash` 与门禁检查值；每次刷新开始时旧值轮转为 `previous.json`。`--dry-run` 不写任何 manifest。
+- **差异报告**：每次刷新产出 `data/reports/refresh-<时间戳>.json`（机器可读，含 `gate_failed`、门禁明细、隔离清单）与同名 `.md`（人读摘要）。
+- **质量门禁**：记录数下限、净删除、编号断档、六维完整率、总种族值、悬空进化边、技能键缺失率、隔离目录非空，阈值全部可在 `.env`/环境变量配置，并写入报告与 manifest。门禁失败不发布，退出码 1。
+- **图卡增量**：`--change-set` 模式只重绘新增/修改及其进化链引用记录（`generate_roco_pet_cards.py --change-set data/manifests/change_set.json`）。
+- **搜索索引**：刷新后重建 `data/roco_search.sqlite3`（n-gram 倒排）；运行时查询命中索引候选池，索引缺失/损坏时回退全量扫描（行为与阶段 2 一致）。
+- **运行时缓存**：`get_pet_records`/`get_skill_records` 为进程内缓存；数据更新后需重启，或调用 `clear_record_caches()` 热更新（刷新流程本身不会清缓存）。
+
+**分发命令与许可边界（私有）**：
+
+```powershell
+# 打包：data/dist/roco-data-<dataset_hash8>.tar.gz（详情 + latest.json + sha256SUMS.txt）
+.\.venv\Scripts\python scripts\package_roco_data.py
+
+# 下载并校验安装：--base-url 必填、无内置公开 URL（数据不可公开再分发）
+.\.venv\Scripts\python scripts\download_roco_data.py --base-url <私有基址> --dataset-hash <dataset_hash>
+```
+
+数据为私有许可（见 `DATA_LICENSE.md` 第 6 节）；`download-roco-data` 校验 sha256SUMS 逐文件与 `dataset_hash`，校验失败不落盘；下载经 `data/.cache/` 按哈希缓存，缓存损坏自动忽略重下。
+
+**分发载体评估结论**：当前规模（详情约 7.1 MB；含素材与图卡约 258 MB）与 NC/私有许可边界下，采用**对象存储私有桶**为推荐载体（详情级规模成本约 $0.01/月量级）；不使用 Git LFS 或公开 GitHub Release（LFS 改变存储而非许可，公开 Release 直接违反许可边界）；自托管载体的运维成本高于其收益，不采用。命令接口与载体解耦，切换载体只需更换 `--base-url`。
+
 ## 测试与评测
 
 ```powershell
@@ -194,7 +237,7 @@ ws://127.0.0.1:8081/onebot/v11/ws
 .\\venv\Scripts\python -m pytest --cov=qq_bot --cov-branch --cov-report=term-missing
 ```
 
-当前自动化测试 **639 个**，Ruff 静态检查通过；分支覆盖率门槛 `fail_under` 由首次实测基线设定（当前 82%，见 `pyproject.toml`），未经明确评审不得下调。
+当前自动化测试 **777 个**，Ruff 静态检查通过；分支覆盖率门槛 `fail_under` 由首次实测基线设定（当前 82%，见 `pyproject.toml`），未经明确评审不得下调。
 
 开发前建议启用 pre-commit（含 ruff 与 Gitleaks 秘密扫描）：
 

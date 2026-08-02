@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Added stage-3 data pipeline (offline-first): schema contracts with strict field validation and quarantine of invalid detail files (`data/quarantine/` with `{name}.error.json`), per-file hashes and `dataset_hash` manifests (`data/manifests/latest.json` → `previous.json` rotation), incremental BWiki refresh with 304/content-hash short-circuits, configurable quality gates (record floor, net drop, number gaps, stats/race completeness, dangling edges, skill-key rates, quarantine), machine-readable diff reports (`data/reports/refresh-*.{json,md}`), atomic publish via staging, `--change-set` incremental card regeneration, prebuilt n-gram search index (`data/roco_search.sqlite3`) with full-scan fallback, and `clear_record_caches()` hot-reload hooks.
+- Added refresh orchestration command `scripts/refresh_roco_data.py` (console script `refresh-roco-data`) with `--offline/--dry-run/--verify-only/--force/--prune-removed/--allow-quarantine` and exit codes 0/1/2.
+- Added private distribution commands: `package-roco-data` (details + `latest.json` + `sha256SUMS.txt` tarball keyed by `dataset_hash`) and `download-roco-data` (required `--base-url`/`--dataset-hash`, per-file sha256 verification, atomic install, hash-keyed cache under `data/.cache/`); no built-in public URL (data is not publicly redistributable — `DATA_LICENSE.md` §6).
+- Added CI data-pipeline gate job (offline dry-run over fixtures, report structure assertion, manifest verify-only consistency).
 - Added CI pipeline (GitHub Actions) with quality, test matrix (Python 3.11 / 3.12), security (Gitleaks) and container jobs.
 - Added offline evaluation gate to CI: frozen dataset + manifest hash; tampered or missing manifest fails the pipeline (`scripts/run_agent_eval.py --mode validate|offline`).
 - Added pre-commit hooks (ruff format/check, Gitleaks secret scan).

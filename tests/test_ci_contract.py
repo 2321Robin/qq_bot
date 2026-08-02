@@ -244,3 +244,71 @@ def test_offline_gate_requires_frozen_manifest_hash() -> None:
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
         (ROOT / "evals" / "reports" / "ci-contract.json").unlink(missing_ok=True)
+
+
+def test_data_job_exists_and_is_offline_only() -> None:
+    jobs = _workflow()["jobs"]
+    assert "data" in jobs, "CI must include the data pipeline gate job (S3-GATE)"
+    data_job = jobs["data"]
+    runs = " ".join(step.get("run", "") for step in data_job["steps"])
+    assert "refresh_roco_data.py --offline --dry-run" in runs
+    assert "refresh_roco_data.py --offline --verify-only" in runs
+    assert "--details-dir tests/fixtures/data_pipeline/details" in runs
+    # No network: the dry-run must never reach a live wiki.
+    assert "wiki.biligame.com" not in runs
+
+
+def test_data_job_asserts_fixture_gates_pass() -> None:
+    data_job = _workflow()["jobs"]["data"]
+    runs = " ".join(step.get("run", "") for step in data_job["steps"])
+    names = " ".join(step.get("name", "") for step in data_job["steps"])
+    assert "gate_failed" in runs and "is False" in runs
+    assert "S3-DIFF-05" in names
+
+
+def test_data_job_thresholds_are_explicit_env_not_secrets() -> None:
+    data_job = _workflow()["jobs"]["data"]
+    env = data_job.get("env", {})
+    # Fixture scale (6 records) needs permissive thresholds; they must be
+    # explicit and must never look like real credentials.
+    assert env.get("DATA_MIN_RECORDS") == "1"
+    assert "DATA_MIN_STATS_COMPLETE_RATE" in env
+    for key in env:
+        assert key.startswith("DATA_"), f"unexpected env key {key!r}"
+        lowered = key.lower()
+        assert not any(m in lowered for m in ("token", "secret", "password", "api_key"))
+
+
+def test_gitignore_covers_pipeline_runtime_outputs() -> None:
+    text = (ROOT / ".gitignore").read_text(encoding="utf-8")
+    for entry in (
+        "/data/manifests/",
+        "/data/quarantine/",
+        "/data/reports/",
+        "/data/dist/",
+        "/data/.cache/",
+        "/data/.staging/",
+        "/data/roco_search.sqlite3",
+    ):
+        assert entry in text, f".gitignore missing {entry}"
+
+
+def test_fixture_report_and_staging_dirs_are_ignored() -> None:
+    text = (ROOT / ".gitignore").read_text(encoding="utf-8")
+    for entry in (
+        "tests/fixtures/data_pipeline/reports/",
+        "tests/fixtures/data_pipeline/quarantine/",
+        "tests/fixtures/data_pipeline/staging/",
+    ):
+        assert entry in text, f".gitignore missing {entry}"
+
+
+def test_console_scripts_declared_for_pipeline() -> None:
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    for entry in (
+        "refresh-roco-data",
+        "package-roco-data",
+        "download-roco-data",
+        "build-roco-search-index",
+    ):
+        assert entry in text, f"pyproject missing console script {entry}"

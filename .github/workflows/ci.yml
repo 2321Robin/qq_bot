@@ -102,6 +102,54 @@ jobs:
           python scripts/run_agent_eval.py --mode offline
           --dataset evals/cases/roco_agent_v1.jsonl --split test
 
+  data:
+    name: Data pipeline gate (offline)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Fixture set is 6 records; the default production thresholds (500 records,
+    # 0 gaps, …) would fail the gates. The data job's job is the pipeline
+    # mechanics, so the gates run against permissive fixture thresholds.
+    env:
+      DATA_MIN_RECORDS: "1"
+      DATA_MAX_RECORD_DROP: "100"
+      DATA_MAX_NEW_NUMBER_GAPS: "100"
+      DATA_MIN_STATS_COMPLETE_RATE: "0"
+      DATA_MIN_TOTAL_RACE_RATE: "0"
+      DATA_MAX_DANGLING_EDGES: "100"
+      DATA_MAX_SKILL_KEY_MISSING_RATE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install dev dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Offline refresh over fixtures (dry run, no network)
+        run: >-
+          python scripts/refresh_roco_data.py --offline --dry-run
+          --details-dir tests/fixtures/data_pipeline/details
+          --manifest-dir tests/fixtures/data_pipeline/manifests
+          --reports-dir tests/fixtures/data_pipeline/reports
+          --quarantine-dir tests/fixtures/data_pipeline/quarantine
+          --staging-dir tests/fixtures/data_pipeline/staging
+      - name: Assert diff report structure (S3-DIFF-05)
+        run: >-
+          python -c "import json,glob,sys;
+          r=[f for f in glob.glob('tests/fixtures/data_pipeline/reports/refresh-*.json') if 'gate' in open(f,encoding='utf-8').read()];
+          assert r, 'no refresh report with gate results';
+          d=json.loads(open(r[-1],encoding='utf-8').read());
+          assert d['gate_failed'] is False, 'fixture refresh must pass gates';
+          assert set(d['forms']) == {'added','modified','removed','added_urls'}, d['forms'].keys()"
+      - name: Manifest consistency over fixtures
+        run: >-
+          python scripts/refresh_roco_data.py --offline --verify-only
+          --details-dir tests/fixtures/data_pipeline/details
+          --manifest-dir tests/fixtures/data_pipeline/manifests
+
   security:
     name: Secret scan (Gitleaks)
     runs-on: ubuntu-latest
