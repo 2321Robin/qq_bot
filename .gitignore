@@ -30,6 +30,20 @@ data/chat_memory.sqlite3
 /data/roco_pet_details/
 /data/roco_assets/
 /data/roco_pet_cards/
+
+# Data pipeline runtime state (stage 3)
+/data/manifests/
+/data/quarantine/
+/data/reports/
+/data/dist/
+/data/.cache/
+/data/.staging/
+/data/roco_search.sqlite3
+
+# Fixture outputs produced by the offline CI data-gate rehearsal
+/tests/fixtures/data_pipeline/reports/
+/tests/fixtures/data_pipeline/quarantine/
+/tests/fixtures/data_pipeline/staging/
 dist/
 build/
 *.egg-info/

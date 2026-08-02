@@ -1,0 +1,33 @@
+{
+  "name": "BadPet",
+  "source_url": "https://example.com/pets/107",
+  "attributes": [
+    "合成属性"
+  ],
+  "evolution_condition": "",
+  "total_race_value": 999,
+  "profile": {
+    "编号": "107",
+    "系别": "合成属性",
+    "简介": "非法文件：stats 含未知键，用于 quarantine 测试。"
+  },
+  "stats": {
+    "生命": 50,
+    "物攻": 50,
+    "魔攻": 50,
+    "物防": 50,
+    "魔防": 50,
+    "速度": 50,
+    "未知": 99
+  },
+  "skills": [],
+  "metadata": {
+    "parser_version": 6,
+    "generated_at": "2026-01-15T08:00:00+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [],
+    "evolution_condition": ""
+  }
+}

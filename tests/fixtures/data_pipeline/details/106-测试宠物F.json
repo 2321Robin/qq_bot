@@ -1,0 +1,35 @@
+{
+  "name": "测试宠物F",
+  "source_url": "https://example.com/pets/106",
+  "attributes": [
+    "合成属性"
+  ],
+  "evolution_condition": "",
+  "total_race_value": 210,
+  "profile": {
+    "编号": "106",
+    "系别": "合成属性",
+    "体长": "",
+    "体重": "",
+    "最佳拍档": "",
+    "简介": "完全合成的测试精灵数据。"
+  },
+  "stats": {
+    "生命": 80,
+    "物攻": 80,
+    "魔攻": 80,
+    "物防": 80,
+    "魔防": 80,
+    "速度": 80
+  },
+  "skills": [],
+  "metadata": {
+    "parser_version": 6,
+    "generated_at": "2026-01-15T08:00:00+00:00"
+  },
+  "evolution": {
+    "from": [],
+    "to": [],
+    "evolution_condition": ""
+  }
+}
