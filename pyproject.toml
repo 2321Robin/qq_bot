@@ -32,6 +32,10 @@ dev = [
 
 [project.scripts]
 run-agent-eval = "scripts.run_agent_eval:main"
+refresh-roco-data = "scripts.refresh_roco_data:main"
+package-roco-data = "scripts.package_roco_data:main"
+download-roco-data = "scripts.download_roco_data:main"
+build-roco-search-index = "scripts.build_roco_search_index:main"
 
 [tool.setuptools.packages.find]
 where = ["src", "."]

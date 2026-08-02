@@ -76,3 +76,26 @@ images, icons, trademarks, or game content described below.
 - This document reflects the repository owner's best-effort review as of
   July 2026. If you believe any content is misclassified, please open an
   issue.
+
+## 6. Private distribution mechanism
+
+| Field | Value |
+|---|---|
+| Scope | The offline packaging/downloading commands introduced by the stage-3 data pipeline |
+| Commands | `package-roco-data` (`scripts/package_roco_data.py`) and `download-roco-data` (`scripts/download_roco_data.py`) |
+| Packaging output | `data/dist/roco-data-<dataset_hash8>.tar.gz` — detail JSON files plus `latest.json` and `sha256SUMS.txt` |
+| Cache directory | `data/.cache/` — downloaded archives cached by full `dataset_hash`; corrupt cache entries are ignored and re-downloaded |
+| License boundary | **Unchanged.** Code stays MIT; the packaged game/wiki data stays private (sections 1–3). `download-roco-data` has **no built-in public URL** and refuses to run without an explicit `--base-url`; the help text states the data is not publicly redistributable |
+| Carrier | Not fixed by the command interface; see the carrier evaluation note in the README (stage 3, data pipeline section) |
+
+## Notes
+
+- The public repository distributes **only** the code, documentation, and
+  test fixtures described in sections 4 and 5 above. Data directories
+  (`data/roco_pet_details/`, `data/roco_assets/`, `data/roco_pet_cards/`)
+  are not included in the public tree or public git history.
+- Git LFS changes storage, not licensing. Excluding these directories
+  from the public repository is a licensing decision, not a storage one.
+- This document reflects the repository owner's best-effort review as of
+  July 2026. If you believe any content is misclassified, please open an
+  issue.
