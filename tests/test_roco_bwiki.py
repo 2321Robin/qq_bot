@@ -1,4 +1,5 @@
 import json
+import os
 from http.client import RemoteDisconnected
 from urllib.error import HTTPError
 
@@ -795,7 +796,7 @@ def test_fetch_html_falls_back_to_curl_when_urlopen_is_blocked(monkeypatch) -> N
         fetch_html("https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB")
         == "<html>备用抓取成功</html>"
     )
-    assert captured_command[:4] == ["curl.exe", "-L", "--retry", "2"]
+    assert captured_command[:4] == ["curl.exe" if os.name == "nt" else "curl", "-L", "--retry", "2"]
     assert captured_command[-1] == "https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB"
 
 
