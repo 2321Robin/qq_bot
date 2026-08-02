@@ -385,3 +385,60 @@ def test_agent_settings_repr_does_not_leak_secrets() -> None:
     text = repr(settings)
     assert "agent-secret-key" not in text
     assert "agent-fallback" not in text
+
+
+def test_data_pipeline_settings_defaults() -> None:
+    settings = BotSettings()
+    assert settings.data_min_records == 500
+    assert settings.data_max_record_drop == 30
+    assert settings.data_max_new_number_gaps == 0
+    assert settings.data_min_stats_complete_rate == 0.80
+    assert settings.data_min_total_race_rate == 0.95
+    assert settings.data_max_dangling_edges == 0
+    assert settings.data_max_skill_key_missing_rate == 0.005
+    assert settings.data_search_index_path == "data/roco_search.sqlite3"
+    assert settings.data_use_search_index is True
+
+
+def test_data_pipeline_settings_parse_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DATA_USE_SEARCH_INDEX", "false")
+    monkeypatch.setenv("DATA_SEARCH_INDEX_PATH", "data/custom_index.sqlite3")
+    monkeypatch.setenv("DATA_MIN_RECORDS", "600")
+    get_settings.cache_clear()
+    try:
+        settings = get_settings()
+        assert settings.data_use_search_index is False
+        assert settings.data_search_index_path == "data/custom_index.sqlite3"
+        assert settings.data_min_records == 600
+    finally:
+        monkeypatch.delenv("DATA_USE_SEARCH_INDEX")
+        monkeypatch.delenv("DATA_SEARCH_INDEX_PATH")
+        monkeypatch.delenv("DATA_MIN_RECORDS")
+        get_settings.cache_clear()
+
+
+def test_data_pipeline_settings_reject_out_of_range_rates() -> None:
+    with pytest.raises(ValidationError, match="between 0 and 1"):
+        BotSettings(data_min_stats_complete_rate=1.5)
+    with pytest.raises(ValidationError, match="between 0 and 1"):
+        BotSettings(data_min_total_race_rate=-0.1)
+    with pytest.raises(ValidationError, match="between 0 and 1"):
+        BotSettings(data_max_skill_key_missing_rate=2.0)
+
+
+def test_data_pipeline_settings_reject_negative_int_thresholds() -> None:
+    with pytest.raises(ValidationError, match="non-negative"):
+        BotSettings(data_max_record_drop=-1)
+    with pytest.raises(ValidationError, match="non-negative"):
+        BotSettings(data_min_records=-1)
+    with pytest.raises(ValidationError, match="non-negative"):
+        BotSettings(data_max_new_number_gaps=-1)
+    with pytest.raises(ValidationError, match="non-negative"):
+        BotSettings(data_max_dangling_edges=-1)
+
+
+def test_data_pipeline_settings_reject_empty_index_path() -> None:
+    with pytest.raises(ValidationError, match="non-empty"):
+        BotSettings(data_search_index_path="   ")

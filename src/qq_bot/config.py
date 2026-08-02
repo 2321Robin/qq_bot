@@ -164,6 +164,19 @@ class BotSettings(BaseSettings):
     agent_budget_summary_ratio: float = 0.10
     agent_budget_preference_max_tokens: int = 256
 
+    # ---- 数据管道（阶段 3）----
+    # 门禁默认阈值来自 2026-08-02 实测基线并留出裕量（S3-QUALITY-02）；
+    # 全部可经环境变量覆盖，当前值与阈值写入 manifest.checks 与差异报告。
+    data_min_records: int = 500
+    data_max_record_drop: int = 30
+    data_max_new_number_gaps: int = 0
+    data_min_stats_complete_rate: float = 0.80
+    data_min_total_race_rate: float = 0.95
+    data_max_dangling_edges: int = 0
+    data_max_skill_key_missing_rate: float = 0.005
+    data_search_index_path: str = "data/roco_search.sqlite3"
+    data_use_search_index: bool = True
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -309,6 +322,37 @@ class BotSettings(BaseSettings):
     def validate_chat_memory_max_results(cls, value: int) -> int:
         if value <= 0:
             raise ValueError("chat_memory_max_results must be greater than 0")
+        return value
+
+    @field_validator(
+        "data_min_records",
+        "data_max_record_drop",
+        "data_max_new_number_gaps",
+        "data_max_dangling_edges",
+    )
+    @classmethod
+    def validate_data_gate_int_fields(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("data gate thresholds must be non-negative")
+        return value
+
+    @field_validator(
+        "data_min_stats_complete_rate",
+        "data_min_total_race_rate",
+        "data_max_skill_key_missing_rate",
+    )
+    @classmethod
+    def validate_data_gate_rate_fields(cls, value: float) -> float:
+        if value < 0 or value > 1:
+            raise ValueError("data gate rate thresholds must be between 0 and 1")
+        return value
+
+    @field_validator("data_search_index_path")
+    @classmethod
+    def validate_data_search_index_path(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("data_search_index_path must be a non-empty string")
         return value
 
     @field_validator(

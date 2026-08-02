@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "refreshed_at": "2026-02-01T00:00:00Z",
+  "index_url": "https://example.com/pets/index",
+  "license": {
+    "source": "BWiki (wiki.biligame.com/rocom)",
+    "claim": "CC BY-NC-SA 4.0",
+    "attribution_required": true,
+    "commercial_use": false,
+    "redistribution": "private-only",
+    "game_assets": "proprietary"
+  },
+  "entries": {
+    "101-测试宠物A.json": {
+      "source_url": "https://example.com/pets/101",
+      "sha256": "38923ed5829b7bfb7449a48fe2549df8962814840b6f6a919bf24f859d2541f8",
+      "size": 1410,
+      "parser_version": 6,
+      "fetched_at": "2026-02-01T00:00:00Z",
+      "etag": null,
+      "last_modified": null
+    },
+    "102-测试宠物B.json": {
+      "source_url": "https://example.com/pets/102",
+      "sha256": "720a99d96ec2e0149f4cd6f0424902de6ec1965d1155741a70593f66bd9b0baa",
+      "size": 1527,
+      "parser_version": 6,
+      "fetched_at": "2026-02-01T00:00:00Z",
+      "etag": null,
+      "last_modified": null
+    },
+    "103-测试宠物C.json": {
+      "source_url": "https://example.com/pets/103",
+      "sha256": "3a2fc7be01be7ba47ff833e54505e328a64e9761f1945cbf8236e8f7a95027a4",
+      "size": 1165,
+      "parser_version": 6,
+      "fetched_at": "2026-02-01T00:00:00Z",
+      "etag": null,
+      "last_modified": null
+    },
+    "104-测试宠物D.json": {
+      "source_url": "https://example.com/pets/104",
+      "sha256": "5047d47ed7fe53076ac42d48d84e810b7bf032003afc24ea71f7aefaaf9dea8d",
+      "size": 956,
+      "parser_version": 6,
+      "fetched_at": "2026-02-01T00:00:00Z",
+      "etag": null,
+      "last_modified": null
+    },
+    "105-测试宠物E.json": {
+      "source_url": "https://example.com/pets/105",
+      "sha256": "b37e6d1e31d378307af25af4258d773928f1bec40bec000e4b4bce5db90001c7",
+      "size": 734,
+      "parser_version": 6,
+      "fetched_at": "2026-02-01T00:00:00Z",
+      "etag": null,
+      "last_modified": null
+    },
+    "106-测试宠物F.json": {
+      "source_url": "https://example.com/pets/106",
+      "sha256": "4a8f6c1a1d7f52ad86166a1fe28864459c781488cd6ff40a97eb0b101dd038b3",
+      "size": 677,
+      "parser_version": 6,
+      "fetched_at": "2026-02-01T00:00:00Z",
+      "etag": null,
+      "last_modified": null
+    }
+  },
+  "dataset_hash": "3fa96411912f9a42ff279ed5fa4cbdfd4d9c11c98acf28d60a4dbeb9d9cac85f",
+  "previous_hash": null,
+  "checks": {}
+}
