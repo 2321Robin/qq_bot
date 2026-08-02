@@ -23,6 +23,26 @@ import qq_bot.datapipeline.fetch as fetch_module
 FIXED_TIME = datetime(2026, 2, 1, tzinfo=timezone.utc)
 
 
+# ---- platform-specific curl binary (regression: Linux runners have plain curl) ----
+
+
+def test_curl_fallback_uses_platform_binary(monkeypatch) -> None:
+    import os
+    import subprocess
+
+    captured: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        captured.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="<body>", stderr="")
+
+    monkeypatch.setattr(fetch_module.subprocess, "run", fake_run)
+    expected = "curl.exe" if os.name == "nt" else "curl"
+    response = fetch_module.UrllibFetcher()._fetch_with_curl("https://example.com/x")
+    assert response.body == "<body>"
+    assert captured[0][0] == expected
+
+
 def _raw_template(name: str, number: str = "101", extra: str = "") -> str:
     return f"""{{{{精灵信息
     |精灵名称={name}

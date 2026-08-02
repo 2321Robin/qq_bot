@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from argparse import ArgumentParser
 import json
+import os
 from http.client import RemoteDisconnected
 from pathlib import Path
 import subprocess
@@ -49,8 +50,10 @@ def fetch_html(url: str) -> str:
 
 
 def _fetch_html_with_curl(url: str) -> str:
+    # Windows ships curl.exe in System32; POSIX runners have plain curl.
+    curl_bin = "curl.exe" if os.name == "nt" else "curl"
     command = [
-        "curl.exe",
+        curl_bin,
         "-L",
         "--retry",
         "2",
@@ -73,7 +76,7 @@ def _fetch_html_with_curl(url: str) -> str:
         errors="replace",
     )
     if result.returncode != 0:
-        raise URLError(result.stderr.strip() or f"curl.exe exited with {result.returncode}")
+        raise URLError(result.stderr.strip() or f"{curl_bin} exited with {result.returncode}")
     return result.stdout
 
 

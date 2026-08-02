@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -124,9 +125,12 @@ def contains_bwiki_placeholder(value: str) -> bool:
 
 # ---- production fetcher (urllib with curl fallback; network only here) ----
 
+# Windows ships curl.exe in System32; POSIX runners have plain curl.
+CURL_BIN = "curl.exe" if os.name == "nt" else "curl"
+
 
 class UrllibFetcher:
-    """Production HTTP fetcher: urllib with browser headers, curl.exe fallback."""
+    """Production HTTP fetcher: urllib with browser headers, curl fallback."""
 
     def fetch(self, url: str, headers: dict[str, str] | None = None) -> FetchResponse:
         request_headers = dict(BROWSER_HEADERS)
@@ -146,7 +150,7 @@ class UrllibFetcher:
 
     def _fetch_with_curl(self, url: str, headers: dict[str, str] | None = None) -> FetchResponse:
         command = [
-            "curl.exe",
+            CURL_BIN,
             "-L",
             "--retry",
             "2",
@@ -172,7 +176,7 @@ class UrllibFetcher:
             errors="replace",
         )
         if result.returncode != 0:
-            raise URLError(result.stderr.strip() or f"curl.exe exited with {result.returncode}")
+            raise URLError(result.stderr.strip() or f"{CURL_BIN} exited with {result.returncode}")
         return FetchResponse(status=200, headers={}, body=result.stdout)
 
 
