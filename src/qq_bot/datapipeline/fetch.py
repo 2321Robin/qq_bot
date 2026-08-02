@@ -269,7 +269,14 @@ def incremental_fetch(
     - files in previous but absent from output dir and absent from targets -> removed.
     - output_dir is the staging directory in refresh orchestration (Task 7);
       unchanged files are never copied into it.
+
+    The output dir is emptied first: a previous failed run leaves stale files
+    behind that would otherwise be merged as if freshly fetched.
     """
+    if output_dir.exists():
+        for stale in output_dir.glob("*"):
+            if stale.is_file():
+                stale.unlink()
     outcome = FetchOutcome(change_set={"added": [], "modified": [], "removed": [], "unchanged": []})
     written: dict[str, str] = {}  # filename -> source url for this run
 

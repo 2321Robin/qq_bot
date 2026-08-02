@@ -258,6 +258,12 @@ def _run_refresh(
 
     # 3. fetch (offline bypasses the fetcher entirely; disk files stay unchanged)
     if args.offline:
+        # offline mode leaves no fetch artifacts; clear stale files from a
+        # previous failed run so the merge below sees only disk state.
+        if fetch_dir.exists():
+            for stale in fetch_dir.glob("*"):
+                if stale.is_file():
+                    stale.unlink()
         outcome = FetchOutcome()
         disk_files = (
             {path.name for path in details_dir.glob("*.json")} if details_dir.exists() else set()
