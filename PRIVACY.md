@@ -27,6 +27,22 @@ When the bot is running, it may process the following categories of data:
 - Expired records are cleaned up on each read or write operation.
 - The database is **not** encrypted at rest.
 - The database file is excluded from version control (`.gitignore`).
+- **Layered memory (stage 2, `AGENT_ENABLED=true`):**
+  - *Recent messages* — the most recent messages in a group, kept only
+    within `CHAT_MEMORY_RETENTION_DAYS`.
+  - *Short-term summaries* — only when `MEMORY_SUMMARY_ENABLED=true`, the
+    bot summarizes messages that are about to expire. A summary records
+    its source message IDs and an `expires` timestamp; the summary never
+    extends the retention window of the underlying messages (both expire
+    independently, both cleaned on read/write).
+  - *Long-term preferences* — written **only** by the explicit user
+    command `/记忆保存` (whole-group explicit opt-in, one entry per user,
+    truncated to `MEMORY_PREFERENCE_MAX_CHARS` characters).
+  - *Deletion scope* — `/记忆删除 全部` (or `/记忆关闭`) deletes the
+    invoking user's own recent messages, AI replies, preference entry and
+    any summaries related to those messages. It does **not** delete other
+    users' messages, and there is no mechanism that affects data of
+    users other than the invoker.
 - **Logs contain no message bodies.** Runtime logs record only counts
   and category-level outcomes (retry attempts, circuit-breaker state,
   per-group failure counts); message text, raw QQ group/user numbers,
@@ -40,9 +56,16 @@ When the bot is running, it may process the following categories of data:
   configured AI model provider (e.g., OpenAI, ZhiPu AI) over HTTPS.
   Which messages are included depends on the chat memory query and
   the user's explicit reference ("参考最近 N 条", "@某人", etc.).
+  In agent mode (`AGENT_ENABLED=true`), the transmitted payload is the
+  user prompt plus the token-budgeted memory layers (recent messages,
+  summary, preference) and local knowledge selected by the Router; the
+  same provider boundaries apply — nothing beyond the selected prompt
+  context and tool results is sent.
 - **Search Provider (optional):** When `SEARCH_ENABLED=true` and a
   search-like query is detected, the query and a short system context
-  are sent to **Tavily** (https://tavily.com/) over HTTPS.
+  are sent to **Tavily** (https://tavily.com/) over HTTPS. Search result
+  excerpts are treated as untrusted data; the bot never re-fetches the
+  result URLs and only reports URLs the search tool actually returned.
 - **No other external transmission:** The bot does not phone home,
   send analytics, or transmit group data to any other endpoint.
 
@@ -52,9 +75,15 @@ provider and Tavily.
 ## 4. Access and deletion
 
 - The SQLite database is entirely under the deployer's control.
-- **There is no user-facing command** to delete or export personal data
-  in the current version. No in-chat admin cleanup command exists.
-- To delete data:
+- **User-facing deletion commands (stage 2):**
+  - `/记忆删除 全部` (or `/记忆关闭`) — deletes the invoking user's own
+    recent messages, AI replies, preference entry and related summaries
+    from the chat memory database. Deletion is immediate and survives
+    restart; no deleted content is fed into later prompts.
+  - `/记忆删除` — deletes only the invoking user's saved preference entry.
+  - These commands affect only the invoking user's data, never other
+    users' messages.
+- To delete all data:
   1. Stop the bot.
   2. Delete the SQLite file at `CHAT_MEMORY_PATH` (default
      `data/chat_memory.sqlite3`), or delete individual rows using a

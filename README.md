@@ -79,7 +79,8 @@ flowchart LR
 | 帮助与版本 | `/help`、`/version`、`/版本` | 查看可用功能和当前机器人版本 |
 | 精灵查询 | `/精灵 迪莫`、`/洛克 迪莫` | 本地精灵数据查询，优先发送静态图卡 |
 | 技能查询 | `/技能 闪光` | 查询技能效果及可学习精灵 |
-| AI 对话 | `ai 你好` 或 @机器人 | 多模型支持，群聊记忆，本地知识增强 |
+| AI 对话 | `ai 你好` 或 @机器人 | 多模型支持，群聊记忆，本地知识增强；`AGENT_ENABLED=true` 时走结构化 Tool Calling 链路 |
+| 记忆命令 | `/记忆保存`、`/记忆查看`、`/记忆删除`、`/记忆关闭` | 显式保存/查看/删除/关闭长期偏好与分层记忆（阶段 2） |
 | 联网搜索 | 含"今天""搜索"等词的提问 | 可选 Tavily 搜索增强 |
 | 定时消息 | 环境变量配置 | 按 Cron 时间向指定群发送消息 |
 | 命名提及 | `NAMED_MENTION_REPLACEMENTS` | 定时消息与 AI 回复中的 `@昵称` 替换为真正的 @提及（账号仅从配置读取，不写死在源码） |
@@ -90,6 +91,23 @@ flowchart LR
 - **群聊记忆：** SQLite 存储短期消息，支持"参考最近 N 条""@某人"等自然语言检索
 - **主备模型：** 主模型不可用时自动切换到备用 OpenAI 兼容接口
 - **联网搜索：** 可选 Tavily 搜索，结果注入模型上下文并要求给出来源
+
+### Agent 模式（阶段 2，`AGENT_ENABLED=true`）
+
+开启后自然语言提问先经 Router 分类为四类 route：`local_knowledge`（本地知识）、`web_search`（联网搜索）、`chat_memory`（群聊记忆）、`direct_chat`（普通对话）；低置信度或能力不足时直接澄清回复，不调用模型。Agent 初始注册 5 个 Tool：
+
+- `lookup_pet` / `find_skill_intersection` / `get_evolution_routes`（本地图鉴，`L` 证据）
+- `search_web`（Tavily，`W` 证据）
+- `search_chat_memory`（群聊记忆，`M` 证据）
+
+限制与安全边界：
+
+- **轮次/调用/截止：** `AGENT_MAX_ROUNDS`（默认 3）、`AGENT_MAX_TOOL_CALLS`（默认 4）、`AGENT_TOOLS_PER_ROUND`（默认 2）、`AGENT_DEADLINE_SECONDS`（默认 60，超时即中止并回退安全回复）。
+- **Token 预算按来源分配：** context window 内按 `AGENT_BUDGET_*_RATIO` 为本地图鉴/搜索/近期消息/短期摘要预留配额，未用配额让给高优先来源；预算不足时在调用模型前明确失败（`BUDGET_INSUFFICIENT`）。
+- **搜索内容不可信：** Tavily 返回的网页摘录视为不可信数据；只作为上下文引用，**不会二次抓取**结果 URL，最终回答只显示 Tool 实际返回的 URL。
+- **记忆分层：** 近期消息（自动）、短期摘要（`MEMORY_SUMMARY_ENABLED=true` 时对过期消息生成，不延长保留期）、长期偏好（仅 `/记忆保存` 显式写入）。删除范围：`/记忆删除` 删除该用户偏好，`/记忆删除 全部` 或 `/记忆关闭` 删除该用户全部相关数据（自身消息、AI 回复、偏好与关联摘要）。
+- **回滚开关：** `AGENT_ENABLED=false`（默认）时完全保持阶段 1 旧链路，Agent 代码不参与对话处理。
+- 语义 verifier（`AI_SEMANTIC_VERIFIER_ENABLED`）在正式评测中必须开启；确定性 grounding 检查始终运行、不可关闭。
 
 ## 快速启动
 
@@ -167,22 +185,39 @@ ws://127.0.0.1:8081/onebot/v11/ws
 
 抓取的详情数据、素材和图卡位于 `data/` 目录，**不随公开仓库分发**。
 
-## 测试
+## 测试与评测
 
 ```powershell
-.\.venv\Scripts\python -m pytest -v
-.\venv\Scripts\python -m ruff check .
-.\venv\Scripts\python -m ruff format --check .
-.\venv\Scripts\python -m pytest --cov=qq_bot --cov-branch --cov-report=term-missing
+.\\.venv\Scripts\python -m pytest -v
+.\\venv\Scripts\python -m ruff check .
+.\\venv\Scripts\python -m ruff format --check .
+.\\venv\Scripts\python -m pytest --cov=qq_bot --cov-branch --cov-report=term-missing
 ```
 
-当前自动化测试 388 个，Ruff 静态检查通过；分支覆盖率门槛 `fail_under` 由首次实测基线设定（当前 82%，见 `pyproject.toml`），未经明确评审不得下调。
+当前自动化测试 **639 个**，Ruff 静态检查通过；分支覆盖率门槛 `fail_under` 由首次实测基线设定（当前 82%，见 `pyproject.toml`），未经明确评审不得下调。
 
 开发前建议启用 pre-commit（含 ruff 与 Gitleaks 秘密扫描）：
 
 ```powershell
-.\venv\Scripts\python -m pre_commit install
+.\\venv\Scripts\python -m pre_commit install
 ```
+
+### 评测（阶段 2）
+
+离线评测在 CI 中强制执行（冻结数据集 + manifest 哈希门禁，篡改数据集即失败）：
+
+```powershell
+# 数据集校验
+.\\.venv\Scripts\python scripts/run_agent_eval.py --mode validate --dataset evals/cases/roco_agent_v1.jsonl
+# 离线评测（冻结 test split，无网络/无 API Key）
+.\\.venv\Scripts\python scripts/run_agent_eval.py --mode offline --dataset evals/cases/roco_agent_v1.jsonl --split test
+# 真实 Provider 基准（需 AGENT_EVAL_LIVE=1 + AI_API_KEY/AI_MODEL；无 Provider 时拒绝运行）
+.\\.venv\Scripts\python scripts/run_agent_eval.py --mode live --dataset evals/cases/roco_agent_v1.jsonl --split test
+```
+
+Live 报告写入 `evals/reports/live-<split>.json`（已 gitignore，不随仓库分发；结构见 `evals/reports/live-report.template.json`）。报告包含 dataset/model/日期/样本数/失败数与估算边界，且不包含 API Key、完整私有 prompt、原始聊天或 Provider header。最新脱敏报告由部署者在本地运行后自行归档——**仓库不宣称任何评测目标已达到**；质量门槛（tool selection ≥ 90%、事实正确率 ≥ 85%、citation provenance = 100%、refusal recall ≥ 90%、编造率 ≤ 5%）未达标时报告如实呈现并返回非零退出码。
+
+`evals/pricing.json` 为可选价格表（参考 `evals/pricing.example.json`）；缺失或模型不在表中时，成本标记 `estimated`/`unknown`，不填入推测数字。
 
 ## Docker 部署
 

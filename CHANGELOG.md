@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - Added CI pipeline (GitHub Actions) with quality, test matrix (Python 3.11 / 3.12), security (Gitleaks) and container jobs.
+- Added offline evaluation gate to CI: frozen dataset + manifest hash; tampered or missing manifest fails the pipeline (`scripts/run_agent_eval.py --mode validate|offline`).
 - Added pre-commit hooks (ruff format/check, Gitleaks secret scan).
 - Added Dockerfile and Compose deployment for a non-root backend image with named data volume.
 - Added `/healthz` and `/readyz` health endpoints (liveness / readiness incl. SQLite migrations).
@@ -23,6 +24,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Added BWiki raw-template fetching support for newly published pets.
 - Added S2 season local evolution data for pets 348, 354, 356, 358, 360, 362, 365, 367, 369, 371, 373, and 375.
 - Added image-sourced special evolution conditions for bloodline, skill-use, typed-defeat, time, weather, sex, height, random-form, mining, friend-world, and starlight evolutions.
+- Added stage-2 structured tool-calling agent (`AGENT_ENABLED`): keyword router over four routes (local knowledge / web search / chat memory / direct chat) with confidence thresholds and clarification replies; initial tool registry (pet lookup, skill intersection, evolution routes, web search, chat memory); orchestrator with round/call/deadline limits, per-source token budget and safe failure messages; evidence store with deterministic grounding checks (always on) and optional semantic verifier; grounded answer rendering with cited sources.
+- Added layered chat memory (recent messages, opt-in short-term summaries that never extend retention, explicit long-term preferences via `/记忆保存`) with user-facing commands `/记忆保存` `/记忆查看` `/记忆删除` `/记忆关闭`, and a repository-backed service.
+- Added agent runtime wiring: plugin switches to the agent path when `AGENT_ENABLED=true`, legacy stage-1 pipeline stays as the rollback path; runtime exposes the agent stack with explicit not-ready errors.
+- Added stage-2 evaluation: 150-case frozen dataset (tool selection, facts, citations, refusals, fabrication) with dev/test splits, offline runner with metric gates and manifest hash, and a live benchmark (`AGENT_EVAL_LIVE=1` + provider config) comparing the legacy pipeline against the tool agent on the same split with desensitized reports.
 
 ### Changed
 

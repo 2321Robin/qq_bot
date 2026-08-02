@@ -36,6 +36,35 @@ def _manager(**overrides) -> BudgetManager:
     return BudgetManager(settings)
 
 
+def _fake_tiktoken(monkeypatch, *, encoding_name: str = "cl100k_base") -> None:
+    """Inject a deterministic tiktoken stand-in so counting tests never
+    depend on the network (the real tiktoken downloads its BPE file on
+    first use, S2-TOKEN-03)."""
+
+    class _Encoding:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def encode(self, text: str, **kwargs):
+            return list(text)  # 1 token per character, deterministic
+
+    class _FakeTiktoken:
+        def encoding_for_model(self, model: str):
+            return _Encoding(encoding_name)
+
+        def get_encoding(self, name: str):
+            return _Encoding(name)
+
+    import qq_bot.agent.token_budget as token_budget
+
+    monkeypatch.setattr(token_budget, "_tiktoken", lambda: _FakeTiktoken())
+    monkeypatch.setattr(
+        token_budget,
+        "_resolve_encoding",
+        lambda *, model=None, encoding=None: encoding or encoding_name,
+    )
+
+
 def _allocate(
     manager: BudgetManager,
     *,
@@ -65,7 +94,8 @@ def _allocate(
 # ---------------------------------------------------------------------------
 
 
-def test_count_tokens_known_model_uses_tiktoken() -> None:
+def test_count_tokens_known_model_uses_tiktoken(monkeypatch) -> None:
+    _fake_tiktoken(monkeypatch, encoding_name="o200k_base")
     manager = _manager(ai_model="gpt-4o-mini")
     count = manager.count_tokens("你好，洛克王国")
 
@@ -74,7 +104,8 @@ def test_count_tokens_known_model_uses_tiktoken() -> None:
     assert count.tokens > 0
 
 
-def test_count_tokens_explicit_encoding() -> None:
+def test_count_tokens_explicit_encoding(monkeypatch) -> None:
+    _fake_tiktoken(monkeypatch, encoding_name="cl100k_base")
     manager = _manager()
     count = manager.count_tokens("hello world", encoding="cl100k_base")
 
