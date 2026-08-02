@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import subprocess
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -128,6 +129,17 @@ def contains_bwiki_placeholder(value: str) -> bool:
 # Windows ships curl.exe in System32; POSIX runners have plain curl.
 CURL_BIN = "curl.exe" if os.name == "nt" else "curl"
 
+# BWiki's WAF serves a small CSS-only challenge page (empty <title>) instead of
+# the real page once a client trips its rate limits. Real pet pages are much
+# larger and carry a real <title>; treat the challenge as a retryable fetch
+# error so a transient WAF state can never quarantine valid data (observed in
+# real operations: 460 files quarantined with empty names in one run).
+_CHALLENGE_MARKERS = ("<title></title>", "box-sizing:border-box")
+
+
+def looks_like_challenge_page(body: str) -> bool:
+    return len(body) < 50000 and all(marker in body for marker in _CHALLENGE_MARKERS)
+
 
 class UrllibFetcher:
     """Production HTTP fetcher: urllib with browser headers, curl fallback."""
@@ -144,6 +156,8 @@ class UrllibFetcher:
                 response_headers = {
                     str(key).lower(): str(value) for key, value in response.headers.items()
                 }
+                if looks_like_challenge_page(body):
+                    raise URLError("anti-bot challenge page served (WAF block)")
                 return FetchResponse(status=response.status, headers=response_headers, body=body)
         except (HTTPError, URLError, TimeoutError, OSError):
             return self._fetch_with_curl(url, headers)
@@ -177,6 +191,8 @@ class UrllibFetcher:
         )
         if result.returncode != 0:
             raise URLError(result.stderr.strip() or f"{CURL_BIN} exited with {result.returncode}")
+        if looks_like_challenge_page(result.stdout):
+            raise URLError("anti-bot challenge page served (WAF block)")
         return FetchResponse(status=200, headers={}, body=result.stdout)
 
 
@@ -243,6 +259,7 @@ def incremental_fetch(
     parser_version: int,
     force: bool = False,
     use_raw_pages: bool = False,
+    delay_seconds: float = 0.0,
 ) -> FetchOutcome:
     """Fetch changed targets into output_dir (publish moves them after gates pass).
 
@@ -256,7 +273,9 @@ def incremental_fetch(
     outcome = FetchOutcome(change_set={"added": [], "modified": [], "removed": [], "unchanged": []})
     written: dict[str, str] = {}  # filename -> source url for this run
 
-    for target in targets:
+    for index, target in enumerate(targets):
+        if index and delay_seconds:
+            time.sleep(delay_seconds)
         name, url, index_metadata = _target_parts(target)
         number = index_metadata.get("精灵编号", "").strip()
         old_name = _previous_filename(name, number, previous)

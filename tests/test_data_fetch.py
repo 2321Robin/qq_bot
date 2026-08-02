@@ -115,6 +115,97 @@ def test_classify_304_is_unchanged() -> None:
     assert classify("abc", FetchResponse(status=304, headers={}, body="")) == "unchanged"
 
 
+def test_looks_like_challenge_page() -> None:
+    challenge = (
+        "<html><head><title></title></head><body><style>*{margin:0;padding:0;"
+        "box-sizing:border-box}</style>安全验证</body></html>"
+    )
+    assert fetch_module.looks_like_challenge_page(challenge)
+    real_page = (
+        "<html><head><title>犀角鸟 - 洛克王国世界WIKI_BWIKI</title></head>"
+        "<body>" + "x" * 100000 + "</body></html>"
+    )
+    assert not fetch_module.looks_like_challenge_page(real_page)
+
+
+def test_urllib_fetcher_raises_on_challenge_page(monkeypatch) -> None:
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        @property
+        def headers(self):
+            return self
+
+        def get_content_charset(self):
+            return "utf-8"
+
+        def items(self):
+            return []
+
+        def read(self):
+            return b"<html><head><title></title></head><body><style>*{margin:0;padding:0;box-sizing:border-box}</style>safe check</body></html>"
+
+    class FakeCompleted:
+        returncode = 0
+        stdout = "<html><head><title></title></head><body><style>*{margin:0;padding:0;box-sizing:border-box}</style>safe check</body></html>"
+        stderr = ""
+
+    def fake_urlopen(request, timeout):
+        return FakeResponse()
+
+    def fake_run(command, **kwargs):
+        return FakeCompleted()
+
+    monkeypatch.setattr(fetch_module, "urlopen", fake_urlopen)
+    monkeypatch.setattr(fetch_module.subprocess, "run", fake_run)
+    from urllib.error import URLError
+
+    try:
+        fetch_module.UrllibFetcher().fetch("https://example.com/x")
+    except URLError as exc:
+        assert "WAF" in str(exc)
+    else:
+        raise AssertionError("challenge page must raise URLError, never return a response")
+
+
+def test_incremental_fetch_delay_seconds_paces_requests(tmp_path: Path) -> None:
+    import time
+
+    body = _raw_template("测试宠物A", "101")
+    fetcher = FakeFetcher(
+        {
+            "https://example.com/pets/测试宠物A": FetchResponse(status=200, headers={}, body=body),
+            "https://example.com/pets/测试宠物B": FetchResponse(
+                status=200, headers={}, body=_raw_template("测试宠物B", "102")
+            ),
+            "https://example.com/pets/测试宠物C": FetchResponse(
+                status=200, headers={}, body=_raw_template("测试宠物C", "103")
+            ),
+        }
+    )
+    start = time.monotonic()
+    incremental_fetch(
+        _targets([("测试宠物A", "101"), ("测试宠物B", "102"), ("测试宠物C", "103")]),
+        previous=None,
+        fetcher=fetcher,
+        output_dir=tmp_path,
+        quarantine_dir=tmp_path / "q",
+        parser_version=6,
+        delay_seconds=0.3,
+    )
+    elapsed = time.monotonic() - start
+    # 3 targets -> 2 inter-request delays; generous lower bound against CI jitter.
+    assert elapsed >= 0.4
+    assert elapsed < 10
+    assert len(fetcher.calls) == 3
+
+
 def test_classify_content_hash_match_is_unchanged() -> None:
     body = _raw_template("测试宠物A")
     response = FetchResponse(status=200, headers={}, body=body)

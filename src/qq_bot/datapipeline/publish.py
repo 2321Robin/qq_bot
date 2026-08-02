@@ -286,6 +286,7 @@ def _run_refresh(
             parser_version=args.min_parser_version,
             force=args.force,
             use_raw_pages=args.use_raw_pages,
+            delay_seconds=args.delay_seconds,
         )
 
     # 4. merge validation: staged changes + untouched disk files, on the staging

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -34,6 +36,45 @@ LENIENT = BotSettings(
     data_max_dangling_edges=100,
     data_max_skill_key_missing_rate=1.0,
 )
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_cli_online_path_resolves_scripts_package(tmp_path: Path) -> None:
+    """The CLI entry must resolve scripts.fetch_roco_pet_detail when run as
+    `python scripts/refresh_roco_data.py` (regression: only ROOT/src was on
+    sys.path, so online mode died with ModuleNotFoundError before any fetch).
+
+    Uses an unreachable localhost URL: import resolution is proven without
+    any network access.
+    """
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/refresh_roco_data.py",
+            "--index-url",
+            "http://127.0.0.1:1/index",
+            "--details-dir",
+            str(DETAILS_DIR),
+            "--manifest-dir",
+            str(tmp_path / "manifests"),
+            "--reports-dir",
+            str(tmp_path / "reports"),
+            "--quarantine-dir",
+            str(tmp_path / "quarantine"),
+            "--staging-dir",
+            str(tmp_path / "staging"),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+    )
+    assert "No module named 'scripts.fetch_roco_pet_detail'" not in result.stderr
+    assert "Failed to fetch index" in result.stderr
+    assert result.returncode == 1
 
 
 def _raw_template(name: str, number: str = "101", extra: str = "") -> str:
