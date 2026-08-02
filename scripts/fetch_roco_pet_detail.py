@@ -15,6 +15,12 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+from qq_bot.datapipeline.fetch import (  # noqa: E402
+    apply_index_metadata,
+    contains_bwiki_placeholder,
+    merge_skill_groups,
+    raw_page_url,
+)
 from qq_bot.services.roco_bwiki import PARSER_VERSION, parse_pet_detail  # noqa: E402
 from qq_bot.services.roco_evolution import normalize_pet_detail_directory  # noqa: E402
 
@@ -373,26 +379,11 @@ def _is_raw_page_url(url: str) -> bool:
     return "action=raw" in urlparse(url).query
 
 
-def _raw_page_url(url: str) -> str:
-    parsed = urlparse(url)
-    if parsed.netloc != "wiki.biligame.com" or not parsed.path.startswith("/rocom/"):
-        return url
-    query = parsed.query
-    if "action=raw" in query:
-        return url
-    query = f"{query}&action=raw" if query else "action=raw"
-    return urlunparse(parsed._replace(query=query))
-
-
-def _apply_index_metadata(detail: dict, metadata: dict[str, str]) -> None:
-    number = metadata.get("精灵编号", "").strip()
-    if number:
-        profile = detail.setdefault("profile", {})
-        if isinstance(profile, dict):
-            profile.setdefault("编号", number)
-    total = metadata.get("总种族值", "").strip()
-    if total.isdigit() and detail.get("total_race_value") is None:
-        detail["total_race_value"] = int(total)
+# re-exported from qq_bot.datapipeline.fetch (S3-INCR):
+_apply_index_metadata = apply_index_metadata
+_merge_skill_groups = merge_skill_groups
+_raw_page_url = raw_page_url
+_contains_bwiki_placeholder = contains_bwiki_placeholder
 
 
 def _validate_detail(detail: dict, fallback_name: str) -> None:
@@ -411,10 +402,6 @@ def _validate_detail(detail: dict, fallback_name: str) -> None:
         _contains_bwiki_placeholder(str(value)) for value in profile.values()
     ):
         raise ValueError(f"placeholder profile returned for {fallback_name}")
-
-
-def _contains_bwiki_placeholder(value: str) -> bool:
-    return "数据源为BWIKI" in value or "wiki.biligame.com" in value and "数据源" in value
 
 
 def _fetch_with_retries(url: str, fetch_html_func, retries: int, delay_seconds: float) -> str:
@@ -470,19 +457,19 @@ def main() -> int:
         normalize_pet_detail_directory(args.output_dir)
         return 0
 
-    try:
-        index_html = fetch_html(BWIKI_INDEX_URL)
-    except (HTTPError, URLError, TimeoutError) as exc:
-        print(f"Failed to fetch {BWIKI_INDEX_URL}: {exc}", file=sys.stderr)
-        return 1
+    # 委托给 refresh 编排（Task 7）；fetch_pet_details 等既有函数保持原样。
+    from qq_bot.datapipeline.publish import RefreshArgs, run_refresh
 
-    targets = load_bwiki_index_target_records(index_html)
-    errors = fetch_pet_details(targets, output_dir=args.output_dir, min_parser_version=0)
-    for name, url, error in errors:
-        print(f"Failed to fetch {name} ({url}): {error}", file=sys.stderr)
-    if errors:
-        return 1
-    return 0
+    return run_refresh(
+        RefreshArgs(
+            details_dir=args.output_dir,
+            manifest_dir=ROOT / "data" / "manifests",
+            reports_dir=ROOT / "data" / "reports",
+            quarantine_dir=ROOT / "data" / "quarantine",
+            staging_dir=ROOT / "data" / ".staging",
+            index_path=ROOT / "data" / "roco_search.sqlite3",
+        )
+    )
 
 
 if __name__ == "__main__":

@@ -1162,3 +1162,187 @@ def test_generate_roco_pet_cards_script_loads_assets_and_renders(monkeypatch, ca
         "Loaded 2 pet record(s); attribute icons {'fetched': 1, 'existing': 1, 'failed': 0}; "
         "assets {'downloaded': 1, 'cached': 1}; generated 2 card(s)\n"
     )
+
+
+def _record(
+    name: str,
+    *,
+    chain: list[str] | None = None,
+    evolution_to: list[EvolutionRelation] | None = None,
+) -> PetRecord:
+    return PetRecord(
+        name=name,
+        aliases=[],
+        number=name,
+        attributes=["普通"],
+        stage="",
+        evolution_chain=chain or [],
+        evolution_condition="",
+        source_url=f"https://example.com/{name}",
+        evolution_to=evolution_to or [],
+    )
+
+
+def _script():
+    return importlib.reload(importlib.import_module("scripts.generate_roco_pet_cards"))
+
+
+def test_affected_records_keeps_changed_names() -> None:
+    script = _script()
+    records = [_record("A"), _record("B"), _record("C")]
+    change_set = {"added": ["010-B.json"], "modified": [], "removed": [], "unchanged": []}
+    assert [r.name for r in script.affected_records(records, change_set)] == ["B"]
+
+
+def test_affected_records_accepts_bare_names() -> None:
+    script = _script()
+    records = [_record("A"), _record("B")]
+    change_set = {"added": ["B"], "modified": ["A"], "removed": [], "unchanged": []}
+    assert [r.name for r in script.affected_records(records, change_set)] == ["A", "B"]
+
+
+def test_affected_records_includes_evolution_chain_neighbors() -> None:
+    script = _script()
+    records = [
+        _record("B", chain=["B", "C"]),
+        _record("C", chain=["B", "C"]),
+        _record("D", chain=["D"]),
+    ]
+    change_set = {"added": ["010-B.json"], "modified": [], "removed": [], "unchanged": []}
+    assert [r.name for r in script.affected_records(records, change_set)] == ["B", "C"]
+
+
+def test_affected_records_includes_evolution_to_references() -> None:
+    script = _script()
+    records = [
+        _record("B", evolution_to=[EvolutionRelation("B", "C", "等级16", "")]),
+        _record("C"),
+        _record("D"),
+    ]
+    change_set = {"added": ["011-C.json"], "modified": [], "removed": [], "unchanged": []}
+    assert [r.name for r in script.affected_records(records, change_set)] == ["C", "B"]
+
+
+def test_affected_records_does_not_capture_unrelated_records() -> None:
+    script = _script()
+    records = [_record("A"), _record("B", chain=["B", "C"]), _record("C"), _record("D")]
+    change_set = {"added": ["013-D.json"], "modified": [], "removed": [], "unchanged": []}
+    assert [r.name for r in script.affected_records(records, change_set)] == ["D"]
+
+
+def test_affected_records_empty_when_no_changes() -> None:
+    script = _script()
+    records = [_record("A"), _record("B")]
+    change_set = {"added": [], "modified": [], "removed": [], "unchanged": ["A", "B"]}
+    assert script.affected_records(records, change_set) == []
+
+
+def _copy_detail_fixtures(tmp_path: Path) -> Path:
+    details_dir = Path(__file__).parent / "fixtures" / "roco_pet_details"
+    dest = tmp_path / "details"
+    dest.mkdir()
+    for path in sorted(details_dir.glob("*.json")):
+        (dest / path.name).write_bytes(path.read_bytes())
+    return dest
+
+
+def test_script_change_set_redraws_changed_and_chain_neighbors(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    script = _script()
+    details_dir = _copy_detail_fixtures(tmp_path)
+    change_set = tmp_path / "change_set.json"
+    change_set.write_text(
+        json.dumps(
+            {
+                "added": ["010-TestPetB.json"],
+                "modified": [],
+                "removed": [],
+                "unchanged": [
+                    "001-TestPetA.json",
+                    "011-TestPetC.json",
+                    "012-TestPetD.json",
+                    "013-TestPetE.json",
+                    "999-TestPetShell（Initial Form）.json",
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    generated: list[list[str]] = []
+
+    def fake_ensure(loaded_records, *, asset_directory: Path):
+        return {"existing": 0, "fetched": 0, "failed": 0}
+
+    def fake_generate(loaded_records, *, output_directory: Path, asset_directory: Path):
+        generated.append([r.name for r in loaded_records])
+        return [Path(f"{r.name}.png") for r in loaded_records]
+
+    monkeypatch.setattr(script, "ensure_pet_art_assets", fake_ensure)
+    monkeypatch.setattr(script, "generate_pet_card_files", fake_generate)
+
+    script.main(
+        [
+            "--change-set",
+            str(change_set),
+            "--details-dir",
+            str(details_dir),
+            "--cards-dir",
+            str(tmp_path / "cards"),
+            "--assets-dir",
+            str(tmp_path / "assets"),
+        ]
+    )
+
+    # TestPetB changed; TestPetC shares the B->C evolution chain.
+    assert generated == [["TestPetB", "TestPetC"]]
+    assert capsys.readouterr().out == (
+        "Loaded 6 pet record(s); affected=2 total=6; "
+        "assets {'existing': 0, 'fetched': 0, 'failed': 0}; generated 2 card(s)\n"
+    )
+
+
+def test_script_change_set_empty_affected_generates_nothing(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    script = _script()
+    details_dir = _copy_detail_fixtures(tmp_path)
+    change_set = tmp_path / "change_set.json"
+    change_set.write_text(
+        json.dumps(
+            {"added": [], "modified": [], "removed": [], "unchanged": ["001-TestPetA.json"]}
+        ),
+        encoding="utf-8",
+    )
+    calls: list[str] = []
+
+    def fake_ensure(loaded_records, *, asset_directory: Path):
+        calls.append("ensure")
+        return {"existing": 0, "fetched": 0, "failed": 0}
+
+    def fake_generate(loaded_records, *, output_directory: Path, asset_directory: Path):
+        calls.append("generate")
+        return []
+
+    monkeypatch.setattr(script, "ensure_pet_art_assets", fake_ensure)
+    monkeypatch.setattr(script, "generate_pet_card_files", fake_generate)
+
+    script.main(
+        [
+            "--change-set",
+            str(change_set),
+            "--details-dir",
+            str(details_dir),
+            "--cards-dir",
+            str(tmp_path / "cards"),
+            "--assets-dir",
+            str(tmp_path / "assets"),
+        ]
+    )
+
+    assert calls == []
+    assert capsys.readouterr().out == (
+        "Loaded 6 pet record(s); affected=0 total=6; "
+        "assets {'existing': 0, 'fetched': 0, 'failed': 0}; generated 0 card(s)\n"
+    )
