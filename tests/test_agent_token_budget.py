@@ -173,7 +173,11 @@ def _bulk_evidence(count: int, body_chars: int = 3000) -> list[Evidence]:
 
 def test_evidence_over_quota_drops_whole_units_from_tail() -> None:
     manager = _manager(ai_context_window_tokens=60000)
-    units = _bulk_evidence(10)
+    # 20 units (~30k tokens with real tiktoken) comfortably exceed the 30%
+    # local quota (~17k) under exact counting; the conservative estimate
+    # only counts higher, so the test is deterministic in both environments
+    # (CI has a real tiktoken cache, local machines may fall back).
+    units = _bulk_evidence(20)
     plan = _allocate(manager, local=units)
 
     local_alloc = next(a for a in plan.allocations if a.source == "local_evidence")

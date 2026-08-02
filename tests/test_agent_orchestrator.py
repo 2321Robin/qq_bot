@@ -264,7 +264,16 @@ async def test_deadline_mid_run_cancels_following_steps() -> None:
     )
 
     task = asyncio.create_task(orc.run(_request()))
-    await asyncio.sleep(0)  # round 1 runs, second turn blocks on the gate
+    await asyncio.sleep(0)
+    # Wait deterministically until the second model turn is actually in
+    # flight. asyncio.sleep(0) only guarantees one scheduling step, and the
+    # event loop's step granularity differs between platforms (Proactor vs
+    # Selector), so the run may not have reached the gated turn yet.
+    for _ in range(1000):
+        if len(gateway.calls) == 2:
+            break
+        await asyncio.sleep(0.001)
+    assert len(gateway.calls) == 2, "second model turn never started"
     clock.now = 1e9  # deadline passes while the model turn is in flight
     gate.set()
     outcome = await task
