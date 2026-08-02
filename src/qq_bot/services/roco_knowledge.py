@@ -225,6 +225,52 @@ def _full_evolution_routes(record: PetRecord, records: Sequence[PetRecord]) -> l
     return routes
 
 
+def build_evolution_edges(record: PetRecord, records: Sequence[PetRecord]) -> list[str]:
+    """Public formatted evolution edges ("A -> B：条件"), reusing the same
+    private derivation as the legacy context builder (S2-TOOL-09)."""
+    return _full_evolution_routes(record, records)
+
+
+def build_evolution_routes(record: PetRecord, records: Sequence[PetRecord]) -> list[list[str]]:
+    """Public structured evolution routes: every full name path from a chain
+    root through this record to a leaf. Reuses the legacy evolution
+    derivation; no duplicated fuzzy matching."""
+    routes: list[list[str]] = []
+    for root in _evolution_roots(record, records):
+        _collect_evolution_paths(root, records, routes, [root.name], set(), set())
+    return routes
+
+
+def _collect_evolution_paths(
+    record: PetRecord,
+    records: Sequence[PetRecord],
+    routes: list[list[str]],
+    path: list[str],
+    seen_edges: set[tuple[str, str]],
+    visiting: set[str],
+) -> None:
+    if record.name in visiting:
+        return
+    next_visiting = {*visiting, record.name}
+    successors = _direct_evolution_successors(record, records)
+    if not successors:
+        routes.append(list(path))
+        return
+    for successor in successors:
+        edge_key = (record.name, successor.name)
+        if edge_key in seen_edges:
+            continue
+        next_edges = {*seen_edges, edge_key}
+        _collect_evolution_paths(
+            successor,
+            records,
+            routes,
+            [*path, successor.name],
+            next_edges,
+            next_visiting,
+        )
+
+
 def _evolution_roots(record: PetRecord, records: Sequence[PetRecord]) -> list[PetRecord]:
     return _dedupe_records(_evolution_roots_from(record, records, set()))
 

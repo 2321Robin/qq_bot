@@ -130,6 +130,40 @@ class BotSettings(BaseSettings):
     breaker_failure_threshold: int = 3
     breaker_recovery_seconds: float = 30.0
 
+    # Agent capability (S2-CONFIG-01). AGENT_ENABLED gates the structured
+    # tool-calling path; when disabled the stage-1 prompt pipeline stays
+    # active as the rollback path.
+    agent_enabled: bool = False
+    ai_router_model: str = ""
+    ai_router_confidence_threshold: float = 0.75
+    agent_max_rounds: int = 3
+    agent_max_tool_calls: int = 4
+    agent_tools_per_round: int = 2
+    agent_deadline_seconds: float = 60.0
+    ai_provider_tools_enabled: bool = True
+    ai_provider_structured_output_enabled: bool = True
+    # Semantic verification of claims against evidence; deterministic grounding
+    # checks always run and cannot be disabled (S2-EVID-04..06).
+    ai_semantic_verifier_enabled: bool = False
+    ai_verifier_model: str = ""
+
+    # Layered memory (S2-MEM-05..09, S2-CONFIG-03). Summaries are opt-in;
+    # long-term preferences are only ever saved by an explicit user command.
+    memory_summary_enabled: bool = False
+    memory_preference_max_chars: int = 200
+
+    # Token budget (S2-TOKEN-01..08, S2-CONFIG-02). context window must
+    # exceed output reserve + safety margin; per-source ratios must be
+    # non-negative and sum to at most 1.
+    ai_context_window_tokens: int = 128000
+    ai_output_reserve_tokens: int = 2048
+    ai_token_safety_margin: int = 1024
+    agent_budget_local_ratio: float = 0.30
+    agent_budget_web_ratio: float = 0.25
+    agent_budget_recent_ratio: float = 0.15
+    agent_budget_summary_ratio: float = 0.10
+    agent_budget_preference_max_tokens: int = 256
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -213,6 +247,27 @@ class BotSettings(BaseSettings):
             raise ValueError("breaker_failure_threshold must be a positive integer")
         return value
 
+    @field_validator("ai_router_confidence_threshold")
+    @classmethod
+    def validate_router_confidence_threshold(cls, value: float) -> float:
+        if value < 0 or value > 1:
+            raise ValueError("ai_router_confidence_threshold must be between 0 and 1")
+        return value
+
+    @field_validator("agent_max_rounds", "agent_max_tool_calls", "agent_tools_per_round")
+    @classmethod
+    def validate_positive_agent_limits(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("agent limits must be positive integers")
+        return value
+
+    @field_validator("agent_deadline_seconds")
+    @classmethod
+    def validate_agent_deadline_seconds(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("agent_deadline_seconds must be greater than 0")
+        return value
+
     @model_validator(mode="after")
     def validate_delay_ranges(self) -> "BotSettings":
         pairs = (
@@ -255,6 +310,46 @@ class BotSettings(BaseSettings):
         if value <= 0:
             raise ValueError("chat_memory_max_results must be greater than 0")
         return value
+
+    @field_validator(
+        "ai_context_window_tokens", "ai_output_reserve_tokens", "ai_token_safety_margin"
+    )
+    @classmethod
+    def validate_positive_token_budget(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("token budget fields must be positive integers")
+        return value
+
+    @field_validator("agent_budget_preference_max_tokens")
+    @classmethod
+    def validate_preference_cap(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("agent_budget_preference_max_tokens must be positive")
+        return value
+
+    @field_validator("memory_preference_max_chars")
+    @classmethod
+    def validate_preference_chars(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("memory_preference_max_chars must be positive")
+        return value
+
+    @model_validator(mode="after")
+    def validate_token_budget_relations(self) -> "BotSettings":
+        if (
+            self.ai_context_window_tokens
+            <= self.ai_output_reserve_tokens + self.ai_token_safety_margin
+        ):
+            raise ValueError("ai_context_window_tokens must exceed output reserve + safety margin")
+        ratios = (
+            self.agent_budget_local_ratio,
+            self.agent_budget_web_ratio,
+            self.agent_budget_recent_ratio,
+            self.agent_budget_summary_ratio,
+        )
+        if any(ratio < 0 for ratio in ratios) or sum(ratios) > 1.0:
+            raise ValueError("agent budget ratios must be non-negative and sum to at most 1")
+        return self
 
     @property
     def allowed_group_id_list(self) -> list[int]:
@@ -306,6 +401,11 @@ class BotSettings(BaseSettings):
 
     def scheduled_enabled(self) -> bool:
         return bool(self.scheduled_group_id_list) and bool(self.scheduled_message.strip())
+
+    @property
+    def router_model(self) -> str:
+        """Router model; empty means the router reuses the main AI model."""
+        return self.ai_router_model.strip() or self.ai_model
 
 
 @lru_cache(maxsize=1)

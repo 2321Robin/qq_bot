@@ -17,6 +17,7 @@ dependencies = [
   "python-dotenv>=1.0.0,<2.0.0",
   "aiosqlite>=0.20.0,<1.0.0",
   "tenacity>=8.2.0,<10.0.0",
+  "tiktoken>=0.7.0,<1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -29,8 +30,12 @@ dev = [
   "pyyaml>=6.0.0,<7.0.0",
 ]
 
+[project.scripts]
+run-agent-eval = "scripts.run_agent_eval:main"
+
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["src", "."]
+include = ["qq_bot*", "scripts*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

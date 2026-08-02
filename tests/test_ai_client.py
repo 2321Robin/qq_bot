@@ -586,3 +586,224 @@ async def test_request_ai_reply_rejects_invalid_json_response() -> None:
 
     with pytest.raises(AIReplyError, match="invalid response"):
         await request_ai_reply("你好", settings=settings, client=client)
+
+
+# ---------------------------------------------------------------------------
+# Structured model gateway (S2-AGENT-01/02/07)
+# ---------------------------------------------------------------------------
+
+from qq_bot.services.ai_client import (  # noqa: E402
+    CapabilityError,
+    provider_capabilities,
+    request_model_turn,
+)
+
+
+def _tool_call_message(name: str = "lookup_pet", arguments: str = '{"query": "TestPetA"}') -> dict:
+    return {
+        "choices": [
+            {
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": name, "arguments": arguments},
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    }
+
+
+@pytest.mark.asyncio
+async def test_request_model_turn_parses_tool_calls() -> None:
+    settings = BotSettings(ai_api_key="secret", ai_model="test-model")
+    client = FakeClient(FakeResponse(_tool_call_message()))
+
+    response = await request_model_turn(
+        messages=[{"role": "user", "content": "TestPetA 的编号"}],
+        tools=[{"type": "function", "function": {"name": "lookup_pet"}}],
+        tool_choice="auto",
+        response_format=None,
+        settings=settings,
+        client=client,
+    )
+
+    assert response.text is None
+    assert len(response.tool_calls) == 1
+    call = response.tool_calls[0]
+    assert call.id == "call_1"
+    assert call.name == "lookup_pet"
+    assert call.arguments == {"query": "TestPetA"}
+    assert response.finish_reason == "tool_calls"
+    assert response.usage == {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+    posted = client.calls[0]["json"]
+    assert posted["tools"] == [{"type": "function", "function": {"name": "lookup_pet"}}]
+    assert posted["tool_choice"] == "auto"
+
+
+@pytest.mark.asyncio
+async def test_request_model_turn_unparseable_arguments_is_explicit_error() -> None:
+    settings = BotSettings(ai_api_key="secret")
+    client = FakeClient(FakeResponse(_tool_call_message(arguments="不是JSON")))
+
+    with pytest.raises(AIReplyError, match="unparseable tool arguments"):
+        await request_model_turn(
+            messages=[{"role": "user", "content": "hi"}],
+            settings=settings,
+            client=client,
+        )
+
+
+@pytest.mark.asyncio
+async def test_request_model_turn_rejects_invalid_tool_call_shape() -> None:
+    settings = BotSettings(ai_api_key="secret")
+    bad_name = {
+        "choices": [
+            {
+                "message": {
+                    "content": None,
+                    "tool_calls": [{"id": "c1", "function": {"name": "x" * 65, "arguments": "{}"}}],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ]
+    }
+    client = FakeClient(FakeResponse(bad_name))
+    with pytest.raises(AIReplyError, match="invalid tool calls"):
+        await request_model_turn(
+            messages=[{"role": "user", "content": "hi"}], settings=settings, client=client
+        )
+    non_dict = {
+        "choices": [{"message": {"content": None, "tool_calls": ["nope"]}, "finish_reason": "x"}]
+    }
+    client2 = FakeClient(FakeResponse(non_dict))
+    with pytest.raises(AIReplyError, match="invalid tool calls"):
+        await request_model_turn(
+            messages=[{"role": "user", "content": "hi"}], settings=settings, client=client2
+        )
+
+
+@pytest.mark.asyncio
+async def test_request_model_turn_capability_error_when_tools_disabled() -> None:
+    settings = BotSettings(ai_api_key="secret", ai_provider_tools_enabled=False)
+    client = FakeClient(FakeResponse(_tool_call_message()))
+
+    with pytest.raises(CapabilityError, match="tools capability"):
+        await request_model_turn(
+            messages=[{"role": "user", "content": "hi"}],
+            tools=[{"type": "function", "function": {"name": "lookup_pet"}}],
+            settings=settings,
+            client=client,
+        )
+    assert client.calls == []  # rejected before any network call
+
+
+@pytest.mark.asyncio
+async def test_request_model_turn_capability_error_when_structured_disabled() -> None:
+    settings = BotSettings(ai_api_key="secret", ai_provider_structured_output_enabled=False)
+    client = FakeClient(FakeResponse({"choices": [{"message": {"content": "{}"}}]}))
+
+    with pytest.raises(CapabilityError, match="structured output"):
+        await request_model_turn(
+            messages=[{"role": "user", "content": "hi"}],
+            response_format={"type": "json_object"},
+            settings=settings,
+            client=client,
+        )
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_request_model_turn_primary_failure_enters_fallback() -> None:
+    settings = _fast_retry_settings(
+        ai_max_attempts=1,  # single primary try, then fallback
+        ai_api_key="primary-secret",
+        ai_base_url="https://primary.example.com/v1",
+        ai_model="primary-model",
+        ai_fallback_api_key="fallback-secret",
+        ai_fallback_base_url="https://fallback.example.com/v1",
+        ai_fallback_model="fallback-model",
+    )
+    client = SequenceClient(
+        [
+            FakeResponse({}, status_code=500),
+            FakeResponse({"choices": [{"message": {"content": '{"a": 1}'}}]}),
+        ]
+    )
+
+    response = await request_model_turn(
+        messages=[{"role": "user", "content": "hi"}], settings=settings, client=client
+    )
+    assert response.text == '{"a": 1}'
+    assert len(client.calls) == 2
+    assert client.calls[1]["url"] == "https://fallback.example.com/v1/chat/completions"
+
+
+@pytest.mark.asyncio
+async def test_request_model_turn_usage_missing_is_none() -> None:
+    settings = BotSettings(ai_api_key="secret")
+    no_usage = {"choices": [{"message": {"content": "好的"}, "finish_reason": "stop"}]}
+    response = await request_model_turn(
+        messages=[{"role": "user", "content": "hi"}],
+        settings=settings,
+        client=FakeClient(FakeResponse(no_usage)),
+    )
+    assert response.text == "好的"
+    assert response.usage is None
+
+
+@pytest.mark.asyncio
+async def test_request_model_turn_circuit_open_skips_primary_and_falls_back(monkeypatch) -> None:
+    settings = _fast_retry_settings(
+        ai_api_key="primary-secret",
+        ai_base_url="https://primary.example.com/v1",
+        ai_fallback_api_key="fallback-secret",
+        ai_fallback_base_url="https://fallback.example.com/v1",
+        ai_fallback_model="fallback-model",
+    )
+
+    open_breaker = CircuitBreaker(name="ai_primary", failure_threshold=1, recovery_seconds=30)
+    await open_breaker.on_failure(TRANSIENT)
+
+    def fake_breaker_for(name: str):
+        if name == BREAKER_AI_PRIMARY:
+            return open_breaker
+        return CircuitBreaker(name=name, failure_threshold=3, recovery_seconds=30)
+
+    monkeypatch.setattr(ai_client, "_breaker_for", fake_breaker_for)
+    client = SequenceClient([FakeResponse({"choices": [{"message": {"content": "备用"}}]})])
+
+    response = await request_model_turn(
+        messages=[{"role": "user", "content": "hi"}], settings=settings, client=client
+    )
+    assert response.text == "备用"
+    assert len(client.calls) == 1
+    assert client.calls[0]["url"] == "https://fallback.example.com/v1/chat/completions"
+
+
+@pytest.mark.asyncio
+async def test_request_model_turn_empty_response_raises() -> None:
+    settings = BotSettings(ai_api_key="secret")
+    client = FakeClient(FakeResponse({"choices": [{"message": {"content": ""}}]}))
+    with pytest.raises(AIReplyError, match="empty response"):
+        await request_model_turn(
+            messages=[{"role": "user", "content": "hi"}], settings=settings, client=client
+        )
+
+
+def test_provider_capabilities_reflect_config() -> None:
+    settings = BotSettings(
+        ai_provider_tools_enabled=False, ai_provider_structured_output_enabled=False
+    )
+    caps = provider_capabilities(settings)
+    assert caps.tools is False
+    assert caps.structured_output is False
+    assert caps.usage is True
+    full = provider_capabilities(BotSettings())
+    assert full.tools is True and full.structured_output is True

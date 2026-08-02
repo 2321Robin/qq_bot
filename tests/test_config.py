@@ -282,3 +282,106 @@ def test_named_mention_replacement_map_property() -> None:
     settings = BotSettings(named_mention_replacements="@小呱呱=2880000001")
     assert settings.named_mention_replacement_map == {"@小呱呱": "2880000001"}
     assert BotSettings().named_mention_replacement_map == {}
+
+
+def test_agent_settings_defaults() -> None:
+    settings = BotSettings()
+    assert settings.agent_enabled is False
+    assert settings.ai_router_model == ""
+    assert settings.ai_router_confidence_threshold == 0.75
+    assert settings.agent_max_rounds == 3
+    assert settings.agent_max_tool_calls == 4
+    assert settings.agent_tools_per_round == 2
+    assert settings.agent_deadline_seconds == 60.0
+    assert settings.ai_provider_tools_enabled is True
+    assert settings.ai_provider_structured_output_enabled is True
+    assert settings.ai_semantic_verifier_enabled is False
+    assert settings.ai_verifier_model == ""
+    assert settings.ai_context_window_tokens == 128000
+    assert settings.ai_output_reserve_tokens == 2048
+    assert settings.ai_token_safety_margin == 1024
+    assert settings.agent_budget_local_ratio == 0.30
+    assert settings.agent_budget_web_ratio == 0.25
+    assert settings.agent_budget_recent_ratio == 0.15
+    assert settings.agent_budget_summary_ratio == 0.10
+    assert settings.agent_budget_preference_max_tokens == 256
+
+
+def test_agent_settings_parse_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGENT_ENABLED", "true")
+    monkeypatch.setenv("AI_ROUTER_MODEL", "router-mini")
+    monkeypatch.setenv("AI_ROUTER_CONFIDENCE_THRESHOLD", "0.6")
+    monkeypatch.setenv("AGENT_MAX_ROUNDS", "5")
+    monkeypatch.setenv("AGENT_MAX_TOOL_CALLS", "6")
+    monkeypatch.setenv("AGENT_TOOLS_PER_ROUND", "3")
+    monkeypatch.setenv("AGENT_DEADLINE_SECONDS", "45")
+    monkeypatch.setenv("AI_SEMANTIC_VERIFIER_ENABLED", "true")
+    monkeypatch.setenv("AI_VERIFIER_MODEL", "verifier-mini")
+    monkeypatch.setenv("AI_CONTEXT_WINDOW_TOKENS", "64000")
+    monkeypatch.setenv("AI_OUTPUT_RESERVE_TOKENS", "2048")
+    monkeypatch.setenv("AI_TOKEN_SAFETY_MARGIN", "1024")
+    monkeypatch.setenv("AGENT_BUDGET_LOCAL_RATIO", "0.4")
+    monkeypatch.setenv("AGENT_BUDGET_WEB_RATIO", "0.2")
+    monkeypatch.setenv("AGENT_BUDGET_RECENT_RATIO", "0.1")
+    monkeypatch.setenv("AGENT_BUDGET_SUMMARY_RATIO", "0.05")
+    monkeypatch.setenv("AGENT_BUDGET_PREFERENCE_MAX_TOKENS", "128")
+    get_settings.cache_clear()
+    try:
+        settings = get_settings()
+        assert settings.agent_enabled is True
+        assert settings.ai_router_model == "router-mini"
+        assert settings.ai_router_confidence_threshold == 0.6
+        assert settings.agent_max_rounds == 5
+        assert settings.agent_max_tool_calls == 6
+        assert settings.agent_tools_per_round == 3
+        assert settings.agent_deadline_seconds == 45.0
+        assert settings.ai_semantic_verifier_enabled is True
+        assert settings.ai_verifier_model == "verifier-mini"
+        assert settings.ai_context_window_tokens == 64000
+        assert settings.ai_output_reserve_tokens == 2048
+        assert settings.ai_token_safety_margin == 1024
+        assert settings.agent_budget_local_ratio == 0.4
+        assert settings.agent_budget_web_ratio == 0.2
+        assert settings.agent_budget_recent_ratio == 0.1
+        assert settings.agent_budget_summary_ratio == 0.05
+        assert settings.agent_budget_preference_max_tokens == 128
+    finally:
+        get_settings.cache_clear()
+
+
+def test_agent_settings_reject_out_of_range_threshold() -> None:
+    with pytest.raises(ValidationError, match="between 0 and 1"):
+        BotSettings(ai_router_confidence_threshold=1.5)
+    with pytest.raises(ValidationError, match="between 0 and 1"):
+        BotSettings(ai_router_confidence_threshold=-0.1)
+
+
+def test_agent_settings_reject_non_positive_limits() -> None:
+    with pytest.raises(ValidationError, match="positive integer"):
+        BotSettings(agent_max_rounds=0)
+    with pytest.raises(ValidationError, match="positive integer"):
+        BotSettings(agent_max_tool_calls=0)
+    with pytest.raises(ValidationError, match="positive integer"):
+        BotSettings(agent_tools_per_round=0)
+    with pytest.raises(ValidationError, match="greater than 0"):
+        BotSettings(agent_deadline_seconds=0)
+
+
+def test_token_budget_relations_validated() -> None:
+    with pytest.raises(ValidationError, match="must exceed output reserve"):
+        BotSettings(ai_context_window_tokens=3000, ai_output_reserve_tokens=2048)
+    with pytest.raises(ValidationError, match="non-negative and sum to at most 1"):
+        BotSettings(agent_budget_local_ratio=0.6, agent_budget_web_ratio=0.5)
+    with pytest.raises(ValidationError, match="non-negative and sum to at most 1"):
+        BotSettings(agent_budget_local_ratio=-0.1)
+    with pytest.raises(ValidationError, match="positive"):
+        BotSettings(agent_budget_preference_max_tokens=0)
+
+
+def test_agent_settings_repr_does_not_leak_secrets() -> None:
+    settings = BotSettings(ai_api_key="agent-secret-key", ai_fallback_api_key="agent-fallback")
+    text = repr(settings)
+    assert "agent-secret-key" not in text
+    assert "agent-fallback" not in text
