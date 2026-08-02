@@ -216,6 +216,8 @@ def parse_pet_detail(source_url: str, html: str) -> dict[str, Any]:
     """Parse a BWiki pet detail page into normalized pet detail data."""
     if _looks_like_raw_pet_template(html):
         return _parse_raw_pet_detail(source_url, html)
+    if 'class="sprite-titlename"' in html or "sprite-info-attrlist" in html:
+        return _parse_sprite_detail(source_url, html)
 
     parser = _BwikiParser()
     parser.feed(html)
@@ -659,3 +661,346 @@ def _dedupe_values(values: list[str]) -> list[str]:
         seen.add(value)
         unique_values.append(value)
     return unique_values
+
+
+# --- current BWiki sprite template (post-2026-07 migration) ---
+# BWiki migrated detail pages from the rocom_sprite_* widget template to a
+# sprite-* template.  _BwikiParser cannot read those pages, so parse_pet_detail
+# dispatches on page structure and _BwikiSpriteParser parses the new template
+# into the same normalized PetDetail schema.
+
+_SPRITE_TYPE_ICON_RE = re.compile(r"属性\s*([^.]+?)\s*\.png$")
+_SPRITE_SKILL_LEVEL_RE = re.compile(r"Lv\.?\s*(\d+)", re.IGNORECASE)
+_SPRITE_TYPE_HIGHLIGHT = "受击伤害增加"
+
+
+class _BwikiSpriteParser(HTMLParser):
+    """Streaming parser for the current BWiki sprite template.
+
+    Captures the pieces that map onto the normalized PetDetail schema: the
+    title block (编号/名称), the stats list, the trait (最佳拍档/简介),
+    the own attributes (属性克制 header row), physique, skill cards and the
+    evolution chain sections.
+
+    Captures are keyed to element ids rather than nesting depth: the template
+    lays out sibling spans at the same depth (e.g. sprite-info-attrname next
+    to sprite-info-attrnum), so depth bookkeeping would finalize sibling
+    captures early.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.title_block: list[str] = []
+        self.attrsum_text = ""
+        self.attr_pairs: list[tuple[str, str]] = []
+        self.trait_name = ""
+        self.trait_desc = ""
+        self.own_types: list[str] = []
+        self.physique: dict[str, str] = {}
+        self.skill_cards: list[dict[str, Any]] = []
+        self.evolve_nodes: list[dict[str, str]] = []
+        self._elem_stack: list[int] = []
+        self._next_elem = 0
+        self._caps: list[dict[str, Any]] = []
+        self._pending_attr_name = ""
+
+    def _new_elem(self) -> int:
+        elem_id = self._next_elem
+        self._next_elem += 1
+        self._elem_stack.append(elem_id)
+        return elem_id
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        classes = {
+            token for key, value in attrs if key == "class" and value for token in value.split()
+        }
+        elem = self._new_elem()
+        if "sprite-titlename" in classes:
+            self._caps.append({"kind": "title", "texts": [], "elem": elem})
+        elif "sprite-info-desc" in classes:
+            self._caps.append({"kind": "desc", "texts": [], "elem": elem})
+        elif "sprite-info-attrsum" in classes:
+            self._caps.append({"kind": "attrsum", "texts": [], "elem": elem})
+        elif "sprite-info-attrname" in classes:
+            self._caps.append({"kind": "attrname", "texts": [], "elem": elem})
+        elif "sprite-info-attrnum" in classes:
+            self._caps.append({"kind": "attrnum", "texts": [], "elem": elem})
+        elif "sprite-trait-name" in classes:
+            self._caps.append({"kind": "trait_name", "texts": [], "elem": elem})
+        elif "sprite-trait-desc" in classes:
+            self._caps.append({"kind": "trait_desc", "texts": [], "elem": elem})
+        elif "sprite-info-type" in classes:
+            self._caps.append({"kind": "type", "events": [], "elem": elem})
+        elif "sprite_type" in classes and dict(attrs).get("title"):
+            self._caps.append({"kind": "sprite_type", "alts": [], "elem": elem})
+        elif tag == "div" and "skill-single" in classes:
+            self._caps.append(
+                {
+                    "kind": "skill",
+                    "elem": elem,
+                    "name": "",
+                    "typelist_events": [],
+                    "desc": "",
+                    "source": "",
+                }
+            )
+        elif "skill-name" in classes:
+            self._caps.append({"kind": "skill_name", "texts": [], "elem": elem})
+        elif "skill-head-typelist" in classes:
+            self._caps.append({"kind": "typelist", "events": [], "elem": elem})
+        elif "skill-desc-atk" in classes:
+            self._caps.append({"kind": "skill_desc", "texts": [], "elem": elem})
+        elif "skill-source" in classes:
+            self._caps.append({"kind": "skill_source", "texts": [], "elem": elem})
+        elif "sprite-evolve-section" in classes:
+            self._caps.append({"kind": "evolve", "node": "", "cond_texts": [], "elem": elem})
+        if tag == "img":
+            alt = dict(attrs).get("alt") or ""
+            match = re.match(r"信息图标\s*(身高|体长|体重)\.png$", alt)
+            if match:
+                # the value lives in sibling spans of the img's parent block
+                parent = self._elem_stack[-2] if len(self._elem_stack) > 1 else elem
+                key = "体长" if match.group(1) == "身高" else match.group(1)
+                self._caps.append({"kind": "physique", "key": key, "texts": [], "elem": parent})
+            self._dispatch("alt", alt)
+        if tag == "div" and "sprite-evolve-btn" in classes:
+            for cap in reversed(self._caps):
+                if cap["kind"] == "evolve" and not cap["node"]:
+                    cap["node"] = dict(attrs).get("data-link") or ""
+                    break
+        if tag in ("span", "div") and "sprite-evolve-cond" in classes:
+            for cap in reversed(self._caps):
+                if cap["kind"] == "evolve" and "cond_elem" not in cap:
+                    cap["cond_elem"] = elem
+                    break
+
+    def handle_data(self, data: str) -> None:
+        self._dispatch("text", data)
+
+    def handle_endtag(self, tag: str) -> None:
+        closed = self._elem_stack.pop()
+        remaining: list[dict[str, Any]] = []
+        for cap in self._caps:
+            if cap.get("elem") == closed:
+                self._finalize(cap)
+            else:
+                remaining.append(cap)
+        self._caps = remaining
+
+    def _dispatch(self, kind: str, value: str) -> None:
+        for cap in self._caps:
+            cap_kind = cap["kind"]
+            if cap_kind == "type":
+                cap["events"].append((kind, value))
+            elif cap_kind == "typelist":
+                cap["events"].append((kind, value))
+            elif cap_kind == "sprite_type" and kind == "alt":
+                match = _SPRITE_TYPE_ICON_RE.search(value)
+                if match:
+                    cap["alts"].append(match.group(1))
+            elif cap_kind == "evolve":
+                cond_elem = cap.get("cond_elem")
+                if cond_elem is not None and cond_elem in self._elem_stack:
+                    if kind == "text":
+                        cap["cond_texts"].append(value)
+            elif kind == "text":
+                texts = cap.get("texts")
+                if texts is not None:
+                    texts.append(value)
+
+    def _finalize(self, cap: dict[str, Any]) -> None:
+        kind = cap["kind"]
+        if kind == "title":
+            self.title_block = [_normalize_text(t) for t in cap["texts"] if _normalize_text(t)]
+        elif kind == "desc":
+            text = _normalize_text("".join(cap["texts"]))
+            if text:
+                self.physique["精灵描述"] = text
+        elif kind == "attrsum":
+            self.attrsum_text = _normalize_text("".join(cap["texts"]))
+        elif kind == "attrname":
+            self._pending_attr_name = _normalize_text("".join(cap["texts"])).rstrip(":：")
+        elif kind == "attrnum":
+            value = _normalize_text("".join(cap["texts"]))
+            if self._pending_attr_name and value.isdigit():
+                self.attr_pairs.append((self._pending_attr_name, value))
+                self._pending_attr_name = ""
+        elif kind == "trait_name":
+            self.trait_name = _normalize_text("".join(cap["texts"]))
+        elif kind == "trait_desc":
+            self.trait_desc = _normalize_text("".join(cap["texts"]))
+        elif kind == "type":
+            for event_kind, value in cap["events"]:
+                if event_kind == "text" and _SPRITE_TYPE_HIGHLIGHT in value:
+                    break
+                if event_kind == "alt":
+                    match = _SPRITE_TYPE_ICON_RE.search(value)
+                    if match:
+                        self.own_types.append(match.group(1))
+        elif kind == "sprite_type":
+            self.own_types.extend(cap["alts"])
+        elif kind == "skill_name":
+            for other in reversed(self._caps):
+                if other["kind"] == "skill":
+                    other["name"] = _normalize_text("".join(cap["texts"]))
+                    break
+        elif kind == "physique":
+            self.physique[cap["key"]] = _normalize_text("".join(cap["texts"]))
+        elif kind == "typelist":
+            for other in reversed(self._caps):
+                if other["kind"] == "skill":
+                    other["typelist_events"] = cap["events"]
+                    break
+        elif kind == "skill_desc":
+            for other in reversed(self._caps):
+                if other["kind"] == "skill":
+                    other["desc"] = _normalize_text("".join(cap["texts"]))
+                    break
+        elif kind == "skill_source":
+            for other in reversed(self._caps):
+                if other["kind"] == "skill":
+                    other["source"] = _normalize_text("".join(cap["texts"]))
+                    break
+        elif kind == "skill":
+            self.skill_cards.append(
+                {
+                    "name": cap["name"],
+                    "typelist_events": cap["typelist_events"],
+                    "desc": cap["desc"],
+                    "source": cap["source"],
+                }
+            )
+        elif kind == "evolve":
+            condition = _normalize_text("".join(cap["cond_texts"]))
+            if cap["node"]:
+                self.evolve_nodes.append({"node": cap["node"], "condition": condition})
+
+
+def _sprite_skill_rows(cards: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Turn captured skill cards into normalized skill rows (no 系别 column)."""
+    rows: list[dict[str, str]] = []
+    for card in cards:
+        name = card["name"]
+        if not name:
+            continue
+        energy = ""
+        category = ""
+        power = ""
+        seen_label = False
+        label_count = 0
+        value_texts: list[str] = []
+        for event_kind, value in card["typelist_events"]:
+            if event_kind == "text":
+                text = _normalize_text(value)
+                if not text:
+                    continue
+                if text in ("耗能", "分类", "系别", "威力") and label_count < 4:
+                    label_count += 1
+                    seen_label = True
+                    continue
+                value_texts.append(text)
+            elif seen_label and event_kind == "alt":
+                match = re.search(r"类别\s*(.+?)(?:\.png)?$", value)
+                if match:
+                    category = match.group(1)
+        if value_texts:
+            energy = value_texts[0]
+            power = value_texts[-1]
+        level = ""
+        match = _SPRITE_SKILL_LEVEL_RE.search(card["source"])
+        if match:
+            level = f"LV{match.group(1)}"
+        rows.append(
+            {
+                "等级": level,
+                "技能": name,
+                "耗能": energy,
+                "类型": category,
+                "威力": power,
+                "效果": card["desc"],
+            }
+        )
+    return rows
+
+
+def _sprite_evolution_edges(nodes: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Pair consecutive evolve-section nodes into edges.
+
+    The section list can contain several branches sharing a prefix (e.g.
+    喵喵▶喵呜▶魔力猫▶叶冕魔力猫 then 喵喵▶喵呜▶魔力猫▶武斗酷猫), so the
+    node list is split into chains at repeated nodes; each node's condition
+    describes the transition from the previous node (empty for a chain head).
+    Edges from shared prefixes are deduplicated.
+    """
+    chains: list[list[str]] = []
+    current: list[str] = []
+    for node in nodes:
+        name = node["node"]
+        if name in current:
+            chains.append(current)
+            split = current.index(name)
+            current = current[:split] + [name]
+        else:
+            current.append(name)
+    if current:
+        chains.append(current)
+
+    edges: list[dict[str, str]] = []
+    seen_edges: set[tuple[str, str, str]] = set()
+    for chain in chains:
+        node_conditions = {node["node"]: node["condition"] for node in nodes}
+        for previous, target in zip(chain, chain[1:]):
+            condition = node_conditions.get(target, "")
+            edge = build_evolution_edge(previous, target, condition)
+            key = (edge["source"], edge["target"], edge["condition"])
+            if edge["source"] and edge["target"] and key not in seen_edges:
+                seen_edges.add(key)
+                edges.append(edge)
+    return edges
+
+
+def _parse_sprite_detail(source_url: str, html: str) -> dict[str, Any]:
+    """Parse a detail page rendered with the current sprite template."""
+    parser = _BwikiSpriteParser()
+    parser.feed(html)
+
+    title = parser.title_block
+    number = title[0] if title else ""
+    name = title[1] if len(title) > 1 else ""
+    types = _dedupe_values(parser.own_types)
+
+    stats = {stat_name: int(value) for stat_name, value in parser.attr_pairs}
+    total_race_value: int | None = None
+    match = re.search(r"(\d+)", parser.attrsum_text)
+    if match:
+        total_race_value = int(match.group(1))
+
+    profile: dict[str, str] = {"编号": number, "系别": "、".join(types)}
+    if parser.physique:
+        profile.update(parser.physique)
+    if parser.trait_name:
+        profile["最佳拍档"] = parser.trait_name
+    if parser.trait_desc:
+        profile["简介"] = parser.trait_desc
+
+    skill_rows = _sprite_skill_rows(parser.skill_cards)
+    skills = [{"source": "技能", "rows": skill_rows}] if skill_rows else []
+
+    edges = _sprite_evolution_edges(parser.evolve_nodes)
+    evolution_condition = edges[0]["forward_text"] if edges else ""
+
+    return {
+        "name": name,
+        "source_url": source_url,
+        "attributes": types,
+        "evolution_condition": evolution_condition,
+        "evolution_edges": edges,
+        "total_race_value": total_race_value,
+        "profile": profile,
+        "stats": stats,
+        "skills": skills,
+        "metadata": {
+            "parser_version": PARSER_VERSION,
+            "generated_at": datetime.now(UTC).isoformat(),
+        },
+    }

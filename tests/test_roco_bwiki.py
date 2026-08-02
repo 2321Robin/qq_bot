@@ -13,7 +13,7 @@ from scripts.fetch_roco_pet_detail import (
     write_pet_detail,
 )
 from qq_bot.services.roco_bwiki import parse_pet_detail
-from qq_bot.services.roco_evolution import normalize_pet_details
+from qq_bot.services.roco_evolution import normalize_evolution_condition, normalize_pet_details
 
 
 def test_parse_pet_detail_extracts_profile_stats_and_skill_groups() -> None:
@@ -1138,3 +1138,285 @@ def test_fetch_pet_details_can_fetch_raw_pages_and_apply_index_metadata(tmp_path
     assert detail["source_url"] == "https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB"
     assert detail["profile"]["编号"] == "001"
     assert detail["total_race_value"] == 582
+
+
+def test_parse_sprite_detail_extracts_full_record() -> None:
+    html = """
+    <html><body>
+      <div class="sprite-titlename"><span>002</span><span>喵喵</span><span>草元素精灵</span></div>
+      <div class="sprite-info">
+        <div class="sprite-info-desc">喜欢阳光，喜欢新鲜的空气。</div>
+        <div class="sprite-info-attrsum"><span>种族资质370</span></div>
+        <div class="sprite-info-attrlist">
+          <div class="sprite-info-attr"><span class="sprite-info-attrname">生命：</span><span class="sprite-info-attrnum">65</span></div>
+          <div class="sprite-info-attr"><span class="sprite-info-attrname">物攻：</span><span class="sprite-info-attrnum">66</span></div>
+          <div class="sprite-info-attr"><span class="sprite-info-attrname">魔攻：</span><span class="sprite-info-attrnum">66</span></div>
+          <div class="sprite-info-attr"><span class="sprite-info-attrname">物防：</span><span class="sprite-info-attrnum">49</span></div>
+          <div class="sprite-info-attr"><span class="sprite-info-attrname">魔防：</span><span class="sprite-info-attrnum">91</span></div>
+          <div class="sprite-info-attr"><span class="sprite-info-attrname">速度：</span><span class="sprite-info-attrnum">33</span></div>
+        </div>
+        <div class="sprite-info-attrother">
+          <div><img alt="信息图标 身高.png"/><span>0.53~0.75</span><span>M</span></div>
+          <div><img alt="信息图标 体重.png"/><span>3.62~4.6</span><span>KG</span></div>
+        </div>
+      </div>
+      <div class="sprite-trait">
+        <span class="sprite-trait-name">氧循环</span>
+        <span class="sprite-trait-desc">使用草系技能后，回复10%生命。</span>
+      </div>
+      <div class="sprite-panel-title"><span>属性克制</span>
+        <span class="sprite_type" title="克制：光、地、水"><img alt="图标 宠物 属性 草.png"/>草</span>
+        <span class="sprite_type" title="克制：光、地、水"><img alt="图标 宠物 属性 草.png"/>草</span>
+      </div>
+      <div class="sprite-info-type">
+        <span>受击伤害增加</span>
+        <span class="sprite_type"><img alt="图标 宠物 属性 火.png"/>2</span>
+      </div>
+      <div class="skill-sortlist">
+        <div class="divsort skill-single">
+          <div class="skill-single-head"><div class="skill-name">抓挠</div></div>
+          <div class="skill-single-body">
+            <div class="skill-head-typelist">
+              <span class="skill-head-typename">耗能</span><span class="skill-head-typename">分类</span><span class="skill-head-typename">系别</span><span class="skill-head-typename">威力</span>
+              <span><img alt="图标 技能 星星背景.png"/><span>0</span></span>
+              <span><img alt="图标 技能 类别 物攻.png"/></span>
+              <span><img alt="图标 宠物 属性 普通.png"/></span>
+              <span>35</span>
+            </div>
+            <div class="skill-desc-atk">造成物伤，自己回复1能量。</div>
+            <div class="skill-source-row"><span class="skill-source">解锁：Lv.1</span></div>
+          </div>
+        </div>
+        <div class="divsort skill-single">
+          <div class="skill-single-head"><div class="skill-name">叶刃</div></div>
+          <div class="skill-single-body">
+            <div class="skill-head-typelist">
+              <span class="skill-head-typename">耗能</span><span class="skill-head-typename">分类</span><span class="skill-head-typename">系别</span><span class="skill-head-typename">威力</span>
+              <span><img alt="图标 技能 星星背景.png"/><span>1</span></span>
+              <span><img alt="图标 技能 类别 魔攻.png"/></span>
+              <span><img alt="图标 宠物 属性 草.png"/></span>
+              <span>60</span>
+            </div>
+            <div class="skill-desc-atk">造成草系伤害。</div>
+            <div class="skill-source-row"><span class="skill-source">解锁：Lv.10</span></div>
+          </div>
+        </div>
+      </div>
+    </body></html>
+    """
+
+    detail = parse_pet_detail("https://wiki.biligame.com/rocom/%E5%96%B5%E5%96%B5", html)
+
+    assert detail["name"] == "喵喵"
+    assert detail["attributes"] == ["草"]
+    assert detail["total_race_value"] == 370
+    assert detail["stats"] == {
+        "生命": 65,
+        "物攻": 66,
+        "魔攻": 66,
+        "物防": 49,
+        "魔防": 91,
+        "速度": 33,
+    }
+    assert detail["profile"]["编号"] == "002"
+    assert detail["profile"]["系别"] == "草"
+    assert detail["profile"]["体长"] == "0.53~0.75M"
+    assert detail["profile"]["体重"] == "3.62~4.6KG"
+    assert detail["profile"]["最佳拍档"] == "氧循环"
+    assert detail["profile"]["简介"] == "使用草系技能后，回复10%生命。"
+    assert detail["profile"]["精灵描述"] == "喜欢阳光，喜欢新鲜的空气。"
+    assert detail["skills"] == [
+        {
+            "source": "技能",
+            "rows": [
+                {
+                    "等级": "LV1",
+                    "技能": "抓挠",
+                    "耗能": "0",
+                    "类型": "物攻",
+                    "威力": "35",
+                    "效果": "造成物伤，自己回复1能量。",
+                },
+                {
+                    "等级": "LV10",
+                    "技能": "叶刃",
+                    "耗能": "1",
+                    "类型": "魔攻",
+                    "威力": "60",
+                    "效果": "造成草系伤害。",
+                },
+            ],
+        }
+    ]
+    assert detail["metadata"]["parser_version"] == 6
+
+
+def test_parse_sprite_detail_splits_branching_evolution_chains() -> None:
+    html = """
+    <html><body>
+      <div class="sprite-titlename"><span>002</span><span>喵喵</span><span>草元素精灵</span></div>
+      <div class="sprite-evolve">
+        <div class="sprite-evolve-section">
+          <div class="sprite-evolve-btn" data-link="喵喵">
+            <span class="sprite-evolve-name">喵喵</span><span class="sprite-evolve-arrow">▶</span>
+            <span class="sprite-evolve-cond"></span>
+          </div>
+        </div>
+        <div class="sprite-evolve-section">
+          <div class="sprite-evolve-btn" data-link="喵呜">
+            <span class="sprite-evolve-name">喵呜</span><span class="sprite-evolve-arrow">▶</span>
+            <span class="sprite-evolve-cond"><span class="sprite-evolve-level">Lv.16</span></span>
+          </div>
+        </div>
+        <div class="sprite-evolve-section">
+          <div class="sprite-evolve-btn" data-link="魔力猫">
+            <span class="sprite-evolve-name">魔力猫</span><span class="sprite-evolve-arrow">▶</span>
+            <span class="sprite-evolve-cond"><span class="sprite-evolve-level">Lv.32</span></span>
+          </div>
+        </div>
+        <div class="sprite-evolve-section">
+          <div class="sprite-evolve-btn" data-link="叶冕魔力猫">
+            <span class="sprite-evolve-name">叶冕魔力猫</span><span class="sprite-evolve-arrow">▶</span>
+            <span class="sprite-evolve-cond"><span>首领化</span></span>
+          </div>
+        </div>
+        <div class="sprite-evolve-section">
+          <div class="sprite-evolve-btn" data-link="喵喵">
+            <span class="sprite-evolve-name">喵喵</span><span class="sprite-evolve-arrow">▶</span>
+            <span class="sprite-evolve-cond"></span>
+          </div>
+        </div>
+        <div class="sprite-evolve-section">
+          <div class="sprite-evolve-btn" data-link="喵呜">
+            <span class="sprite-evolve-name">喵呜</span><span class="sprite-evolve-arrow">▶</span>
+            <span class="sprite-evolve-cond"><span class="sprite-evolve-level">Lv.16</span></span>
+          </div>
+        </div>
+        <div class="sprite-evolve-section">
+          <div class="sprite-evolve-btn" data-link="魔力猫">
+            <span class="sprite-evolve-name">魔力猫</span><span class="sprite-evolve-arrow">▶</span>
+            <span class="sprite-evolve-cond"><span class="sprite-evolve-level">Lv.32</span></span>
+          </div>
+        </div>
+        <div class="sprite-evolve-section">
+          <div class="sprite-evolve-btn" data-link="武斗酷猫">
+            <span class="sprite-evolve-name">武斗酷猫</span><span class="sprite-evolve-arrow">▶</span>
+            <span class="sprite-evolve-cond"><span>首领化</span></span>
+          </div>
+        </div>
+      </div>
+    </body></html>
+    """
+
+    detail = parse_pet_detail("https://wiki.biligame.com/rocom/%E5%96%B5%E5%96%B5", html)
+
+    assert detail["evolution_condition"] == "升至16级可进化为喵呜"
+    assert detail["evolution_edges"] == [
+        {
+            "source": "喵喵",
+            "target": "喵呜",
+            "condition": "升至16级",
+            "raw_condition": "Lv.16",
+            "forward_text": "升至16级可进化为喵呜",
+            "backward_text": "可由喵喵升至16级进化得",
+        },
+        {
+            "source": "喵呜",
+            "target": "魔力猫",
+            "condition": "升至32级",
+            "raw_condition": "Lv.32",
+            "forward_text": "升至32级可进化为魔力猫",
+            "backward_text": "可由喵呜升至32级进化得",
+        },
+        {
+            "source": "魔力猫",
+            "target": "叶冕魔力猫",
+            "condition": "首领化",
+            "raw_condition": "首领化",
+            "forward_text": "首领化可进化为叶冕魔力猫",
+            "backward_text": "可由魔力猫首领化进化得",
+        },
+        {
+            "source": "魔力猫",
+            "target": "武斗酷猫",
+            "condition": "首领化",
+            "raw_condition": "首领化",
+            "forward_text": "首领化可进化为武斗酷猫",
+            "backward_text": "可由魔力猫首领化进化得",
+        },
+    ]
+
+
+def test_parse_sprite_detail_keeps_dual_type_attributes() -> None:
+    html = """
+    <html><body>
+      <div class="sprite-titlename"><span>001</span><span>圣草迪莫</span><span>永远的伙伴</span></div>
+      <div class="sprite-panel-title"><span>属性克制</span>
+        <span class="sprite_type" title="克制：光、地、水"><img alt="图标 宠物 属性 光.png"/>光</span>
+        <span class="sprite_type" title="克制：光、地、水"><img alt="图标 宠物 属性 草.png"/>草</span>
+        <span class="sprite_type" title="克制：光、地、水"><img alt="图标 宠物 属性 光.png"/>光</span>
+        <span class="sprite_type" title="克制：光、地、水"><img alt="图标 宠物 属性 草.png"/>草</span>
+      </div>
+    </body></html>
+    """
+
+    detail = parse_pet_detail(
+        "https://wiki.biligame.com/rocom/%E5%9C%A3%E8%8D%89%E8%BF%AA%E8%8E%AB", html
+    )
+
+    assert detail["attributes"] == ["光", "草"]
+    assert detail["profile"]["系别"] == "光、草"
+
+
+def test_parse_sprite_detail_without_evolution_chain() -> None:
+    html = """
+    <html><body>
+      <div class="sprite-titlename"><span>001</span><span>迪莫</span><span>光系精灵</span></div>
+      <div class="sprite-evolve">
+        <div class="sprite-evolve-section">
+          <div class="sprite-evolve-btn" data-link="迪莫">
+            <span class="sprite-evolve-name">迪莫</span><span class="sprite-evolve-arrow">▶</span>
+            <span class="sprite-evolve-cond"></span>
+          </div>
+        </div>
+      </div>
+    </body></html>
+    """
+
+    detail = parse_pet_detail("https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB", html)
+
+    assert detail["name"] == "迪莫"
+    assert detail["evolution_condition"] == ""
+    assert detail["evolution_edges"] == []
+
+
+def test_parse_pet_detail_dispatches_sprite_template_by_structure() -> None:
+    html = """
+    <html><body>
+      <div class="sprite-titlename"><span>001</span><span>迪莫</span></div>
+      <div class="sprite-info-attrsum"><span>种族资质582</span></div>
+    </body></html>
+    """
+
+    detail = parse_pet_detail("https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB", html)
+
+    assert detail["name"] == "迪莫"
+    assert detail["total_race_value"] == 582
+
+    # the legacy widget template still parses through the old parser
+    legacy = """
+    <html><body>
+      <h1>迪莫</h1>
+      <table><tr><th>编号</th><td>001</td></tr></table>
+    </body></html>
+    """
+    legacy_detail = parse_pet_detail("https://wiki.biligame.com/rocom/%E8%BF%AA%E8%8E%AB", legacy)
+    assert legacy_detail["name"] == "迪莫"
+    assert legacy_detail["profile"]["编号"] == "001"
+
+
+def test_normalize_evolution_condition_accepts_sprite_template_level_prefix() -> None:
+    assert normalize_evolution_condition("Lv.16") == "升至16级"
+    assert normalize_evolution_condition("Lv16") == "升至16级"
+    assert normalize_evolution_condition("等级16级") == "升至16级"
+    assert normalize_evolution_condition("首领化") == "首领化"

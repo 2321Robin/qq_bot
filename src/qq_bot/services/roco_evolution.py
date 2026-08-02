@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 
-LEVEL_CONDITION_RE = re.compile(r"^(?:(?:等级|升至)\s*)?(\d+)\s*级?(?:进化)?$")
+LEVEL_CONDITION_RE = re.compile(r"^(?:(?:等级|升至|Lv\.?|LV\.?)\s*)?(\d+)\s*级?(?:进化)?$")
 ATTRIBUTE_BATTLE_RE = re.compile(
     r"^(?:打败|击败)([一二两三四五六七八九十\d]+)(?:只|个)?(.+?系)(?:精灵|宠物)?(?:进化)?$"
 )
