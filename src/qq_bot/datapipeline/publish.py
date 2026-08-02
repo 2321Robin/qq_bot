@@ -332,6 +332,7 @@ def _run_refresh(
         quarantine=this_run_quarantine,
         allow_quarantine=args.allow_quarantine,
         skill_field_missing=skill_field_missing_rates(validated),
+        errors=outcome.errors,
     )
 
     # Fetch errors: report with failure reasons, exit 1, no publish (S3-DIFF-06).

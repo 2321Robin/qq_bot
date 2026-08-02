@@ -184,6 +184,23 @@ def test_gate_failed_report_still_generated(tmp_path: Path) -> None:
     assert "Quarantine" in render_markdown(diff)
 
 
+def test_fetch_errors_recorded_in_report(tmp_path: Path) -> None:
+    new_dir, snapshot_dir, validated = _changed_scenario(tmp_path)
+    current = _build(new_dir, _previous())
+    diff = compute_diff(
+        _previous(),
+        current,
+        validated,
+        previous_files_dir=snapshot_dir,
+        errors=[("999-神秘宠物.json", "HTTP 567")],
+    )
+    assert diff.errors == [{"name": "999-神秘宠物.json", "reason": "HTTP 567"}]
+    assert "抓取失败（阻断发布）" in render_markdown(diff)
+    assert "HTTP 567" in render_markdown(diff)
+    restored = RefreshDiff.model_validate(json.loads(diff.model_dump_json()))
+    assert restored.errors == diff.errors
+
+
 def test_diff_json_round_trip(tmp_path: Path) -> None:
     new_dir, snapshot_dir, validated = _changed_scenario(tmp_path)
     current = _build(new_dir, _previous())

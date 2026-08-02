@@ -83,6 +83,8 @@ class RefreshDiff(BaseModel):
     gate_failed: bool = False
     allow_quarantine: bool = False  # S3-SCHEMA-04: 记录 override
     skill_field_missing: dict[str, float] = Field(default_factory=dict)  # S3-QUALITY-06
+    # fetch/parse failures (S3-DIFF-06): (name, reason) pairs recorded verbatim
+    errors: list[dict[str, str]] = Field(default_factory=list)
 
 
 def _snapshot_detail(previous_files_dir: Path, filename: str) -> dict[str, Any]:
@@ -206,6 +208,7 @@ def compute_diff(
     quarantine: dict[str, str] | None = None,
     allow_quarantine: bool = False,
     skill_field_missing: dict[str, float] | None = None,
+    errors: list[tuple[str, str]] | None = None,
 ) -> RefreshDiff:
     """Diff by filename/hash (forms), row signature (skills) and edge signature (evolution).
 
@@ -285,6 +288,7 @@ def compute_diff(
         gate_failed=gate_failed,
         allow_quarantine=allow_quarantine,
         skill_field_missing=skill_field_missing or {},
+        errors=[{"name": name, "reason": reason} for name, reason in (errors or [])],
     )
 
 
@@ -346,6 +350,11 @@ def render_markdown(diff: RefreshDiff) -> str:
         lines.append("## Quarantine")
         for filename, error in sorted(diff.quarantine.items()):
             lines.append(f"- {filename}: {error}")
+        lines.append("")
+    if diff.errors:
+        lines.append("## 抓取失败（阻断发布）")
+        for error in diff.errors:
+            lines.append(f"- {error['name']}: {error['reason']}")
         lines.append("")
     if diff.skill_field_missing:
         lines.append("## 技能字段缺失率（不阻断）")
