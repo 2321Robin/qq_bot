@@ -69,19 +69,34 @@ def get_skill_records() -> tuple[SkillRecord, ...]:
     return tuple(load_skill_records())
 
 
+def clear_record_caches() -> None:
+    """Invalidate the lru_cache; hot-reload hook for running processes (S3-INCR-07)."""
+    get_skill_records.cache_clear()
+
+
 def find_skills(
-    records: list[SkillRecord] | tuple[SkillRecord, ...], query: str
+    records: list[SkillRecord] | tuple[SkillRecord, ...],
+    query: str,
+    *,
+    index=None,
 ) -> list[SkillRecord]:
     cleaned_query = query.strip()
     if not cleaned_query:
         return []
+    pool: list[SkillRecord] | tuple[SkillRecord, ...] = records
+    if index is not None:
+        from qq_bot.services.roco_search import skill_candidates
 
-    exact_matches = [record for record in records if record.name == cleaned_query]
+        candidates = skill_candidates(index, cleaned_query, records)
+        if candidates:
+            pool = candidates
+
+    exact_matches = [record for record in pool if record.name == cleaned_query]
     if exact_matches:
         return exact_matches
 
     return [
-        record for record in records if cleaned_query in record.name or record.name in cleaned_query
+        record for record in pool if cleaned_query in record.name or record.name in cleaned_query
     ]
 
 

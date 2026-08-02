@@ -89,21 +89,38 @@ def get_pet_records() -> tuple[PetRecord, ...]:
     return tuple(load_pet_records())
 
 
-def find_pet(records: list[PetRecord] | tuple[PetRecord, ...], query: str) -> PetRecord | None:
+def clear_record_caches() -> None:
+    """Invalidate the lru_cache; hot-reload hook for running processes (S3-INCR-07)."""
+    get_pet_records.cache_clear()
+
+
+def find_pet(
+    records: list[PetRecord] | tuple[PetRecord, ...],
+    query: str,
+    *,
+    index=None,
+) -> PetRecord | None:
     cleaned_query = query.strip()
     if not cleaned_query:
         return None
+    pool: list[PetRecord] | tuple[PetRecord, ...] = records
+    if index is not None:
+        from qq_bot.services.roco_search import pet_candidates
+
+        candidates = pet_candidates(index, cleaned_query, records)
+        if candidates:
+            pool = candidates
 
     for candidate_number in _query_number_candidates(cleaned_query):
-        for record in records:
+        for record in pool:
             if _same_number(record.number, candidate_number):
                 return record
 
-    direct_match = _best_direct_name_match(records, cleaned_query)
+    direct_match = _best_direct_name_match(pool, cleaned_query)
     if direct_match is not None:
         return direct_match
 
-    chain_match = _best_chain_match(records, cleaned_query)
+    chain_match = _best_chain_match(pool, cleaned_query)
     if chain_match is not None:
         return chain_match
     return None
