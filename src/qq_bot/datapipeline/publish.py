@@ -54,6 +54,7 @@ class RefreshArgs:
     use_raw_pages: bool = False
     retries: int = 3
     delay_seconds: float = 0.0
+    fetch_workers: int = 1
     no_normalize: bool = False
     no_cards: bool = False
     no_index: bool = False
@@ -239,6 +240,14 @@ def _write_reports(diff, reports_dir: Path) -> Path:
     return json_path
 
 
+def _fetch_progress(done: int, total: int) -> None:
+    """Live fetch progress: one compact line per 5% (unbuffered, hub-log visible)."""
+    if total <= 0:
+        return
+    if done == total or done % max(1, total // 20) == 0:
+        print(f"[fetch] {done}/{total} ({done * 100 // total}%)", flush=True)
+
+
 def _run_refresh(
     args: RefreshArgs,
     previous: RefreshManifest | None,
@@ -293,6 +302,8 @@ def _run_refresh(
             force=args.force,
             use_raw_pages=args.use_raw_pages,
             delay_seconds=args.delay_seconds,
+            workers=args.fetch_workers,
+            progress=_fetch_progress,
         )
 
     # 4. merge validation: staged changes + untouched disk files, on the staging

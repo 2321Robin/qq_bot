@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Callable, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse, urlunparse
 from urllib.request import Request, urlopen
@@ -260,6 +260,8 @@ def incremental_fetch(
     force: bool = False,
     use_raw_pages: bool = False,
     delay_seconds: float = 0.0,
+    workers: int = 1,
+    progress: Callable[[int, int], None] | None = None,
 ) -> FetchOutcome:
     """Fetch changed targets into output_dir (publish moves them after gates pass).
 
@@ -269,6 +271,9 @@ def incremental_fetch(
     - files in previous but absent from output dir and absent from targets -> removed.
     - output_dir is the staging directory in refresh orchestration (Task 7);
       unchanged files are never copied into it.
+    - workers > 1 fetches concurrently (each worker paces itself with
+      delay_seconds per request); results are merged in input order.
+    - progress(done, total) is invoked once per target when given.
 
     The output dir is emptied first: a previous failed run leaves stale files
     behind that would otherwise be merged as if freshly fetched.
@@ -277,11 +282,11 @@ def incremental_fetch(
         for stale in output_dir.glob("*"):
             if stale.is_file():
                 stale.unlink()
-    outcome = FetchOutcome(change_set={"added": [], "modified": [], "removed": [], "unchanged": []})
-    written: dict[str, str] = {}  # filename -> source url for this run
 
-    for index, target in enumerate(targets):
-        if index and delay_seconds:
+    total = len(targets)
+
+    def fetch_one(target: tuple[str, str, dict[str, str]]) -> tuple[Any, ...]:
+        if delay_seconds:
             time.sleep(delay_seconds)
         name, url, index_metadata = _target_parts(target)
         number = index_metadata.get("精灵编号", "").strip()
@@ -301,19 +306,15 @@ def incremental_fetch(
         try:
             response = fetcher.fetch(fetch_url, headers or None)
         except Exception as exc:  # noqa: BLE001 - network errors of any kind
-            outcome.errors.append((name, f"{type(exc).__name__}: {exc}"))
-            continue
+            return ("error", name, f"{type(exc).__name__}: {exc}")
 
         kind = "changed" if force else classify(previous_sha256, response)
         if kind == "unchanged":
-            outcome.change_set["unchanged"].append(name)
-            continue
+            return ("unchanged", name)
         if kind == "error":
-            outcome.errors.append((name, f"HTTP {response.status}"))
-            continue
+            return ("error", name, f"HTTP {response.status}")
 
-        # changed: parse -> normalize -> validate -> write (or quarantine)
-        detail = None
+        detail: dict[str, Any] | None = None
         try:
             detail = parse_pet_detail(fetch_url, response.body)
             apply_index_metadata(detail, index_metadata)
@@ -330,21 +331,54 @@ def incremental_fetch(
             _quarantine_write(
                 quarantine_dir, f"{name}.json", payload, f"{type(exc).__name__}: {exc}"
             )
-            outcome.errors.append((name, f"quarantined: {type(exc).__name__}: {exc}"))
-            continue
+            return ("quarantined", name, f"quarantined: {type(exc).__name__}: {exc}")
 
         filename = _output_filename(detail, name)
         output_dir.mkdir(parents=True, exist_ok=True)
-        target_path = output_dir / filename
-        target_path.write_text(
+        (output_dir / filename).write_text(
             json.dumps(detail, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
-        written[filename] = str(detail.get("source_url") or "")
-        outcome.change_set["modified" if old_entry else "added"].append(name)
-        outcome.etags[filename] = response.headers.get("etag") if response.headers else None
-        outcome.last_modified[filename] = (
-            response.headers.get("last-modified") if response.headers else None
+        return (
+            "written",
+            name,
+            filename,
+            bool(old_entry),
+            response.headers.get("etag") if response.headers else None,
+            response.headers.get("last-modified") if response.headers else None,
+            str(detail.get("source_url") or ""),
         )
+
+    results: list[tuple[Any, ...]] = []
+    if workers > 1:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for result in pool.map(fetch_one, targets):
+                results.append(result)
+                if progress:
+                    progress(len(results), total)
+    else:
+        for target in targets:
+            results.append(fetch_one(target))
+            if progress:
+                progress(len(results), total)
+
+    outcome = FetchOutcome(change_set={"added": [], "modified": [], "removed": [], "unchanged": []})
+    written: dict[str, str] = {}  # filename -> source url for this run
+    for result in results:
+        kind = result[0]
+        if kind == "unchanged":
+            outcome.change_set["unchanged"].append(result[1])
+        elif kind == "error":
+            outcome.errors.append((result[1], result[2]))
+        elif kind == "quarantined":
+            outcome.errors.append((result[1], result[2]))
+        elif kind == "written":
+            _, name, filename, was_old, etag, last_modified, source_url = result
+            written[filename] = source_url
+            outcome.change_set["modified" if was_old else "added"].append(name)
+            outcome.etags[filename] = etag
+            outcome.last_modified[filename] = last_modified
 
     # removed: tracked in previous, absent from this run's targets, never rewritten.
     target_names = {_target_parts(t)[0] for t in targets}

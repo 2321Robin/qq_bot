@@ -44,6 +44,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--use-raw-pages", action="store_true", help="抓取 ?action=raw 模板页")
     parser.add_argument("--retries", type=int, default=3)
     parser.add_argument("--delay-seconds", type=float, default=0.0)
+    parser.add_argument(
+        "--fetch-workers",
+        type=int,
+        default=2,
+        help="并发抓取线程数（每个 worker 独立限流；默认 2）",
+    )
     parser.add_argument("--no-normalize", action="store_true")
     parser.add_argument("--no-cards", action="store_true", help="跳过图卡增量生成")
     parser.add_argument("--no-index", action="store_true", help="跳过搜索索引重建")
@@ -74,6 +80,7 @@ def main(argv: list[str] | None = None) -> int:
         use_raw_pages=args.use_raw_pages,
         retries=args.retries,
         delay_seconds=args.delay_seconds,
+        fetch_workers=args.fetch_workers,
         no_normalize=args.no_normalize,
         no_cards=args.no_cards,
         no_index=args.no_index,

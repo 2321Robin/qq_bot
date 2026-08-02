@@ -343,6 +343,39 @@ def test_incremental_fetch_new_target_is_added(tmp_path: Path) -> None:
     assert (tmp_path / "staging" / "106-测试宠物F.json").exists()
 
 
+def test_incremental_fetch_parallel_workers_match_serial(tmp_path: Path) -> None:
+    names = [(f"宠物{n:02d}", f"{200 + n}") for n in range(6)]
+    responses = {
+        f"https://example.com/pets/{name}": FetchResponse(
+            status=200, headers={}, body=_raw_template(name, num)
+        )
+        for name, num in names
+    }
+    serial = incremental_fetch(
+        _targets(names),
+        previous=None,
+        fetcher=FakeFetcher(dict(responses)),
+        output_dir=tmp_path / "serial",
+        quarantine_dir=tmp_path / "quarantine",
+        parser_version=6,
+        workers=1,
+    )
+    parallel = incremental_fetch(
+        _targets(names),
+        previous=None,
+        fetcher=FakeFetcher(dict(responses)),
+        output_dir=tmp_path / "parallel",
+        quarantine_dir=tmp_path / "quarantine",
+        parser_version=6,
+        workers=3,
+    )
+    assert parallel.change_set == serial.change_set
+    assert parallel.errors == serial.errors
+    assert sorted(p.name for p in (tmp_path / "serial").glob("*.json")) == sorted(
+        p.name for p in (tmp_path / "parallel").glob("*.json")
+    )
+
+
 def test_incremental_fetch_parse_failure_quarantines(tmp_path: Path) -> None:
     # A page that parses to an empty pet name fails schema validation (name
     # must be non-empty) and lands in quarantine.
