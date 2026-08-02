@@ -1,10 +1,12 @@
 import asyncio
+from datetime import UTC, datetime
 
 import pytest
 from nonebot.adapters.onebot.v11 import Message
 
 from qq_bot.config import BotSettings
 from qq_bot.plugins import ai_chat as ai_chat_plugin
+from qq_bot.runtime import RuntimeStateError
 from qq_bot.services.chat_memory import ChatMemoryRow
 
 
@@ -1258,3 +1260,397 @@ async def test_concurrent_events_reuse_same_repository(
     assert len(store.writes) == 2  # ...but the same shared instance
     assert store.writes[0]["message_text"] == "ai 并发消息"
     assert store.writes[1]["message_text"] == "ai 并发消息"
+
+
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Stage-2 agent path (Task 13, S2-AGENT-09): AGENT_ENABLED routing
+# ---------------------------------------------------------------------------
+
+
+class FakeAgentRuntime:
+    """Runtime stand-in exposing the agent-stack getters."""
+
+    def __init__(self, orchestrator: object, gateway: object | None = None):
+        self._orchestrator = orchestrator
+        self._gateway = gateway
+
+    def get_agent_orchestrator(self):
+        return self._orchestrator
+
+    def get_model_gateway(self):
+        if self._gateway is None:
+            raise RuntimeStateError("not ready")
+        return self._gateway
+
+
+class FakeOrchestrator:
+    def __init__(self, outcome: object, store: object | None = None):
+        self.outcome = outcome
+        self.last_store = store
+        self.runs: list[object] = []
+
+    async def run(self, request: object) -> object:
+        self.runs.append(request)
+        return self.outcome
+
+
+def _agent_settings(**overrides) -> BotSettings:
+    values = {"allowed_group_ids": "1001", "ai_api_key": "secret", "agent_enabled": True}
+    values.update(overrides)
+    return BotSettings(**values)
+
+
+def _patch_agent_runtime(monkeypatch: pytest.MonkeyPatch, runtime: object) -> None:
+    monkeypatch.setattr(ai_chat_plugin, "get_runtime", lambda: runtime)
+
+
+@pytest.mark.asyncio
+async def test_agent_path_routes_renders_and_updates_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AGENT_ENABLED=true: router -> orchestrator -> rendered text; the
+    memory write count stays exactly one add_message (S2-AGENT-09)."""
+    from qq_bot.agent.evidence import EvidenceStore
+    from qq_bot.agent.models import (
+        Claim,
+        Evidence,
+        GroundedAnswer,
+        ReasonCode,
+        RouteDecision,
+        RouteKind,
+    )
+    from qq_bot.agent.router import RouteTrace
+
+    class Store:
+        def __init__(self) -> None:
+            self.writes: list[dict] = []
+
+        async def add_message(self, **kwargs) -> int:
+            self.writes.append(kwargs)
+            return 1
+
+        async def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
+            self.writes.append({"reply": ai_reply})
+
+    store = Store()
+    answer = GroundedAnswer(
+        claims=(Claim(text="暗影格斗是洛克王国精灵", kind="factual", evidence_ids=("L1",)),),
+        closing="祝游戏愉快",
+    )
+    from qq_bot.agent.models import ToolResult
+
+    evidence = EvidenceStore()
+    evidence.add(
+        ToolResult(
+            tool="lookup_pet",
+            status="ok",
+            evidence=(
+                Evidence(
+                    id="L1", source_type="local", title="暗影格斗", facts={"name": "暗影格斗"}
+                ),
+            ),
+        )
+    )
+    orchestrator = FakeOrchestrator(answer, store=evidence)
+
+    async def fake_route_request(prompt, *, settings, gateway, can_use_chat_memory):
+        decision = RouteDecision(
+            primary_route=RouteKind.LOCAL_KNOWLEDGE,
+            confidence=0.9,
+            reason_code=ReasonCode.EXPLICIT_COMMAND,
+            allowed_tools=("lookup_pet", "search_chat_memory"),
+        )
+        trace = RouteTrace(
+            route=RouteKind.LOCAL_KNOWLEDGE,
+            confidence=0.9,
+            reason_code=ReasonCode.EXPLICIT_COMMAND,
+            latency_ms=1.0,
+            is_rule=True,
+        )
+        return decision, trace
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(ai_chat_plugin, "get_settings", lambda: _agent_settings())
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: store)
+    _patch_agent_runtime(monkeypatch, FakeAgentRuntime(orchestrator, gateway=object()))
+    monkeypatch.setattr(ai_chat_plugin, "route_request", fake_route_request)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled) as exc_info:
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 暗影格斗是谁"))  # type: ignore[arg-type]
+
+    assert len(store.writes) == 2  # one add_message + one update_ai_reply
+    assert store.writes[0]["message_text"] == "ai 暗影格斗是谁"
+    assert store.writes[1] == {"reply": "暗影格斗是洛克王国精灵；来源：本地图鉴\n祝游戏愉快"}
+    assert len(orchestrator.runs) == 1
+    request = orchestrator.runs[0]
+    assert request.scope.group_id == "1001"
+    assert request.scope.user_id == "2001"
+    assert request.scope.can_use_chat_memory is True
+    assert request.deadline > datetime.now(UTC)
+    assert request.route.allowed_tools == ("lookup_pet", "search_chat_memory")
+    message = exc_info.value.message
+    assert message.extract_plain_text() == "暗影格斗是洛克王国精灵；来源：本地图鉴\n祝游戏愉快"
+
+
+@pytest.mark.asyncio
+async def test_agent_path_clarification_replies_without_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """needs_clarification: direct stable reply, orchestrator never runs
+    (S2-AGENT-09 + Scenario E)."""
+    from qq_bot.agent.models import ReasonCode, RouteDecision, RouteKind
+    from qq_bot.agent.router import RouteTrace
+
+    class Store:
+        async def add_message(self, **kwargs) -> int:
+            return 1
+
+    orchestrator = FakeOrchestrator(object())
+
+    async def fake_route_request(prompt, *, settings, gateway, can_use_chat_memory):
+        decision = RouteDecision(
+            primary_route=RouteKind.DIRECT_CHAT,
+            confidence=0.4,
+            reason_code=ReasonCode.CLARIFY,
+            needs_clarification=True,
+            allowed_tools=(),
+        )
+        return decision, RouteTrace(
+            route=RouteKind.DIRECT_CHAT,
+            confidence=0.4,
+            reason_code=ReasonCode.CLARIFY,
+            latency_ms=1.0,
+            needs_clarification=True,
+            is_rule=True,
+        )
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(ai_chat_plugin, "get_settings", lambda: _agent_settings())
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: Store())
+    _patch_agent_runtime(monkeypatch, FakeAgentRuntime(orchestrator, gateway=object()))
+    monkeypatch.setattr(ai_chat_plugin, "route_request", fake_route_request)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled) as exc_info:
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 那个什么"))  # type: ignore[arg-type]
+
+    assert orchestrator.runs == []  # no model, no orchestrator
+    assert str(exc_info.value.message) == "没太明白你的意思，能说得更具体一点吗？"
+
+
+@pytest.mark.asyncio
+async def test_agent_path_capability_error_uses_stable_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from qq_bot.agent.models import ReasonCode, RouteDecision, RouteKind
+    from qq_bot.agent.router import RouteTrace
+
+    async def fake_route_request(prompt, *, settings, gateway, can_use_chat_memory):
+        decision = RouteDecision(
+            primary_route=RouteKind.DIRECT_CHAT,
+            confidence=0.8,
+            reason_code=ReasonCode.CAPABILITY_ERROR,
+            needs_clarification=True,
+            allowed_tools=(),
+        )
+        return decision, RouteTrace(
+            route=RouteKind.DIRECT_CHAT,
+            confidence=0.8,
+            reason_code=ReasonCode.CAPABILITY_ERROR,
+            latency_ms=1.0,
+            needs_clarification=True,
+            is_rule=True,
+        )
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(ai_chat_plugin, "get_settings", lambda: _agent_settings())
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
+    _patch_agent_runtime(
+        monkeypatch, FakeAgentRuntime(FakeOrchestrator(object()), gateway=object())
+    )
+    monkeypatch.setattr(ai_chat_plugin, "route_request", fake_route_request)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled) as exc_info:
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 删除我的记忆"))  # type: ignore[arg-type]
+
+    assert str(exc_info.value.message) == "这个功能还没有配置好，先换个问题试试吧。"
+
+
+@pytest.mark.asyncio
+async def test_agent_path_safefailure_sends_stable_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from qq_bot.agent.models import (
+        FailureCode,
+        ReasonCode,
+        RouteDecision,
+        RouteKind,
+        SafeFailure,
+    )
+    from qq_bot.agent.router import RouteTrace
+
+    class Store:
+        async def add_message(self, **kwargs) -> int:
+            return 1
+
+    async def fake_route_request(prompt, *, settings, gateway, can_use_chat_memory):
+        decision = RouteDecision(
+            primary_route=RouteKind.DIRECT_CHAT,
+            confidence=0.9,
+            reason_code=ReasonCode.STRUCTURED_CLASSIFIER,
+            allowed_tools=(),
+        )
+        return decision, RouteTrace(
+            route=RouteKind.DIRECT_CHAT,
+            confidence=0.9,
+            reason_code=ReasonCode.STRUCTURED_CLASSIFIER,
+            latency_ms=1.0,
+            is_rule=True,
+        )
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    failure = SafeFailure(code=FailureCode.DEADLINE_EXCEEDED, message="处理超时，请稍后重试。")
+    orchestrator = FakeOrchestrator(failure)
+    monkeypatch.setattr(ai_chat_plugin, "get_settings", lambda: _agent_settings())
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: Store())
+    _patch_agent_runtime(monkeypatch, FakeAgentRuntime(orchestrator, gateway=object()))
+    monkeypatch.setattr(ai_chat_plugin, "route_request", fake_route_request)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled) as exc_info:
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 你好"))  # type: ignore[arg-type]
+
+    assert str(exc_info.value.message) == "处理超时，请稍后重试。"
+    assert len(orchestrator.runs) == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_path_runtime_unavailable_fails_explicitly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(ai_chat_plugin, "get_settings", lambda: _agent_settings())
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_runtime",
+        lambda: (_ for _ in ()).throw(RuntimeStateError("not ready")),
+    )
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled) as exc_info:
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 你好"))  # type: ignore[arg-type]
+
+    assert str(exc_info.value.message) == "AI 服务暂时不可用，请稍后再试。"
+
+
+@pytest.mark.asyncio
+async def test_agent_flag_off_keeps_legacy_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AGENT_ENABLED=false: router and orchestrator are never touched; the
+    legacy request_ai_reply path runs exactly as before (Task 13)."""
+
+    async def fake_request_ai_reply(
+        prompt: str,
+        *,
+        settings: BotSettings,
+        client: object | None = None,
+        search_context: str = "",
+        chat_context: str = "",
+        roco_context: str = "",
+    ) -> str:
+        assert prompt == "你好"
+        return "你好呀"
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    async def unexpected_route_request(prompt, *, settings, gateway, can_use_chat_memory):
+        raise AssertionError("router must not run when AGENT_ENABLED=false")
+
+    orchestrator = FakeOrchestrator(object())
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
+    _patch_agent_runtime(monkeypatch, FakeAgentRuntime(orchestrator, gateway=object()))
+    monkeypatch.setattr(ai_chat_plugin, "route_request", unexpected_route_request)
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled) as exc_info:
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 你好"))  # type: ignore[arg-type]
+
+    assert orchestrator.runs == []
+    assert exc_info.value.message.extract_plain_text() == "你好呀"
+
+
+@pytest.mark.asyncio
+async def test_agent_path_skips_legacy_search_assembly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With AGENT_ENABLED=true the legacy search call is skipped; routing
+    owns search capability (S2-AGENT-09)."""
+    from qq_bot.agent.models import (
+        GroundedAnswer,
+        ReasonCode,
+        RouteDecision,
+        RouteKind,
+    )
+    from qq_bot.agent.router import RouteTrace
+
+    async def fake_route_request(prompt, *, settings, gateway, can_use_chat_memory):
+        decision = RouteDecision(
+            primary_route=RouteKind.DIRECT_CHAT,
+            confidence=0.9,
+            reason_code=ReasonCode.STRUCTURED_CLASSIFIER,
+            allowed_tools=(),
+        )
+        return decision, RouteTrace(
+            route=RouteKind.DIRECT_CHAT,
+            confidence=0.9,
+            reason_code=ReasonCode.STRUCTURED_CLASSIFIER,
+            latency_ms=1.0,
+            is_rule=True,
+        )
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    async def unexpected_search(prompt: str, *, settings, client):
+        raise AssertionError("legacy search must not run in agent mode")
+
+    answer = GroundedAnswer(claims=())
+    orchestrator = FakeOrchestrator(answer, store=object())
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: _agent_settings(search_enabled=True, tavily_api_key="tvly-test"),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
+    _patch_agent_runtime(monkeypatch, FakeAgentRuntime(orchestrator, gateway=object()))
+    monkeypatch.setattr(ai_chat_plugin, "route_request", fake_route_request)
+    monkeypatch.setattr(ai_chat_plugin, "search_web", unexpected_search)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled) as exc_info:
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 今天有什么新闻"))  # type: ignore[arg-type]
+
+    assert str(exc_info.value.message) == ""

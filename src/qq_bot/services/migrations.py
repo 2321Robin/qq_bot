@@ -67,6 +67,57 @@ MIGRATIONS: tuple[Migration, ...] = (
             """,
         ),
     ),
+    Migration(
+        version=2,
+        name="layered_memory",
+        statements=(
+            """
+            CREATE TABLE IF NOT EXISTS chat_summaries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL,
+                summary TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS summary_sources (
+                summary_id INTEGER NOT NULL
+                    REFERENCES chat_summaries(id) ON DELETE CASCADE,
+                message_id INTEGER NOT NULL,
+                PRIMARY KEY (summary_id, message_id)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS user_preferences (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                preference TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT
+            )
+            """,
+            # per-user memory state (S2-MEM-10): preferences_closed_at marks
+            # the opt-out for long-term preferences (S2-MEM-06)
+            """
+            CREATE TABLE IF NOT EXISTS user_memory_state (
+                group_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                preferences_closed_at TEXT,
+                PRIMARY KEY (group_id, user_id)
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_chat_summaries_group
+            ON chat_summaries (group_id)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_user_preferences_group_user
+            ON user_preferences (group_id, user_id)
+            """,
+        ),
+    ),
 )
 
 SUPPORTED_SCHEMA_VERSION = max(migration.version for migration in MIGRATIONS)

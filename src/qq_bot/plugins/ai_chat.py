@@ -1,8 +1,18 @@
+from datetime import UTC, datetime, timedelta
+
 from nonebot import logger, on_message
 from nonebot.adapters.onebot.v11 import GroupMessageEvent
 
-from qq_bot.config import get_settings
-from qq_bot.runtime import get_chat_repository, get_http_client
+from qq_bot.agent.evidence import EvidenceStore, render_answer
+from qq_bot.agent.models import AgentRequest, AgentScope, SafeFailure
+from qq_bot.agent.router import ReasonCode, route_request
+from qq_bot.config import BotSettings, get_settings
+from qq_bot.runtime import (
+    RuntimeStateError,
+    get_chat_repository,
+    get_http_client,
+    get_runtime,
+)
 from qq_bot.services.ai_client import AIReplyError, request_ai_reply
 from qq_bot.services.chat_memory import ChatMemoryRepository
 from qq_bot.services.memory_prompt import (
@@ -24,6 +34,16 @@ from qq_bot.services.search import (
 
 
 ai_chat = on_message(priority=20, block=False)
+
+# Stable clarification replies (S2-AGENT-09): no model call, no draft, and
+# never a reason for the user to rephrase with private details.
+_AGENT_CLARIFY_MESSAGES: dict[ReasonCode, str] = {
+    ReasonCode.CLARIFY: "没太明白你的意思，能说得更具体一点吗？",
+    ReasonCode.CAPABILITY_ERROR: "这个功能还没有配置好，先换个问题试试吧。",
+    ReasonCode.RULE_FALLBACK: "暂时无法处理这个问题，请稍后再试。",
+}
+_AGENT_DEFAULT_CLARIFY = "没太明白你的意思，能说得更具体一点吗？"
+_AGENT_UNAVAILABLE = "AI 服务暂时不可用，请稍后再试。"
 
 
 @ai_chat.handle()
@@ -91,7 +111,7 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
         await finish_with_send_errors_logged(ai_chat, "请输入要问的问题")
 
     chat_context = ""
-    if memory_store is not None:
+    if memory_store is not None and not settings.agent_enabled:
         try:
             limit = min(
                 memory_reference.limit or settings.chat_memory_default_turns,
@@ -138,7 +158,7 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
             "这个问题需要联网搜索才能可靠回答，但搜索功能还没有配置。",
         )
 
-    if needs_search:
+    if not settings.agent_enabled and needs_search:
         try:
             search_results = await search_web(prompt, settings=settings, client=http_client)
         except SearchError:
@@ -155,16 +175,22 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
                 )
 
     try:
-        reply = await request_ai_reply(
-            prompt,
-            settings=settings,
-            client=http_client,
-            search_context=search_context,
-            chat_context=chat_context,
-            roco_context=roco_context,
-        )
+        if settings.agent_enabled:
+            agent_reply = await _handle_agent_chat(event, prompt, settings, memory_store)
+            if agent_reply is None:
+                return
+            reply = agent_reply
+        else:
+            reply = await request_ai_reply(
+                prompt,
+                settings=settings,
+                client=http_client,
+                search_context=search_context,
+                chat_context=chat_context,
+                roco_context=roco_context,
+            )
     except AIReplyError:
-        await finish_with_send_errors_logged(ai_chat, "AI 服务暂时不可用，请稍后再试。")
+        await finish_with_send_errors_logged(ai_chat, _AGENT_UNAVAILABLE)
 
     if memory_message_id is not None:
         try:
@@ -175,6 +201,59 @@ async def handle_ai_chat(event: GroupMessageEvent) -> None:
     await finish_with_send_errors_logged(
         ai_chat, replace_named_mentions(reply, settings.named_mention_replacement_map)
     )
+
+
+async def _handle_agent_chat(
+    event: GroupMessageEvent,
+    prompt: str,
+    settings: BotSettings,
+    memory_store: ChatMemoryRepository | None,
+) -> str | None:
+    """Stage-2 agent path (S2-AGENT-09): router -> orchestrator -> renderer.
+    Returns the reply text, or None when the reply was already sent
+    (clarification / SafeFailure / runtime unavailable). No draft, prompt,
+    group or user identifiers are ever logged (S2-AGENT-08)."""
+    try:
+        runtime = get_runtime()
+        orchestrator = runtime.get_agent_orchestrator()
+        gateway = runtime.get_model_gateway()
+    except RuntimeStateError:
+        logger.exception("Agent stack unavailable; refusing to fabricate a reply")
+        await finish_with_send_errors_logged(ai_chat, _AGENT_UNAVAILABLE)
+        return None
+
+    scope = AgentScope(
+        group_id=str(event.group_id),
+        user_id=str(event.user_id),
+        can_use_chat_memory=memory_store is not None,
+    )
+    route, _trace = await route_request(
+        prompt,
+        settings=settings,
+        gateway=gateway,
+        can_use_chat_memory=memory_store is not None,
+    )
+    if route.needs_clarification:
+        # S2-AGENT-09 + Scenario E: clarification/capability gaps answer
+        # directly; no model call, no tools.
+        await finish_with_send_errors_logged(
+            ai_chat,
+            _AGENT_CLARIFY_MESSAGES.get(route.reason_code, _AGENT_DEFAULT_CLARIFY),
+        )
+        return None
+
+    request = AgentRequest(
+        prompt=prompt,
+        scope=scope,
+        route=route,
+        deadline=datetime.now(UTC) + timedelta(seconds=settings.agent_deadline_seconds),
+    )
+    outcome = await orchestrator.run(request)
+    if isinstance(outcome, SafeFailure):
+        await finish_with_send_errors_logged(ai_chat, outcome.message)
+        return None
+    store = orchestrator.last_store or EvidenceStore()
+    return render_answer(outcome, store)
 
 
 def _mentions_self(event: GroupMessageEvent) -> bool:

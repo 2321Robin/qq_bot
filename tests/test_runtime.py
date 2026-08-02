@@ -178,3 +178,61 @@ def test_set_runtime_for_testing_injects_singleton() -> None:
         assert get_runtime() is runtime
     finally:
         set_runtime_for_testing(None)
+
+
+# ---------------------------------------------------------------------------
+# Stage-2 agent stack (Task 13, S2-CONFIG-01)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_startup_builds_agent_stack_with_five_tools(tmp_path) -> None:
+    """Ready runtime exposes the registry (5 tools), gateway, layered memory
+    and orchestrator (Task 13)."""
+    runtime = AppRuntime(settings=_settings(tmp_path))
+    await runtime.startup()
+    try:
+        registry = runtime.get_tool_registry()
+        from qq_bot.agent.models import RouteKind
+
+        tool_names = set(registry.names_for(frozenset(RouteKind)))
+        assert tool_names == {
+            "lookup_pet",
+            "find_skill_intersection",
+            "get_evolution_routes",
+            "search_chat_memory",
+            "search_web",
+        }
+        assert runtime.get_model_gateway() is not None
+        assert runtime.get_layered_memory() is not None
+        assert runtime.get_agent_orchestrator() is not None
+    finally:
+        await runtime.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_agent_getters_fail_while_not_ready(tmp_path) -> None:
+    runtime = AppRuntime(settings=_settings(tmp_path))
+    for getter in (
+        runtime.get_tool_registry,
+        runtime.get_model_gateway,
+        runtime.get_layered_memory,
+        runtime.get_agent_orchestrator,
+    ):
+        with pytest.raises(RuntimeStateError):
+            getter()
+
+
+@pytest.mark.asyncio
+async def test_agent_getters_fail_after_shutdown(tmp_path) -> None:
+    runtime = AppRuntime(settings=_settings(tmp_path))
+    await runtime.startup()
+    await runtime.shutdown()
+    for getter in (
+        runtime.get_tool_registry,
+        runtime.get_model_gateway,
+        runtime.get_layered_memory,
+        runtime.get_agent_orchestrator,
+    ):
+        with pytest.raises(RuntimeStateError):
+            getter()

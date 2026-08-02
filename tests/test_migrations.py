@@ -57,10 +57,16 @@ async def test_empty_database_gets_full_schema_and_version_record(tmp_path) -> N
         tables = await _tables(connection)
         assert "schema_migrations" in tables
         assert "chat_messages" in tables
+        assert "chat_summaries" in tables
+        assert "summary_sources" in tables
+        assert "user_preferences" in tables
+        assert "user_memory_state" in tables
         indexes = await _indexes(connection)
         assert "idx_chat_messages_group_user_created" in indexes
         assert "idx_chat_messages_group_created" in indexes
-        assert await _applied_versions(connection) == [1]
+        assert "idx_chat_summaries_group" in indexes
+        assert "idx_user_preferences_group_user" in indexes
+        assert await _applied_versions(connection) == [1, 2]
     finally:
         await connection.close()
 
@@ -87,7 +93,47 @@ async def test_legacy_current_schema_database_is_adopted_without_data_loss(
         cursor = await connection.execute("SELECT COUNT(*) FROM chat_messages")
         row = await cursor.fetchone()
         assert int(row[0]) == 1
-        assert await _applied_versions(connection) == [1]
+        assert await _applied_versions(connection) == [1, 2]
+        tables = await _tables(connection)
+        assert "chat_summaries" in tables
+        assert "user_preferences" in tables
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_version_one_database_upgrades_to_two_without_data_loss(tmp_path) -> None:
+    """A stage-1 database (version 1 recorded, messages present) upgrades to
+    version 2 keeping every existing row (S2-MEM-10)."""
+    path = tmp_path / "v1.sqlite3"
+    connection = await _open_connection(path)
+    await connection.execute(
+        "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+    )
+    await connection.execute(
+        "INSERT INTO schema_migrations VALUES (1, '2026-08-01T00:00:00+00:00')"
+    )
+    await connection.execute(_CHAT_MESSAGES_DDL)
+    await connection.execute(
+        "INSERT INTO chat_messages (group_id, user_id, message_text, created_at, ai_reply) "
+        "VALUES (1001, 2001, 'stage-1 message', '2026-08-01T00:00:00+00:00', 'stage-1 reply')"
+    )
+    await connection.commit()
+    await connection.close()
+
+    connection = await _open_connection(path)
+    try:
+        await apply_migrations(connection)
+        assert await _applied_versions(connection) == [1, 2]
+        cursor = await connection.execute(
+            "SELECT message_text, ai_reply FROM chat_messages WHERE id = 1"
+        )
+        row = await cursor.fetchone()
+        assert str(row[0]) == "stage-1 message"
+        assert str(row[1]) == "stage-1 reply"
+        tables = await _tables(connection)
+        assert "chat_summaries" in tables
+        assert "user_preferences" in tables
     finally:
         await connection.close()
 
@@ -98,10 +144,10 @@ async def test_rerunning_migrations_is_idempotent(tmp_path) -> None:
     try:
         await apply_migrations(connection)
         await apply_migrations(connection)
-        assert await _applied_versions(connection) == [1]
+        assert await _applied_versions(connection) == [1, 2]
         cursor = await connection.execute("SELECT COUNT(*) FROM schema_migrations")
         row = await cursor.fetchone()
-        assert int(row[0]) == 1
+        assert int(row[0]) == 2
     finally:
         await connection.close()
 

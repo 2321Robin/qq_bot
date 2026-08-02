@@ -22,6 +22,11 @@ from qq_bot.services.reliability import CircuitBreaker
 if TYPE_CHECKING:
     from nonebot import Driver
 
+    from qq_bot.agent.orchestrator import AgentOrchestrator
+    from qq_bot.agent.registry import ToolRegistry
+    from qq_bot.services.ai_client import AiModelGateway
+    from qq_bot.services.layered_memory import LayeredMemoryService
+
 logger = logging.getLogger("qq_bot.runtime")
 
 BREAKER_AI_PRIMARY = "ai_primary"
@@ -57,6 +62,10 @@ class AppRuntime:
         self._http_client: httpx.AsyncClient | None = None
         self._repository: ChatMemoryRepository | None = None
         self._breakers: dict[str, CircuitBreaker] = {}
+        self._registry: ToolRegistry | None = None
+        self._gateway: AiModelGateway | None = None
+        self._orchestrator: AgentOrchestrator | None = None
+        self._memory: LayeredMemoryService | None = None
 
     @property
     def state(self) -> RuntimeState:
@@ -104,8 +113,57 @@ class AppRuntime:
             raise
         self._http_client = http_client
         self._repository = repository
+        self._registry, self._gateway, self._memory, self._orchestrator = self._build_agent_stack(
+            settings, repository, http_client
+        )
         self._state = RuntimeState.READY
         logger.info("runtime ready (schema version supported)")
+
+    def _build_agent_stack(
+        self,
+        settings: BotSettings,
+        repository: ChatMemoryRepository,
+        http_client: httpx.AsyncClient,
+    ) -> tuple[ToolRegistry, AiModelGateway, LayeredMemoryService, AgentOrchestrator]:
+        """Build the stage-2 agent resources (S2-CONFIG-01): five tools, the
+        model gateway, the budget, the layered memory service and the
+        orchestrator. Pure construction — no network, no model calls.
+
+        Imports are lazy: the agent stack depends on service modules that
+        import ``qq_bot.runtime`` at module level (breakers, shared client),
+        so loading them here avoids an import cycle at module scope."""
+        from qq_bot.agent.evidence import ModelSemanticVerifier
+        from qq_bot.agent.orchestrator import AgentOrchestrator
+        from qq_bot.agent.registry import ToolRegistry
+        from qq_bot.agent.token_budget import BudgetManager
+        from qq_bot.agent.tools.memory import register_memory_tools
+        from qq_bot.agent.tools.roco import register_roco_tools
+        from qq_bot.agent.tools.web import register_web_tool
+        from qq_bot.services.ai_client import AiModelGateway
+        from qq_bot.services.layered_memory import LayeredMemoryService
+
+        registry = ToolRegistry()
+        register_roco_tools(registry)
+        register_web_tool(registry, settings=settings, client=http_client)
+        register_memory_tools(registry, repository)
+        registry.validate()
+        gateway = AiModelGateway(settings, client=http_client)
+        budget = BudgetManager(settings)
+        verifier = (
+            ModelSemanticVerifier(gateway, settings)
+            if settings.ai_semantic_verifier_enabled
+            else None
+        )
+        memory = LayeredMemoryService(repository, settings, gateway=gateway, budget=budget)
+        orchestrator = AgentOrchestrator(
+            registry=registry,
+            gateway=gateway,
+            settings=settings,
+            verifier=verifier,
+            budget=budget,
+            memory=memory,
+        )
+        return registry, gateway, memory, orchestrator
 
     async def shutdown(self) -> None:
         """Release resources; repeated shutdown is idempotent (S1-LIFE-03)."""
@@ -146,6 +204,26 @@ class AppRuntime:
             return self._breakers[name]
         except KeyError as exc:
             raise RuntimeStateError(f"unknown breaker {name!r}") from exc
+
+    def get_tool_registry(self) -> ToolRegistry:
+        self._require_ready()
+        assert self._registry is not None
+        return self._registry
+
+    def get_model_gateway(self) -> AiModelGateway:
+        self._require_ready()
+        assert self._gateway is not None
+        return self._gateway
+
+    def get_layered_memory(self) -> LayeredMemoryService:
+        self._require_ready()
+        assert self._memory is not None
+        return self._memory
+
+    def get_agent_orchestrator(self) -> AgentOrchestrator:
+        self._require_ready()
+        assert self._orchestrator is not None
+        return self._orchestrator
 
     def _require_ready(self) -> None:
         if self._state is not RuntimeState.READY:
