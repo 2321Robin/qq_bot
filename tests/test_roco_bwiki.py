@@ -1186,6 +1186,33 @@ def test_fetch_pet_details_can_fetch_raw_pages_and_apply_index_metadata(tmp_path
     assert detail["total_race_value"] == 582
 
 
+def test_parse_sprite_detail_appends_form_name_from_sprite_name2() -> None:
+    """形态页的完整名 = sprite-name + （sprite-name2）；基础页不受影响。"""
+    form_html = """
+    <div class="sprite-titlename">
+      <span class="sprite-name font-roco"><span class="hide-pc">011&#160;</span>鸭吉吉</span>
+      <span class="sprite-name-bottom">
+        <span class="sprite-name2">起来鸭</span>
+        <span class="sprite-typename">鸭仔精灵</span>
+      </span>
+    </div>
+    """
+    base_html = """
+    <div class="sprite-titlename">
+      <span class="sprite-name font-roco"><span class="hide-pc">001&#160;</span>迪莫</span>
+      <span class="sprite-name-bottom"><span class="sprite-typename">光系精灵</span></span>
+    </div>
+    """
+
+    form = parse_pet_detail("https://wiki.biligame.com/rocom/x", form_html)
+    assert form["name"] == "鸭吉吉（起来鸭）"
+    assert form["profile"]["编号"] == "011"
+
+    base = parse_pet_detail("https://wiki.biligame.com/rocom/x", base_html)
+    assert base["name"] == "迪莫"
+    assert base["profile"]["编号"] == "001"
+
+
 def test_parse_sprite_detail_extracts_full_record() -> None:
     html = """
     <html><body>

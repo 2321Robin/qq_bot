@@ -691,6 +691,7 @@ class _BwikiSpriteParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.title_block: list[str] = []
+        self.name2: str = ""
         self.attrsum_text = ""
         self.attr_pairs: list[tuple[str, str]] = []
         self.trait_name = ""
@@ -717,6 +718,8 @@ class _BwikiSpriteParser(HTMLParser):
         elem = self._new_elem()
         if "sprite-titlename" in classes:
             self._caps.append({"kind": "title", "texts": [], "elem": elem})
+        elif "sprite-name2" in classes:
+            self._caps.append({"kind": "name2", "texts": [], "elem": elem})
         elif "sprite-info-desc" in classes:
             self._caps.append({"kind": "desc", "texts": [], "elem": elem})
         elif "sprite-info-attrsum" in classes:
@@ -812,6 +815,8 @@ class _BwikiSpriteParser(HTMLParser):
         kind = cap["kind"]
         if kind == "title":
             self.title_block = [_normalize_text(t) for t in cap["texts"] if _normalize_text(t)]
+        elif kind == "name2":
+            self.name2 = _normalize_text("".join(cap["texts"]))
         elif kind == "desc":
             text = _normalize_text("".join(cap["texts"]))
             if text:
@@ -967,6 +972,8 @@ def _parse_sprite_detail(source_url: str, html: str) -> dict[str, Any]:
     title = parser.title_block
     number = title[0] if title else ""
     name = title[1] if len(title) > 1 else ""
+    if parser.name2:
+        name = f"{name}（{parser.name2}）"
     types = _dedupe_values(parser.own_types)
 
     stats = {stat_name: int(value) for stat_name, value in parser.attr_pairs}
