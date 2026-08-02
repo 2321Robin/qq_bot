@@ -50,6 +50,12 @@ def main(argv: list[str] | None = None) -> int:
         default=2,
         help="并发抓取线程数（每个 worker 独立限流；默认 2）",
     )
+    parser.add_argument(
+        "--retry-errors-from",
+        type=Path,
+        default=None,
+        help="只重抓该刷新报告中记录抓取失败的条目（WAF 等偶发错误续跑）",
+    )
     parser.add_argument("--no-normalize", action="store_true")
     parser.add_argument("--no-cards", action="store_true", help="跳过图卡增量生成")
     parser.add_argument("--no-index", action="store_true", help="跳过搜索索引重建")
@@ -88,6 +94,7 @@ def main(argv: list[str] | None = None) -> int:
         allow_quarantine=args.allow_quarantine,
         min_parser_version=args.min_parser_version,
         index_url=args.index_url,
+        retry_errors_from=args.retry_errors_from,
     )
     return run_refresh(refresh_args)
 

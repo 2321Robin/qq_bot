@@ -63,6 +63,8 @@ class RefreshArgs:
     min_parser_version: int = 0
     index_url: str = BWIKI_INDEX_URL
     details: list[str] = field(default_factory=list)  # 仅离线：限定目标文件（可选）
+    # 上次刷新报告的路径：只重抓其中记录失败的条目（WAF 等偶发错误续跑）
+    retry_errors_from: Path | None = None
 
 
 def _quarantine_summary(quarantine_dir: Path) -> dict[str, str]:
@@ -248,6 +250,31 @@ def _fetch_progress(done: int, total: int) -> None:
         print(f"[fetch] {done}/{total} ({done * 100 // total}%)", flush=True)
 
 
+def _filter_targets_by_report(
+    targets: list[tuple[str, str, dict[str, str]]], report_path: Path
+) -> list[tuple[str, str, dict[str, str]]]:
+    """Keep only targets whose name appears in the report's fetch errors.
+
+    Used for续跑: after a WAF-heavy run, re-fetch just the failed pages
+    instead of walking the whole index again.
+    """
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read report {report_path}: {exc}") from exc
+    failed_names = {str(error.get("name")) for error in payload.get("errors", [])}
+    if not failed_names:
+        print("No fetch errors recorded in report; nothing to retry", flush=True)
+    kept = [t for t in targets if (t[0] if len(t) > 1 else "") in failed_names]
+    missing = sorted(failed_names - {t[0] for t in targets})
+    if missing:
+        print(
+            f"{len(missing)} failed names not in current index: {missing[:8]}",
+            file=sys.stderr,
+        )
+    return kept
+
+
 def _run_refresh(
     args: RefreshArgs,
     previous: RefreshManifest | None,
@@ -292,6 +319,8 @@ def _run_refresh(
         except Exception as exc:  # noqa: BLE001 - index fetch failure is a refresh error
             print(f"Failed to fetch index {args.index_url}: {exc}", file=sys.stderr)
             return 1
+        if args.retry_errors_from is not None:
+            targets = _filter_targets_by_report(targets, args.retry_errors_from)
         outcome = incremental_fetch(
             targets,
             previous=previous,

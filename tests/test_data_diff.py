@@ -201,6 +201,35 @@ def test_fetch_errors_recorded_in_report(tmp_path: Path) -> None:
     assert restored.errors == diff.errors
 
 
+def test_filter_targets_by_report_keeps_only_failed(tmp_path: Path) -> None:
+    from qq_bot.datapipeline.publish import _filter_targets_by_report
+
+    report = tmp_path / "report.json"
+    report.write_text(
+        json.dumps(
+            {
+                "errors": [
+                    {"name": "绅士鸡", "reason": "URLError: WAF block"},
+                    {"name": "武者鸡", "reason": "URLError: WAF block"},
+                    {"name": "不在索引", "reason": "URLError: gone"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    targets = [
+        ("绅士鸡", "https://x/绅士鸡", {"精灵编号": "101"}),
+        ("武者鸡", "https://x/武者鸡", {"精灵编号": "102"}),
+        ("健康宠物", "https://x/健康宠物", {"精灵编号": "103"}),
+    ]
+    kept = _filter_targets_by_report(targets, report)
+    assert [t[0] for t in kept] == ["绅士鸡", "武者鸡"]
+
+    empty = tmp_path / "empty.json"
+    empty.write_text(json.dumps({"errors": []}), encoding="utf-8")
+    assert _filter_targets_by_report(targets, empty) == []
+
+
 def test_diff_json_round_trip(tmp_path: Path) -> None:
     new_dir, snapshot_dir, validated = _changed_scenario(tmp_path)
     current = _build(new_dir, _previous())
