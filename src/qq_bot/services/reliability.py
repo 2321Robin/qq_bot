@@ -26,7 +26,9 @@ from typing import Any
 import httpx
 from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt
 
-logger = logging.getLogger("qq_bot.reliability")
+from qq_bot.observability.logging import get_logger, record_event
+
+logger = get_logger("qq_bot.reliability")
 
 RETRYABLE_HTTP_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
 
@@ -254,12 +256,14 @@ def log_reliability_event(
     delay_seconds: float | None = None,
     circuit_state: str | None = None,
 ) -> None:
-    """Log a sanitized reliability event (S1-SEND-05, proposal section 13).
+    """Log a sanitized reliability event via the observability facade
+    (S1-SEND-05, S4-LOG-05).
 
     Accepts only sanitized scalar fields — never payloads, headers or message
-    bodies.
+    bodies. The message text keeps the historical flat format; the whitelisted
+    structured fields carry the machine-readable parts.
     """
-    fields = [
+    parts = [
         f"operation={operation}",
         f"dependency={dependency}",
         f"attempt={attempt}",
@@ -267,7 +271,20 @@ def log_reliability_event(
         f"error_category={error_category}",
     ]
     if delay_seconds is not None:
-        fields.append(f"delay_seconds={delay_seconds:g}")
+        parts.append(f"delay_seconds={delay_seconds:g}")
     if circuit_state is not None:
-        fields.append(f"circuit_state={circuit_state}")
-    logger.warning("reliability event: %s", " ".join(fields))
+        parts.append(f"circuit_state={circuit_state}")
+    fields: dict[str, object] = {
+        "attempt": attempt,
+        "max_attempts": max_attempts,
+        "error_category": error_category,
+    }
+    if circuit_state is not None:
+        fields["circuit_state"] = circuit_state
+    record_event(
+        logger,
+        logging.WARNING,
+        "reliability_event",
+        message="reliability event: " + " ".join(parts),
+        **fields,
+    )

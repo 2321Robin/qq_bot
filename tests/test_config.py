@@ -442,3 +442,87 @@ def test_data_pipeline_settings_reject_negative_int_thresholds() -> None:
 def test_data_pipeline_settings_reject_empty_index_path() -> None:
     with pytest.raises(ValidationError, match="non-empty"):
         BotSettings(data_search_index_path="   ")
+
+
+def test_observability_settings_defaults() -> None:
+    settings = BotSettings()
+    assert settings.log_format == "text"
+    assert settings.log_level == "INFO"
+    assert settings.metrics_enabled is True
+    assert settings.trace_enabled is True
+    assert settings.readyz_require_onebot is False
+    assert settings.readyz_require_data is True
+    assert settings.quota_enabled is True
+    assert settings.quota_rate_limit_per_minute == 30
+    assert settings.quota_daily_cost_limit_usd == 2.0
+    assert settings.quota_group_daily_cost_limit_usd == 0.5
+
+
+def test_observability_settings_parse_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOG_FORMAT", "json")
+    monkeypatch.setenv("LOG_LEVEL", "WARNING")
+    monkeypatch.setenv("METRICS_ENABLED", "false")
+    monkeypatch.setenv("TRACE_ENABLED", "false")
+    monkeypatch.setenv("READYZ_REQUIRE_ONEBOT", "true")
+    monkeypatch.setenv("READYZ_REQUIRE_DATA", "false")
+    monkeypatch.setenv("QUOTA_ENABLED", "false")
+    monkeypatch.setenv("QUOTA_RATE_LIMIT_PER_MINUTE", "10")
+    monkeypatch.setenv("QUOTA_DAILY_COST_LIMIT_USD", "3.5")
+    monkeypatch.setenv("QUOTA_GROUP_DAILY_COST_LIMIT_USD", "0.25")
+    get_settings.cache_clear()
+    try:
+        settings = get_settings()
+        assert settings.log_format == "json"
+        assert settings.log_level == "WARNING"
+        assert settings.metrics_enabled is False
+        assert settings.trace_enabled is False
+        assert settings.readyz_require_onebot is True
+        assert settings.readyz_require_data is False
+        assert settings.quota_enabled is False
+        assert settings.quota_rate_limit_per_minute == 10
+        assert settings.quota_daily_cost_limit_usd == 3.5
+        assert settings.quota_group_daily_cost_limit_usd == 0.25
+    finally:
+        for key in (
+            "LOG_FORMAT",
+            "LOG_LEVEL",
+            "METRICS_ENABLED",
+            "TRACE_ENABLED",
+            "READYZ_REQUIRE_ONEBOT",
+            "READYZ_REQUIRE_DATA",
+            "QUOTA_ENABLED",
+            "QUOTA_RATE_LIMIT_PER_MINUTE",
+            "QUOTA_DAILY_COST_LIMIT_USD",
+            "QUOTA_GROUP_DAILY_COST_LIMIT_USD",
+        ):
+            monkeypatch.delenv(key)
+        get_settings.cache_clear()
+
+
+def test_observability_settings_reject_invalid_format_and_level() -> None:
+    with pytest.raises(ValidationError, match="log_format"):
+        BotSettings(log_format="yaml")
+    with pytest.raises(ValidationError, match="log_level"):
+        BotSettings(log_level="TRACE")
+
+
+def test_quota_settings_reject_negative_values() -> None:
+    with pytest.raises(ValidationError, match="non-negative"):
+        BotSettings(quota_rate_limit_per_minute=-1)
+    with pytest.raises(ValidationError, match="non-negative"):
+        BotSettings(quota_daily_cost_limit_usd=-0.1)
+    with pytest.raises(ValidationError, match="non-negative"):
+        BotSettings(quota_group_daily_cost_limit_usd=-0.1)
+
+
+def test_quota_zero_values_disable_enforcement() -> None:
+    settings = BotSettings(
+        quota_rate_limit_per_minute=0,
+        quota_daily_cost_limit_usd=0,
+        quota_group_daily_cost_limit_usd=0,
+    )
+    assert settings.quota_rate_limit_per_minute == 0
+    assert settings.quota_daily_cost_limit_usd == 0.0
+    assert settings.quota_group_daily_cost_limit_usd == 0.0

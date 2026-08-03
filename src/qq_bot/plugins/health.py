@@ -12,15 +12,32 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from qq_bot import runtime as runtime_module
+from qq_bot.config import get_settings
+from qq_bot.observability import metrics
+from qq_bot.observability.logging import get_logger, record_event
 
-logger = logging.getLogger("qq_bot.health")
+logger = get_logger("qq_bot.health")
 
 
 async def healthz() -> JSONResponse:
     return JSONResponse({"status": "ok"})
+
+
+async def metrics_endpoint() -> Response:
+    """Prometheus text exposition (S4-METRIC-10).
+
+    Registered only while ``metrics_enabled`` is true; the route is absent
+    (404) otherwise (S4-METRIC-12).
+    """
+    from prometheus_client import generate_latest
+
+    return Response(
+        generate_latest(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 async def readyz() -> JSONResponse:
@@ -48,9 +65,20 @@ def install_health_routes() -> None:
         return
     if not hasattr(asgi, "add_api_route"):
         return
+    settings = get_settings()
+    metrics.set_metrics_enabled(settings.metrics_enabled)
     asgi.add_api_route("/healthz", healthz, methods=["GET"], include_in_schema=False)
     asgi.add_api_route("/readyz", readyz, methods=["GET"], include_in_schema=False)
-    logger.info("health routes installed: /healthz, /readyz")
+    installed = "/healthz, /readyz"
+    if settings.metrics_enabled:
+        asgi.add_api_route("/metrics", metrics_endpoint, methods=["GET"], include_in_schema=False)
+        installed += ", /metrics"
+    record_event(
+        logger,
+        logging.INFO,
+        "health_routes_installed",
+        message=f"health routes installed: {installed}",
+    )
 
 
 def _response_body(response: JSONResponse) -> dict[str, Any]:

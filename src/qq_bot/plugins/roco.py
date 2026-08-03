@@ -4,6 +4,7 @@ from nonebot.matcher import current_matcher
 from nonebot.params import CommandArg
 
 from qq_bot.config import get_settings
+from qq_bot.observability import metrics
 from qq_bot.services.onebot_send import finish_with_send_errors_logged
 from qq_bot.services.roco_pet_cards import pet_card_path
 from qq_bot.services.roco_pets import (
@@ -27,6 +28,8 @@ async def handle_roco_pet(event: GroupMessageEvent, args: Message = CommandArg()
     if not settings.group_allowed(event.group_id):
         return
 
+    metrics.COMMANDS.labels("精灵").inc()
+
     query = args.extract_plain_text().strip()
     record = find_pet(get_pet_records(), query)
     if record is None:
@@ -42,6 +45,8 @@ async def handle_roco_skill(event: GroupMessageEvent, args: Message = CommandArg
     settings = get_settings()
     if not settings.group_allowed(event.group_id):
         return
+
+    metrics.COMMANDS.labels("技能").inc()
 
     query = args.extract_plain_text().strip()
     await finish_with_send_errors_logged(

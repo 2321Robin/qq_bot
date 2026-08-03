@@ -177,6 +177,18 @@ class BotSettings(BaseSettings):
     data_search_index_path: str = "data/roco_search.sqlite3"
     data_use_search_index: bool = True
 
+    # ---- 可观测性与配额（阶段 4）----
+    log_format: str = "text"  # text | json
+    log_level: str = "INFO"  # DEBUG | INFO | WARNING | ERROR
+    metrics_enabled: bool = True  # false 时 /metrics 404 且埋点零开销
+    trace_enabled: bool = True  # false 时 span 为空操作
+    readyz_require_onebot: bool = False  # OneBot 断开默认只报告不阻断
+    readyz_require_data: bool = True  # 数据目录存在时 manifest 必须有效
+    quota_enabled: bool = True  # 限流与费用预算总开关
+    quota_rate_limit_per_minute: int = 30  # 0 = 关闭；AI 消息/群/分钟
+    quota_daily_cost_limit_usd: float = 2.0  # 0 = 关闭；全局每日 actual 成本上限
+    quota_group_daily_cost_limit_usd: float = 0.5  # 0 = 关闭；每群每日上限
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -353,6 +365,34 @@ class BotSettings(BaseSettings):
         value = value.strip()
         if not value:
             raise ValueError("data_search_index_path must be a non-empty string")
+        return value
+
+    @field_validator("log_format")
+    @classmethod
+    def validate_log_format(cls, value: str) -> str:
+        if value not in {"text", "json"}:
+            raise ValueError("log_format must be one of: text, json")
+        return value
+
+    @field_validator("log_level")
+    @classmethod
+    def validate_log_level(cls, value: str) -> str:
+        if value not in {"DEBUG", "INFO", "WARNING", "ERROR"}:
+            raise ValueError("log_level must be one of: DEBUG, INFO, WARNING, ERROR")
+        return value
+
+    @field_validator("quota_rate_limit_per_minute")
+    @classmethod
+    def validate_quota_rate_limit(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("quota_rate_limit_per_minute must be non-negative")
+        return value
+
+    @field_validator("quota_daily_cost_limit_usd", "quota_group_daily_cost_limit_usd")
+    @classmethod
+    def validate_quota_cost_limits(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("quota cost limits must be non-negative")
         return value
 
     @field_validator(

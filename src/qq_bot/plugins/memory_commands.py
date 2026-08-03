@@ -14,6 +14,7 @@ from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message
 from nonebot.params import CommandArg
 
 from qq_bot.config import get_settings
+from qq_bot.observability.logging import hash_id
 from qq_bot.runtime import get_chat_repository
 from qq_bot.services.layered_memory import LayeredMemoryService
 from qq_bot.services.onebot_send import finish_with_send_errors_logged
@@ -86,8 +87,8 @@ async def handle_memory_delete(event: GroupMessageEvent, args: Message = Command
         affected = await service.delete_all(group_id=event.group_id, user_id=event.user_id)
         logger.info(
             "memory delete_all: user=%s group=%s affected_messages=%d",
-            event.user_id,
-            event.group_id,
+            hash_id(event.user_id, kind="user"),
+            hash_id(event.group_id, kind="group"),
             len(affected),
         )
         await finish_with_send_errors_logged(
