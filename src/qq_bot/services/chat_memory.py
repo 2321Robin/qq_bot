@@ -117,6 +117,13 @@ class ChatMemoryRepository:
             raise RepositoryClosedError("chat memory repository is not open")
         return self._connection
 
+    async def execute(self, sql: str, parameters: Sequence[Any] = ()) -> aiosqlite.Cursor:
+        """Execute one parameterized statement on the shared connection
+        (used by the quota service; S4-QUOTA-04). Raises
+        ``RepositoryClosedError`` when the repository is closed."""
+        connection = self._require_open()
+        return await connection.execute(sql, parameters)
+
     async def check_ready(self) -> int | None:
         """Read-only liveness probe: return the max applied schema version,
         or None when the probe fails (S4-HEALTH-02). Bounded to 2 seconds so

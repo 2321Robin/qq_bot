@@ -12,7 +12,6 @@ from __future__ import annotations
 import enum
 import logging
 from typing import TYPE_CHECKING, Callable
-
 import httpx
 
 from qq_bot.config import BotSettings, get_settings
@@ -20,6 +19,9 @@ from qq_bot.observability import metrics, set_trace_enabled
 from qq_bot.observability.logging import get_logger, install_logging, record_event
 from qq_bot.services.chat_memory import ChatMemoryRepository
 from qq_bot.services.reliability import CircuitBreaker, CircuitState
+
+if TYPE_CHECKING:
+    from qq_bot.services.quota import QuotaService
 
 if TYPE_CHECKING:
     from nonebot import Driver
@@ -91,6 +93,7 @@ class AppRuntime:
         self._gateway: AiModelGateway | None = None
         self._orchestrator: AgentOrchestrator | None = None
         self._memory: LayeredMemoryService | None = None
+        self._quota: QuotaService | None = None
 
     @property
     def state(self) -> RuntimeState:
@@ -149,6 +152,12 @@ class AppRuntime:
         self._registry, self._gateway, self._memory, self._orchestrator = self._build_agent_stack(
             settings, repository, http_client
         )
+        if settings.quota_enabled:
+            from qq_bot.services.quota import QuotaService
+
+            self._quota = QuotaService(settings, repository)
+        else:
+            self._quota = None
         self._state = RuntimeState.READY
         logger.info("runtime ready (schema version supported)")
 
@@ -257,6 +266,12 @@ class AppRuntime:
         self._require_ready()
         assert self._orchestrator is not None
         return self._orchestrator
+
+    def get_quota_service(self) -> QuotaService | None:
+        """The quota service, or None when quota is disabled (S4-QUOTA-01).
+        Same readiness semantics as the other getters."""
+        self._require_ready()
+        return self._quota
 
     def _require_ready(self) -> None:
         if self._state is not RuntimeState.READY:

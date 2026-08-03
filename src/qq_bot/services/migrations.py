@@ -118,6 +118,45 @@ MIGRATIONS: tuple[Migration, ...] = (
             """,
         ),
     ),
+    Migration(
+        version=3,
+        name="quota_usage",
+        statements=(
+            # stage-4 quota: raw integer scope ids (existing privacy
+            # convention); only observability outputs use hashes (S4-QUOTA-07)
+            """
+            CREATE TABLE IF NOT EXISTS quota_usage (
+                scope_type TEXT NOT NULL,            -- 'group' | 'user'
+                scope_id INTEGER NOT NULL,           -- raw integer id
+                day TEXT NOT NULL,                   -- 'YYYY-MM-DD'
+                requests INTEGER NOT NULL DEFAULT 0,
+                tokens INTEGER NOT NULL DEFAULT 0,
+                cost_usd REAL NOT NULL DEFAULT 0.0,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (scope_type, scope_id, day)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS quota_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                at TEXT NOT NULL,
+                scope_type TEXT NOT NULL,
+                scope_id INTEGER NOT NULL,
+                kind TEXT NOT NULL,   -- 'rate_denied' | 'cost_denied' | 'failure' | 'cost_estimated'
+                reason TEXT NOT NULL,
+                detail TEXT NOT NULL DEFAULT ''
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_quota_usage_day
+            ON quota_usage (day)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_quota_events_scope
+            ON quota_events (scope_type, scope_id, at)
+            """,
+        ),
+    ),
 )
 
 SUPPORTED_SCHEMA_VERSION = max(migration.version for migration in MIGRATIONS)

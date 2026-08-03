@@ -14,6 +14,7 @@ from qq_bot.observability.cost import Usage, estimate_cost, load_price_table
 from qq_bot.observability.logging import current_request_id, get_logger
 from qq_bot.observability.tracing import get_tracer
 from qq_bot.runtime import BREAKER_AI_FALLBACK, BREAKER_AI_PRIMARY, RuntimeStateError, get_runtime
+from qq_bot.services.quota import active_quota_scope
 from qq_bot.services.reliability import (
     CircuitBreaker,
     CircuitOpenError,
@@ -31,7 +32,7 @@ _price_table: dict[str, object] | None = None
 logger = get_logger("qq_bot.ai_client")
 
 
-def _account_usage(model: str, usage: dict[str, int] | None) -> None:
+async def _account_usage(model: str, usage: dict[str, int] | None) -> None:
     """Record provider-reported tokens and priced cost (S4-METRIC-07,
     S2-TOKEN-03). No usage -> nothing recorded; prices come from the local
     table and are never guessed (unknown/estimated stays honest). The active
@@ -60,6 +61,21 @@ def _account_usage(model: str, usage: dict[str, int] | None) -> None:
     )
     if estimate.cost is not None:
         metrics.COST_USD.labels(model, estimate.status).inc(estimate.cost)
+    scope = active_quota_scope()
+    if scope is None:
+        return
+    try:
+        service = get_runtime().get_quota_service()
+        if service is not None:
+            await service.record_usage(
+                scope_type=scope[0],
+                scope_id=scope[1],
+                tokens=prompt + completion,
+                cost=estimate,
+            )
+    except Exception:
+        # Quota recording must never fail the already-succeeded reply.
+        logger.exception("quota usage recording failed")
 
 
 class AIReplyError(RuntimeError):
@@ -254,7 +270,7 @@ async def _call_provider(
         breaker_name=breaker_name,
     )
     normalized = _normalize_response(data)
-    _account_usage(model, normalized.usage)
+    await _account_usage(model, normalized.usage)
     if normalized.text is None:
         raise AIReplyError("AI API returned an empty response")
     return normalized.text
@@ -503,7 +519,7 @@ async def request_model_turn(
         )
         model = active_settings.ai_fallback_model
     normalized = _normalize_response(data)
-    _account_usage(model, normalized.usage)
+    await _account_usage(model, normalized.usage)
     return normalized
 
 

@@ -66,7 +66,7 @@ async def test_empty_database_gets_full_schema_and_version_record(tmp_path) -> N
         assert "idx_chat_messages_group_created" in indexes
         assert "idx_chat_summaries_group" in indexes
         assert "idx_user_preferences_group_user" in indexes
-        assert await _applied_versions(connection) == [1, 2]
+        assert await _applied_versions(connection) == [1, 2, 3]
     finally:
         await connection.close()
 
@@ -93,7 +93,7 @@ async def test_legacy_current_schema_database_is_adopted_without_data_loss(
         cursor = await connection.execute("SELECT COUNT(*) FROM chat_messages")
         row = await cursor.fetchone()
         assert int(row[0]) == 1
-        assert await _applied_versions(connection) == [1, 2]
+        assert await _applied_versions(connection) == [1, 2, 3]
         tables = await _tables(connection)
         assert "chat_summaries" in tables
         assert "user_preferences" in tables
@@ -124,7 +124,7 @@ async def test_version_one_database_upgrades_to_two_without_data_loss(tmp_path) 
     connection = await _open_connection(path)
     try:
         await apply_migrations(connection)
-        assert await _applied_versions(connection) == [1, 2]
+        assert await _applied_versions(connection) == [1, 2, 3]
         cursor = await connection.execute(
             "SELECT message_text, ai_reply FROM chat_messages WHERE id = 1"
         )
@@ -144,10 +144,10 @@ async def test_rerunning_migrations_is_idempotent(tmp_path) -> None:
     try:
         await apply_migrations(connection)
         await apply_migrations(connection)
-        assert await _applied_versions(connection) == [1, 2]
+        assert await _applied_versions(connection) == [1, 2, 3]
         cursor = await connection.execute("SELECT COUNT(*) FROM schema_migrations")
         row = await cursor.fetchone()
-        assert int(row[0]) == 2
+        assert int(row[0]) == 3
     finally:
         await connection.close()
 

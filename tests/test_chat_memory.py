@@ -32,7 +32,7 @@ async def test_open_runs_migrations_and_enables_foreign_keys(tmp_path) -> None:
             "SELECT version FROM schema_migrations ORDER BY version"
         )
         versions = [int(row[0]) for row in await cursor.fetchall()]
-        assert versions == [1, 2]
+        assert versions == [1, 2, 3]
     finally:
         await repo.close()
     assert not repo.is_open

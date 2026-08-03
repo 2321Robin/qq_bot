@@ -1284,6 +1284,10 @@ class FakeAgentRuntime:
             raise RuntimeStateError("not ready")
         return self._gateway
 
+    def get_quota_service(self):
+        """Quota disabled in this fake: admission always allowed."""
+        return None
+
 
 class FakeOrchestrator:
     def __init__(self, outcome: object, store: object | None = None):
@@ -1654,3 +1658,112 @@ async def test_agent_path_skips_legacy_search_assembly(
         await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 今天有什么新闻"))  # type: ignore[arg-type]
 
     assert str(exc_info.value.message) == ""
+
+
+@pytest.mark.asyncio
+async def test_ai_chat_quota_denial_blocks_model_call(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """S4-QUOTA-02: when the quota service denies admission the handler sends
+    the stable denial text and never calls the model."""
+    from qq_bot.services.chat_memory import ChatMemoryRepository
+    from qq_bot.services.quota import QuotaService
+
+    repository = ChatMemoryRepository(tmp_path / "quota.sqlite3", retention_days=30)
+    await repository.open()
+    try:
+        service = QuotaService(
+            BotSettings(
+                allowed_group_ids="1001",
+                ai_api_key="secret",
+                quota_rate_limit_per_minute=1,
+            ),
+            repository,
+        )
+        # consume the single allowed slot for this scope
+        assert (await service.check_admission(scope_type="group", scope_id=1001)).allowed
+
+        calls: list[str] = []
+
+        async def unexpected_reply(**kwargs) -> str:
+            calls.append("model")
+            return "不应到达模型"
+
+        async def fake_finish(message: object) -> None:
+            raise FinishCalled(message)
+
+        monkeypatch.setattr(
+            ai_chat_plugin,
+            "get_settings",
+            lambda: BotSettings(
+                allowed_group_ids="1001",
+                ai_api_key="secret",
+                quota_rate_limit_per_minute=1,
+            ),
+        )
+        monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
+        _patch_agent_runtime(monkeypatch, _QuotaRuntime(service))
+        monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", unexpected_reply)
+        monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+        with pytest.raises(FinishCalled) as exc_info:
+            await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 你好"))  # type: ignore[arg-type]
+
+        assert calls == []
+        assert str(exc_info.value.message).strip() == "提问太频繁了，请稍后再试。"
+    finally:
+        await repository.close()
+
+
+@pytest.mark.asyncio
+async def test_ai_chat_quota_scope_binds_around_model_call(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """S4-QUOTA-03/04: while the model call runs, the quota scope is bound so
+    usage accounting can attach the group without re-parsing the event."""
+    from qq_bot.services.chat_memory import ChatMemoryRepository
+    from qq_bot.services.quota import QuotaService, active_quota_scope
+
+    repository = ChatMemoryRepository(tmp_path / "quota2.sqlite3", retention_days=30)
+    await repository.open()
+    try:
+        service = QuotaService(
+            BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+            repository,
+        )
+        seen: list[tuple[str, int] | None] = []
+
+        async def spy_reply(prompt: str, **kwargs) -> str:
+            seen.append(active_quota_scope())
+            return "配额内回复"
+
+        async def fake_finish(message: object) -> None:
+            raise FinishCalled(message)
+
+        monkeypatch.setattr(
+            ai_chat_plugin,
+            "get_settings",
+            lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+        )
+        monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
+        _patch_agent_runtime(monkeypatch, _QuotaRuntime(service))
+        monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", spy_reply)
+        monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+        with pytest.raises(FinishCalled) as exc_info:
+            await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 你好"))  # type: ignore[arg-type]
+
+        assert seen == [("group", 1001)]
+        assert str(exc_info.value.message).strip() == "配额内回复"
+    finally:
+        await repository.close()
+
+
+class _QuotaRuntime:
+    def __init__(self, service: object):
+        self._service = service
+
+    def get_quota_service(self):
+        return self._service
