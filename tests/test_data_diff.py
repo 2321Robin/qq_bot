@@ -143,6 +143,63 @@ def test_compute_diff_edge_condition_change_goes_to_confirmation(tmp_path: Path)
     assert "测试宠物A → 测试宠物B" in render_markdown(diff)
 
 
+def _rewrite_condition(
+    new_dir: Path, filename: str, field: str, index: int, condition: str
+) -> None:
+    """Rewrite one evolution edge's condition in a copied fixture file."""
+    detail = json.loads((new_dir / filename).read_text(encoding="utf-8"))
+    detail["evolution"][field][index]["condition"] = condition
+    (new_dir / filename).write_text(
+        json.dumps(detail, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def test_compute_diff_cross_file_duplicate_edge_deduped(tmp_path: Path) -> None:
+    """Same edge declared in two files (101.to and 102.from) appears once."""
+    new_dir = tmp_path / "new"
+    snapshot_dir = tmp_path / "previous_files"
+    _copy_fixtures(new_dir)
+    _copy_fixtures(snapshot_dir)
+
+    _rewrite_condition(new_dir, "101-测试宠物A.json", "to", 0, "等级达到50级")
+    _rewrite_condition(new_dir, "102-测试宠物B.json", "from", 0, "等级达到50级")
+
+    validated = _validated(new_dir)
+    current = _build(new_dir, _previous())
+    diff = compute_diff(_previous(), current, validated, previous_files_dir=snapshot_dir)
+
+    edge = "测试宠物A → 测试宠物B（等级达到50级）"
+    assert diff.forms.modified == ["101-测试宠物A.json", "102-测试宠物B.json"]
+    # Both files report the same modified edge; the confirmation list dedupes.
+    assert diff.evolution.modified_edges == [edge, edge]
+    assert diff.evolution.needs_confirmation == [edge]
+    assert diff.evolution.needs_confirmation.count(edge) == 1
+    assert render_markdown(diff).count(f"- {edge}") == 1
+
+
+def test_compute_diff_dedup_keeps_first_seen_order(tmp_path: Path) -> None:
+    """Dedup keeps the order of first appearance across files."""
+    new_dir = tmp_path / "new"
+    snapshot_dir = tmp_path / "previous_files"
+    _copy_fixtures(new_dir)
+    _copy_fixtures(snapshot_dir)
+
+    _rewrite_condition(new_dir, "101-测试宠物A.json", "to", 0, "等级达到50级")
+    _rewrite_condition(new_dir, "102-测试宠物B.json", "from", 0, "等级达到50级")
+    _rewrite_condition(new_dir, "102-测试宠物B.json", "to", 0, "等级达到70级")
+    _rewrite_condition(new_dir, "103-测试宠物C.json", "from", 0, "等级达到70级")
+
+    validated = _validated(new_dir)
+    current = _build(new_dir, _previous())
+    diff = compute_diff(_previous(), current, validated, previous_files_dir=snapshot_dir)
+
+    first = "测试宠物A → 测试宠物B（等级达到50级）"
+    second = "测试宠物B → 测试宠物C（等级达到70级）"
+    # Raw modified list: first, first(dup), second, second(dup); deduped: first, second.
+    assert diff.evolution.modified_edges == [first, first, second, second]
+    assert diff.evolution.needs_confirmation == [first, second]
+
+
 def test_compute_diff_no_previous_all_added(tmp_path: Path) -> None:
     new_dir = tmp_path / "new"
     _copy_fixtures(new_dir)

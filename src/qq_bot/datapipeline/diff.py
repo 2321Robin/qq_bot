@@ -252,7 +252,11 @@ def compute_diff(
             evolution.added_edges.extend(added_edges)
             evolution.modified_edges.extend(modified_edges)
             evolution.removed_edges.extend(removed_edges)
-    evolution.needs_confirmation = [*evolution.added_edges, *evolution.modified_edges]
+    # Cross-file extend can add the same edge twice (S3-DIFF-04 set semantics
+    # already imply uniqueness); dedupe while keeping first-seen order.
+    evolution.needs_confirmation = list(
+        dict.fromkeys([*evolution.added_edges, *evolution.modified_edges])
+    )
 
     new_numbers = _numbers_of(validated)
     old_number_set = _old_numbers(previous) if previous is not None else set()
