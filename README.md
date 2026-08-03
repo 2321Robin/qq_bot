@@ -1,5 +1,7 @@
 # QQ Group Bot
 
+[![CI](https://github.com/2321Robin/qq_bot/actions/workflows/ci.yml/badge.svg)](https://github.com/2321Robin/qq_bot/actions/workflows/ci.yml)
+
 一个基于 NoneBot2、OneBot v11 和 NapCatQQ 的 QQ 群机器人项目。
 
 项目当前支持基础群命令、《洛克王国：世界》精灵与技能查询、AI 群聊对话、
@@ -13,63 +15,72 @@
 
 > 截图暂未公开。将本仓库部署到 QQ 群后，向机器人发送 `/help`、`/精灵 迪莫` 等命令即可查看实际效果。
 
+计划收录（部署并完成脱敏核对后更新，见 `docs/public-release/screenshot-redaction-checklist.md`）：
+
+| 截图 | 内容 | 状态 |
+|---|---|---|
+| `docs/assets/screenshots/01-help-command.png` | `/help` 帮助命令 | 待用户提供 |
+| `docs/assets/screenshots/02-pet-card.png` | `/精灵` 图卡 | 待用户提供 |
+| `docs/assets/screenshots/03-grounded-ai-answer.png` | AI 回答（含引用来源） | 待用户提供 |
+
 ## 系统架构
+
+三条独立链路：**消息对话**（QQ ↔ 机器人）、**数据生产**（BWiki → 校验 → 分发）与**观测归档**（日志/指标/链路 → 报告）。
 
 ```mermaid
 flowchart LR
-    User[QQ 群用户] --> QQ[QQ / NapCatQQ]
-    QQ -->|OneBot v11<br/>反向 WebSocket| NB[NoneBot2 事件层]
-
-    subgraph Plugins[插件层]
-        Command[基础命令插件]
-        Roco[精灵与技能插件]
-        AI[AI 对话插件]
-        Scheduler[定时任务插件]
+    subgraph P1[链路一：消息对话]
+        User[QQ 群用户] --> NapCat[NapCatQQ]
+        NapCat -->|OneBot v11<br/>反向 WebSocket| NB[NoneBot2 事件层]
+        NB --> Cmd[commands / roco / scheduler]
+        NB --> Mem[memory_commands 记忆命令]
+        NB --> Ops[ops 配额 / 最近故障]
+        NB --> AI[ai_chat 编排<br/>request_id / 配额准入]
+        AI --> Quota[quota 限流 + 费用预算]
+        AI -->|AGENT_ENABLED=true| Agent[Agent 层<br/>router 四类 route / orchestrator<br/>5 个 Tool / 证据校验 / Token 预算]
+        Agent --> KB[roco_knowledge 知识增强]
+        Agent --> MemSvc[layered_memory 近期/摘要/偏好]
+        Agent --> Src[search Tavily]
+        Agent --> LLM[ai_client 主备模型]
+        AI -.AGENT_ENABLED=false.-> KB
+        AI -.旧链路.-> MemSvc
+        AI -.旧链路.-> Src
+        AI -.旧链路.-> LLM
+        KB --> Details[(roco_pet_details<br/>618 份 JSON)]
+        KB --> Index[(roco_search.sqlite3<br/>n-gram 倒排)]
+        MemSvc --> SQLite[(chat_memory.sqlite3<br/>migration 1-3 + quota)]
+        Quota --> SQLite
+        Src --> Tavily[Tavily API]
+        LLM --> Primary[主模型 API]
+        LLM -.故障转移.-> Fallback[备用模型 API]
+        AI --> Send[onebot_send 分类重试]
+        Send --> NapCat
+        Send --> Cards[(预生成图卡 PNG)]
     end
 
-    NB --> Command
-    NB --> Roco
-    NB --> AI
-    Scheduler --> NB
-
-    subgraph Services[服务层]
-        Config[配置与群权限]
-        Pet[精灵 / 技能查询]
-        Knowledge[本地知识上下文]
-        Memory[群聊记忆]
-        Search[联网搜索]
-        LLM[主备模型客户端]
-        Sender[消息发送与重试]
-        Card[图卡定位与生成]
+    subgraph P2[链路二：数据生产]
+        Wiki[BWiki 源] --> Fetch[fetch_roco_pet_detail 增量抓取]
+        Fetch --> Refresh[refresh_roco_data<br/>校验 / 隔离 / 质量门禁 / manifest<br/>差异报告 / 图卡增量 / 搜索索引]
+        Refresh --> Package[package_roco_data<br/>tar.gz + sha256SUMS]
+        Package --> Carrier[私有载体<br/>对象存储私有桶]
+        Carrier --> Download[download_roco_data<br/>哈希校验 + 原子落盘]
+        Download --> Details
     end
 
-    Command --> Config
-    Roco --> Config
-    Roco --> Pet
-    Roco --> Card
-    AI --> Config
-    AI --> Memory
-    AI --> Knowledge
-    AI --> Search
-    AI --> LLM
-    Command --> Sender
-    Roco --> Sender
-    AI --> Sender
-    Scheduler --> Sender
-
-    subgraph Data[本地数据]
-        SQLite[(SQLite<br/>群聊短期记忆)]
-        JSON[(JSON<br/>精灵与技能详情)]
-        Images[(PNG<br/>素材与预生成图卡)]
+    subgraph P3[链路三：观测归档]
+        Events[运行时事件] --> Log[结构化日志<br/>JSON 白名单 / 哈希 ID]
+        Events --> Met[Prometheus 指标<br/>/metrics 同端口]
+        Events --> Trc[OTel 语义 span<br/>六阶段 trace_id]
+        Log -.同源.-> Met
+        Trc -.同 request_id.-> Log
+        Health[health 插件<br/>/healthz /readyz] --> Checks[逐项 checks<br/>database / data_version / onebot]
+        Met --> Collect[collect_run_metrics.py<br/>聚合 + 哈希维度]
+        Collect --> Rep[(data/reports<br/>metrics-*.json + metrics-state.json)]
     end
 
-    Memory --> SQLite
-    Pet --> JSON
-    Knowledge --> JSON
-    Card --> Images
-    Search --> Tavily[Tavily API]
-    LLM --> Primary[主模型 API]
-    LLM -.故障转移.-> Fallback[备用模型 API]
+    Refresh -.门禁失败不发布.-> Fetch
+    Quota -.写入.-> Log
+    Met -.采集.-> Collect
 ```
 
 ## 功能
@@ -243,7 +254,7 @@ ws://127.0.0.1:8081/onebot/v11/ws
 .\\venv\Scripts\python -m pytest --cov=qq_bot --cov-branch --cov-report=term-missing
 ```
 
-当前自动化测试 **873 个**，Ruff 静态检查通过；分支覆盖率门槛 `fail_under` 由首次实测基线设定（当前 82%，见 `pyproject.toml`），未经明确评审不得下调。
+当前自动化测试 **889 个**（2026-08-03 硬化收尾后实测），Ruff 静态检查通过；分支覆盖率门槛 `fail_under` 由首次实测基线设定（当前 82%，见 `pyproject.toml`），未经明确评审不得下调。
 
 开发前建议启用 pre-commit（含 ruff 与 Gitleaks 秘密扫描）：
 
@@ -265,6 +276,17 @@ ws://127.0.0.1:8081/onebot/v11/ws
 ```
 
 Live 报告写入 `evals/reports/live-<split>.json`（已 gitignore，不随仓库分发；结构见 `evals/reports/live-report.template.json`）。报告包含 dataset/model/日期/样本数/失败数与估算边界，且不包含 API Key、完整私有 prompt、原始聊天或 Provider header。最新脱敏报告由部署者在本地运行后自行归档——**仓库不宣称任何评测目标已达到**；质量门槛（tool selection ≥ 90%、事实正确率 ≥ 85%、citation provenance = 100%、refusal recall ≥ 90%、编造率 ≤ 5%）未达标时报告如实呈现并返回非零退出码。
+
+### 评测结果
+
+| 模式 | 数据集 | 样本 | 路由准确率 | 工具选择精确匹配 | 事实准确率 | 拒答召回 | 编造失败 | 失败数 | 成本 |
+|---|---|---|---|---|---|---|---|---|---|
+| 离线（冻结 test split，无网络） | `roco_agent_v1.jsonl`（manifest 哈希门禁） | 84 | 100% | 100% | 100% | 100% | 0 | 0 | 未发生调用 |
+| live（glm-4-flash，2026-08-03） | 同上 | 84 | 29.8%（Agent） | 23.8% | 54.8%（Agent）/ 53.6%（legacy） | 0%（Agent）/ 11.8%（legacy） | 0（两种模式均无编造失败用例） | 316（Agent）/ 348（legacy） | 0 元（免费模型，`usage` 未上报） |
+
+- 离线行：确定性链路全部指标 100%（`code_revision ae23cf2`，2026-08-01）；当前 HEAD 的离线重跑在 CI 每次 push 强制执行，报告不落库。
+- live 行：**门禁未达标**（`EVAL_EXIT=1`，失败项：tool_selection ≥ 90%、fact_accuracy ≥ 85%、refusal_recall ≥ 90%；citation_provenance = 100% 与 fabrication ≤ 5% 通过），如实记录；`code_revision 8de439e`、`dataset_hash 49246021…`、provider `glm-4-flash`（免费）。人工复核表（45 条失败样本）待部署者填写后归档：`evals/reports/live-human-review-20260803-050122.md`。
+- 成本按 `evals/pricing.json` 计价；免费模型且 usage 未上报时标记 `unknown`，不填推测数字。
 
 `evals/pricing.json` 为可选价格表（参考 `evals/pricing.example.json`）；缺失或模型不在表中时，成本标记 `estimated`/`unknown`，不填入推测数字。
 
@@ -328,6 +350,21 @@ docker compose up -d --build
 报告写入 `data/reports/loadtest-<时间戳>.{json,md}`（Pydantic 固定 schema：五类场景 `local_knowledge/web_search/chat_memory/direct_chat/mixed` 的请求数、成功/失败、端到端 P50/P95、吞吐量、分阶段 P50/P95、环境摘要、结论与免责声明）。报告头部声明合成负载，不代表真实线上延迟/SLO。
 
 **容量结论：当前规模（单实例、本地 SQLite、无跨进程状态）不引入 PostgreSQL/Redis。** 触发重新评估的条件（写入报告）：端到端 P95 超过目标（默认 5s，可配置）且瓶颈定位为 SQLite 写入竞争；出现多实例/多进程部署需求；出现跨进程共享限流状态需求。
+
+### 运行指标采集
+
+```powershell
+# 从运行实例抓取 /metrics + 聚合 chat_memory.sqlite3，落盘 data/reports/metrics-<日期>.json
+.\venv\Scripts\python scripts\collect_run_metrics.py
+# 只打印不落盘（--no-write 也不写 metrics-state.json）
+.\venv\Scripts\python scripts\collect_run_metrics.py --no-write
+# 读最近导出的 metrics 文本（实例已停止时）
+.\venv\Scripts\python scripts\collect_run_metrics.py --metrics-file metrics.txt
+```
+
+采集输出（Pydantic 固定 schema，`schema_version=1`）：运行天数（自 `metrics-state.json` 的 `first_seen` 累计）、群数/用户数/消息量（只输出计数与 sha256 哈希维度，不落原始号）、AI 请求量与端到端 P50/P95（直方图观测）、命令分布、主备切换/重试/错误、搜索触发（无结果率无对应指标，如实标 `not_observed`）、Token 与成本、配额命中（`qq_bot_quota_denied_total` + `quota_usage`/`quota_events` 聚合）。无观测字段一律标 `not_observed`，禁止填 0 冒充。
+
+> **诚实验收边界：** 采集通道可用 + 首采落盘即满足本项验收；「运行 N 天后的数值」属持续采集产物，不承诺当天可得。首采于 2026-08-03 对副本运行实例完成（`data/reports/metrics-20260803.json`，`uptime_days=0`）。
 
 ## 公开发布门禁
 

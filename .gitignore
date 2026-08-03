@@ -55,7 +55,7 @@ startup.local.ps1
 gitleaks-report/
 
 # Project resume guide (contains personal project context)
-PROJECT_RESUME_GUIDE.md
+2026-07-29-PROJECT_RESUME_GUIDE.md
 
 # Git bundle / backup
 *.bundle
@@ -65,3 +65,6 @@ evals/pricing.json
 evals/private/
 evals/reports/*
 !evals/reports/live-report.template.json
+
+# Local live-eval run configuration (contains provider keys, never committed)
+evals/live-run/
