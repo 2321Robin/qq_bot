@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -8,6 +9,10 @@ import httpx
 
 from qq_bot.agent.models import NormalizedResponse, ProviderCapabilities, ToolCall
 from qq_bot.config import BotSettings, get_settings
+from qq_bot.observability import metrics, record_error
+from qq_bot.observability.cost import Usage, estimate_cost, load_price_table
+from qq_bot.observability.logging import current_request_id, get_logger
+from qq_bot.observability.tracing import get_tracer
 from qq_bot.runtime import BREAKER_AI_FALLBACK, BREAKER_AI_PRIMARY, RuntimeStateError, get_runtime
 from qq_bot.services.reliability import (
     CircuitBreaker,
@@ -20,6 +25,41 @@ from qq_bot.services.reliability import (
 )
 
 _WEEKDAY_NAMES = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
+
+_price_table: dict[str, object] | None = None
+
+logger = get_logger("qq_bot.ai_client")
+
+
+def _account_usage(model: str, usage: dict[str, int] | None) -> None:
+    """Record provider-reported tokens and priced cost (S4-METRIC-07,
+    S2-TOKEN-03). No usage -> nothing recorded; prices come from the local
+    table and are never guessed (unknown/estimated stays honest). The active
+    quota scope (bound by ai_chat) receives the same normalized usage/cost
+    — no second parse (S4-QUOTA-03/04)."""
+    global _price_table
+    if not usage:
+        return
+    prompt = usage.get("prompt_tokens") or 0
+    completion = usage.get("completion_tokens") or 0
+    if prompt:
+        metrics.TOKENS.labels("prompt", model, "false").inc(prompt)
+    if completion:
+        metrics.TOKENS.labels("completion", model, "false").inc(completion)
+    if _price_table is None:
+        _price_table = load_price_table()
+    estimate = estimate_cost(
+        [
+            Usage(
+                prompt_tokens=prompt or None,
+                completion_tokens=completion or None,
+                model_id=model,
+            )
+        ],
+        _price_table,
+    )
+    if estimate.cost is not None:
+        metrics.COST_USD.labels(model, estimate.status).inc(estimate.cost)
 
 
 class AIReplyError(RuntimeError):
@@ -167,6 +207,7 @@ async def request_ai_reply(
     except AIReplyError:
         if not active_settings.has_ai_fallback_config():
             raise
+        metrics.FALLBACKS.labels("ai").inc()
         return await _call_provider(
             prompt,
             settings=active_settings,
@@ -213,6 +254,7 @@ async def _call_provider(
         breaker_name=breaker_name,
     )
     normalized = _normalize_response(data)
+    _account_usage(model, normalized.usage)
     if normalized.text is None:
         raise AIReplyError("AI API returned an empty response")
     return normalized.text
@@ -231,9 +273,15 @@ async def _post_chat_completion(
     """POST one chat completion under the stage-1 retry policy and breaker.
     Returns the parsed JSON body; content extraction is the caller's job."""
     breaker = _breaker_for(breaker_name)
+    provider = "primary" if breaker_name == BREAKER_AI_PRIMARY else "fallback"
+    tracer = get_tracer()
+    span = tracer.start_span("model.call", trace_id=current_request_id(), provider=provider)
+    started_at = time.perf_counter()
     try:
         await breaker.check()
     except CircuitOpenError:
+        metrics.AI_REQUESTS.labels(provider, "circuit_open").inc()
+        tracer.end_span(span, status="error")
         raise AIReplyError("AI provider is temporarily unavailable") from None
 
     policy = build_retry_policy(
@@ -245,6 +293,8 @@ async def _post_chat_completion(
     try:
         async for attempt in policy:
             with attempt:
+                if attempt.retry_state.attempt_number >= 2:
+                    metrics.RETRIES.labels("ai").inc()
                 try:
                     data = await _post_once(
                         payload,
@@ -262,9 +312,17 @@ async def _post_chat_completion(
                     await breaker.on_failure(classify_exception(exc))
                     raise
                 await breaker.on_success()
+                metrics.AI_DURATION.labels(provider).observe(time.perf_counter() - started_at)
+                result = "retried" if attempt.retry_state.attempt_number >= 2 else "ok"
+                metrics.AI_REQUESTS.labels(provider, result).inc()
+                tracer.end_span(span)
                 return data
     except (TransientDependencyError, PermanentDependencyError) as exc:
+        record_error("ai", classify_exception(exc).category.value)
+        metrics.AI_REQUESTS.labels(provider, "error").inc()
+        tracer.end_span(span, status="error", category=classify_exception(exc).category.value)
         raise AIReplyError("AI API request failed") from exc
+    tracer.end_span(span, status="error")
     raise AIReplyError("AI API request failed")
 
 
@@ -429,9 +487,11 @@ async def request_model_turn(
             model=active_settings.ai_model,
             breaker_name=BREAKER_AI_PRIMARY,
         )
+        model = active_settings.ai_model
     except AIReplyError:
         if provider != "primary" or not active_settings.has_ai_fallback_config():
             raise
+        metrics.FALLBACKS.labels("ai").inc()
         data = await _post_chat_completion(
             payload,
             settings=active_settings,
@@ -441,7 +501,10 @@ async def request_model_turn(
             model=active_settings.ai_fallback_model,
             breaker_name=BREAKER_AI_FALLBACK,
         )
-    return _normalize_response(data)
+        model = active_settings.ai_fallback_model
+    normalized = _normalize_response(data)
+    _account_usage(model, normalized.usage)
+    return normalized
 
 
 class AiModelGateway:

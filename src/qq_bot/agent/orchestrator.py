@@ -42,6 +42,9 @@ from qq_bot.agent.models import (
 )
 from qq_bot.agent.registry import ToolContext, ToolRegistry
 from qq_bot.config import BotSettings
+from qq_bot.observability import metrics
+from qq_bot.observability.logging import current_request_id
+from qq_bot.observability.tracing import get_tracer
 from qq_bot.services.layered_memory import LayeredMemoryService
 
 logger = logging.getLogger("qq_bot.agent.orchestrator")
@@ -298,6 +301,25 @@ class AgentOrchestrator:
         return recent_texts, summary_texts, preference_text, block
 
     async def run(self, request: AgentRequest) -> GroundedAnswer | SafeFailure:
+        """Run the agent loop and record the outcome (S4-METRIC-08).
+
+        Pure additive observation: the recorded label never changes control
+        flow, and the loop body is untouched. The ``agent.loop`` span is a
+        sibling observation (S4-TRACE-01); failure status uses the stable
+        failure code, never exception details.
+        """
+        tracer = get_tracer()
+        span = tracer.start_span("agent.loop", trace_id=current_request_id())
+        outcome = await self._run_agent_loop(request)
+        code = outcome.code.value if isinstance(outcome, SafeFailure) else "ok"
+        metrics.AGENT_OUTCOMES.labels(code).inc()
+        if isinstance(outcome, SafeFailure):
+            tracer.end_span(span, status="error", category=code)
+        else:
+            tracer.end_span(span)
+        return outcome
+
+    async def _run_agent_loop(self, request: AgentRequest) -> GroundedAnswer | SafeFailure:
         """Run the agent loop. Every limit check happens before the step it
         guards; failures never recurse and never leak draft content."""
         self._call_log = []

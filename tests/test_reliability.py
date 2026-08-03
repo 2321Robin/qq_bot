@@ -392,3 +392,66 @@ def test_log_reliability_event_contains_only_sanitized_fields(caplog) -> None:
     assert "error_category=ambiguous_timeout" in message
     assert "delay_seconds=0.5" in message
     assert "circuit_state=closed" in message
+
+
+@pytest.mark.asyncio
+async def test_breaker_state_change_callback_fires_on_each_transition() -> None:
+    transitions: list[tuple[CircuitState, CircuitState]] = []
+    clock = [0.0]
+    breaker = CircuitBreaker(
+        name="dep",
+        failure_threshold=2,
+        recovery_seconds=10,
+        clock=_clock_source(clock),  # type: ignore[arg-type]
+        on_state_change=lambda old, new: transitions.append((old, new)),
+    )
+
+    await breaker.on_failure(TRANSIENT)  # below threshold: no transition
+    assert transitions == []
+
+    await breaker.on_failure(TRANSIENT)  # threshold reached: closed -> open
+    assert transitions == [(CircuitState.CLOSED, CircuitState.OPEN)]
+
+    clock[0] = 100.0
+    await breaker.check()  # recovery elapsed: open -> half_open
+    assert transitions == [
+        (CircuitState.CLOSED, CircuitState.OPEN),
+        (CircuitState.OPEN, CircuitState.HALF_OPEN),
+    ]
+
+    await breaker.on_success()  # probe passed: half_open -> closed
+    assert transitions == [
+        (CircuitState.CLOSED, CircuitState.OPEN),
+        (CircuitState.OPEN, CircuitState.HALF_OPEN),
+        (CircuitState.HALF_OPEN, CircuitState.CLOSED),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_breaker_state_change_callback_exception_does_not_propagate() -> None:
+    def _boom(_old: CircuitState, _new: CircuitState) -> None:
+        raise RuntimeError("callback boom")
+
+    breaker = CircuitBreaker(
+        name="dep",
+        failure_threshold=1,
+        recovery_seconds=10,
+        on_state_change=_boom,
+    )
+    # The callback failure must not break the breaker call chain.
+    await breaker.on_failure(TRANSIENT)
+    assert breaker.state is CircuitState.OPEN
+    clock = [0.0]
+    breaker = CircuitBreaker(
+        name="dep2",
+        failure_threshold=1,
+        recovery_seconds=10,
+        clock=_clock_source(clock),  # type: ignore[arg-type]
+        on_state_change=_boom,
+    )
+    await breaker.on_failure(TRANSIENT)
+    clock[0] = 100.0
+    await breaker.check()
+    assert breaker.state is CircuitState.HALF_OPEN
+    await breaker.on_success()
+    assert breaker.state is CircuitState.CLOSED

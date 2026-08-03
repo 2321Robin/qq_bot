@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
-from nonebot import logger
-
 from qq_bot.config import BotSettings
+from qq_bot.observability import metrics
+from qq_bot.observability.logging import get_logger, record_event
 from qq_bot.services.message_formatting import replace_named_mentions
 from qq_bot.services.onebot_send import (
     SendErrorCategory,
@@ -85,12 +86,20 @@ async def send_group_messages(
     failed_group_ids: list[int] = []
     formatted_message = replace_named_mentions(message, named_mention_replacements)
     active_breaker = breaker if breaker is not None else _onebot_breaker()
+    send_logger = get_logger("qq_bot.scheduled_sender")
 
     for group_id in group_ids:
         try:
             await active_breaker.check()
         except CircuitOpenError:
-            logger.warning("Scheduled message send skipped: OneBot circuit is open")
+            record_event(
+                send_logger,
+                logging.WARNING,
+                "scheduled_send_skipped_circuit_open",
+                message="Scheduled message send skipped: OneBot circuit is open",
+                circuit_state="open",
+            )
+            metrics.SCHEDULER_SENDS.labels("circuit_open").inc()
             failed_group_ids.append(group_id)
             continue
 
@@ -103,39 +112,70 @@ async def send_group_messages(
             random_source=random_source,
             retryable=_send_retryable,
         )
+        result = "error"
         try:
             async for attempt in policy:
                 with attempt:
+                    if attempt.retry_state.attempt_number >= 2:
+                        metrics.RETRIES.labels("send").inc()
                     try:
                         await bot.send_group_msg(group_id=group_id, message=formatted_message)
                     except Exception as exc:
                         classification = classify_send_error(exc)
                         await active_breaker.on_failure(_to_error_classification(classification))
                         if classification.category is SendErrorCategory.AMBIGUOUS_TIMEOUT:
-                            logger.warning(
-                                "Scheduled message send timed out and may not be visible in QQ "
-                                "(attempt {}/{})",
-                                attempt.retry_state.attempt_number,
-                                max_attempts,
+                            result = "ambiguous_timeout"
+                            record_event(
+                                send_logger,
+                                logging.WARNING,
+                                "scheduled_send_ambiguous_timeout",
+                                message=(
+                                    "Scheduled message send timed out and may not be "
+                                    f"visible in QQ (attempt {attempt.retry_state.attempt_number}/"
+                                    f"{max_attempts})"
+                                ),
+                                attempt=attempt.retry_state.attempt_number,
+                                max_attempts=max_attempts,
+                                category="ambiguous_timeout",
                             )
                         elif classification.category is SendErrorCategory.RETRYABLE:
-                            logger.warning(
-                                "Scheduled message send failed before acceptance; retrying "
-                                "(attempt {}/{})",
-                                attempt.retry_state.attempt_number,
-                                max_attempts,
+                            result = "retryable"
+                            record_event(
+                                send_logger,
+                                logging.WARNING,
+                                "scheduled_send_retrying",
+                                message=(
+                                    "Scheduled message send failed before acceptance; "
+                                    f"retrying (attempt {attempt.retry_state.attempt_number}/"
+                                    f"{max_attempts})"
+                                ),
+                                attempt=attempt.retry_state.attempt_number,
+                                max_attempts=max_attempts,
+                                category="retryable",
                             )
                         else:
-                            logger.warning(
-                                "Scheduled message send rejected (attempt {}/{}, category {})",
-                                attempt.retry_state.attempt_number,
-                                max_attempts,
-                                classification.category.value,
+                            result = "rejected"
+                            record_event(
+                                send_logger,
+                                logging.WARNING,
+                                "scheduled_send_rejected",
+                                message=(
+                                    "Scheduled message send rejected "
+                                    f"(attempt {attempt.retry_state.attempt_number}/"
+                                    f"{max_attempts}, category {classification.category.value})"
+                                ),
+                                attempt=attempt.retry_state.attempt_number,
+                                max_attempts=max_attempts,
+                                category=classification.category.value,
                             )
                         raise
                     await active_breaker.on_success()
+                    result = "retried" if attempt.retry_state.attempt_number >= 2 else "ok"
                     break
         except Exception:
+            pass
+        metrics.SCHEDULER_SENDS.labels(result).inc()
+        if result not in ("ok", "retried"):
             failed_group_ids.append(group_id)
     return failed_group_ids
 

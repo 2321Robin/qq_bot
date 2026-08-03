@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
 from qq_bot.config import BotSettings, get_settings
+from qq_bot.observability import metrics, record_error
+from qq_bot.observability.logging import current_request_id
+from qq_bot.observability.tracing import get_tracer
 from qq_bot.runtime import BREAKER_TAVILY, RuntimeStateError, get_runtime
 from qq_bot.services.ai_client import AsyncPostClient
 from qq_bot.services.reliability import (
@@ -83,9 +87,14 @@ async def search_web(
 
     active_client = _resolve_client(client, settings)
     breaker = _breaker_for(BREAKER_TAVILY)
+    tracer = get_tracer()
+    span = tracer.start_span("search.call", trace_id=current_request_id())
+    started_at = time.perf_counter()
     try:
         await breaker.check()
     except CircuitOpenError:
+        metrics.SEARCH_REQUESTS.labels("circuit_open").inc()
+        tracer.end_span(span, status="error")
         raise SearchError("Tavily search is temporarily unavailable") from None
 
     policy = build_retry_policy(
@@ -97,6 +106,8 @@ async def search_web(
     try:
         async for attempt in policy:
             with attempt:
+                if attempt.retry_state.attempt_number >= 2:
+                    metrics.RETRIES.labels("search").inc()
                 try:
                     results = await _search_once(query, settings=settings, client=active_client)
                 except SearchError:
@@ -106,9 +117,17 @@ async def search_web(
                     await breaker.on_failure(classify_exception(exc))
                     raise
                 await breaker.on_success()
+                metrics.SEARCH_DURATION.observe(time.perf_counter() - started_at)
+                result = "retried" if attempt.retry_state.attempt_number >= 2 else "ok"
+                metrics.SEARCH_REQUESTS.labels(result).inc()
+                tracer.end_span(span)
                 return results
     except (TransientDependencyError, PermanentDependencyError) as exc:
+        record_error("search", classify_exception(exc).category.value)
+        metrics.SEARCH_REQUESTS.labels("error").inc()
+        tracer.end_span(span, status="error", category=classify_exception(exc).category.value)
         raise SearchError("Tavily search request failed") from exc
+    tracer.end_span(span, status="error")
     raise SearchError("Tavily search request failed")
 
 

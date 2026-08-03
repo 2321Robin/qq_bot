@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import enum
+import logging
 from dataclasses import dataclass
 from typing import Any, NoReturn, Protocol
 
-from nonebot import logger
 from nonebot.adapters.onebot.v11.exception import ActionFailed, NetworkError
 from nonebot.exception import FinishedException
 
 from qq_bot.config import get_settings
+from qq_bot.observability import metrics, record_error
+from qq_bot.observability.logging import current_request_id, get_logger, record_event
+from qq_bot.observability.tracing import get_tracer
 from qq_bot.runtime import BREAKER_ONEBOT, RuntimeStateError, get_runtime
 from qq_bot.services.reliability import (
     CircuitBreaker,
@@ -127,10 +130,19 @@ async def finish_with_send_errors_logged(
     message: object,
     **kwargs: Any,
 ) -> NoReturn:
+    tracer = get_tracer()
+    span = tracer.start_span("qq.send", trace_id=current_request_id())
     try:
         await check_onebot_breaker()
     except CircuitOpenError as exc:
-        logger.warning("OneBot circuit is open; skipping interactive send")
+        tracer.end_span(span, status="error")
+        record_event(
+            get_logger("qq_bot.onebot_send"),
+            logging.WARNING,
+            "send_skipped_circuit_open",
+            message="OneBot circuit is open; skipping interactive send",
+            circuit_state="open",
+        )
         raise RuntimeError("QQ send skipped: OneBot circuit is open") from exc
 
     try:
@@ -138,17 +150,30 @@ async def finish_with_send_errors_logged(
     except FinishedException:
         # Normal matcher completion (NoneBot raises FinishedException); a
         # successful finish is not a retryable failure.
+        tracer.end_span(span)
+        metrics.SEND_RESULTS.labels("ok").inc()
         await record_send_success()
         raise
     except Exception as exc:
         classification = classify_send_error(exc)
         await record_send_failure(classification)
+        metrics.SEND_RESULTS.labels(classification.category.value).inc()
+        record_error("send", classification.category.value)
+        tracer.end_span(span, status="error", category=classification.category.value)
         if classification.category is SendErrorCategory.AMBIGUOUS_TIMEOUT:
-            logger.warning(f"Message send timed out and may not be visible in QQ: {exc!r}")
+            record_event(
+                get_logger("qq_bot.onebot_send"),
+                logging.WARNING,
+                "send_ambiguous_timeout",
+                message=(f"Message send timed out and may not be visible in QQ: {exc!r}"),
+                category="ambiguous_timeout",
+            )
         raise
 
     # The matcher protocol says finish never returns; reaching this line is a
     # contract violation of the fake/matcher, not a send failure.
+    tracer.end_span(span)
+    metrics.SEND_RESULTS.labels("ok").inc()
     await record_send_success()
     raise RuntimeError("matcher.finish returned unexpectedly")
 

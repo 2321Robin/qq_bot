@@ -12,8 +12,17 @@ import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 from urllib.parse import urlsplit
+
+from qq_bot.observability.cost import (  # noqa: F401  (re-exported for callers)
+    CostEstimate,
+    Price,
+    TokenSummary,
+    Usage,
+    estimate_cost,
+    token_summary,
+)
 
 _URL_RE = re.compile(r"https?://[^\s]+")
 _CONTROL_OR_SPACE = re.compile(r"[\x00-\x20\x7f]")
@@ -40,39 +49,6 @@ class CitationSample:
 class RefusalOutcome:
     refused: bool
     expected: bool
-
-
-@dataclass(frozen=True)
-class Usage:
-    prompt_tokens: int | None = None
-    completion_tokens: int | None = None
-    total_tokens: int | None = None
-    estimated: bool = False
-    model_id: str = ""
-
-
-@dataclass(frozen=True)
-class TokenSummary:
-    prompt_tokens: int | None
-    completion_tokens: int | None
-    total_tokens: int | None
-    estimated: bool
-    cases_with_usage: int
-    total_cases: int
-
-
-@dataclass(frozen=True)
-class Price:
-    input_per_1k: float | str
-    output_per_1k: float | str
-    currency: str = "USD"
-
-
-@dataclass(frozen=True)
-class CostEstimate:
-    cost: float | None
-    currency: str | None
-    status: Literal["actual", "estimated", "unknown"]
 
 
 def route_accuracy(decisions: Sequence[str], expected: Sequence[str]) -> float:
@@ -225,74 +201,6 @@ def latency_percentiles(
 def extract_urls(text: str) -> list[str]:
     """Extract candidate URLs from rendered answer text (S2-SEC-06)."""
     return _URL_RE.findall(text)
-
-
-def token_summary(usages: Sequence[Usage | None]) -> TokenSummary:
-    """Sum known token fields; any missing/estimated usage marks the summary
-    as estimated (S2-EVAL-12)."""
-    if not usages:
-        return TokenSummary(None, None, None, False, 0, 0)
-    known = [usage for usage in usages if usage is not None]
-    prompt = sum(usage.prompt_tokens for usage in known if usage.prompt_tokens is not None)
-    completion = sum(
-        usage.completion_tokens for usage in known if usage.completion_tokens is not None
-    )
-    total = sum(usage.total_tokens for usage in known if usage.total_tokens is not None)
-    with_usage = sum(usage.total_tokens is not None for usage in known)
-    estimated = with_usage < len(usages) or any(usage.estimated for usage in known)
-    return TokenSummary(
-        prompt_tokens=prompt if with_usage else None,
-        completion_tokens=completion if with_usage else None,
-        total_tokens=total if with_usage else None,
-        estimated=estimated,
-        cases_with_usage=with_usage,
-        total_cases=len(usages),
-    )
-
-
-def _price_value(value: float | str) -> float | None:
-    if isinstance(value, str):
-        return None
-    return float(value)
-
-
-def estimate_cost(usages: Sequence[Usage], prices: Mapping[str, Price]) -> CostEstimate:
-    """Estimate cost from actual usage and a local price table.
-
-    - no usages or no usable usage+price pair -> status ``unknown``, cost None;
-    - some pairs computable but any usage/price missing -> ``estimated`` with
-      the partial cost (never a guessed full number);
-    - every pair computable -> ``actual``.
-    """
-    if not usages:
-        return CostEstimate(None, None, "unknown")
-
-    total_cost = 0.0
-    computed_pairs = 0
-    all_known = True
-    currency: str | None = None
-    for usage in usages:
-        price = prices.get(usage.model_id)
-        if price is None:
-            all_known = False
-            continue
-        if usage.prompt_tokens is None or usage.completion_tokens is None:
-            all_known = False
-            continue
-        input_rate = _price_value(price.input_per_1k)
-        output_rate = _price_value(price.output_per_1k)
-        if input_rate is None or output_rate is None:
-            all_known = False
-            continue
-        total_cost += usage.prompt_tokens / 1000.0 * input_rate
-        total_cost += usage.completion_tokens / 1000.0 * output_rate
-        computed_pairs += 1
-        currency = currency or price.currency
-
-    if computed_pairs == 0:
-        return CostEstimate(None, currency, "unknown")
-    status: Literal["actual", "estimated", "unknown"] = "actual" if all_known else "estimated"
-    return CostEstimate(round(total_cost, 6), currency, status)
 
 
 @dataclass(frozen=True)

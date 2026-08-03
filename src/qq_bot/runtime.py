@@ -11,13 +11,15 @@ from __future__ import annotations
 
 import enum
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 import httpx
 
 from qq_bot.config import BotSettings, get_settings
+from qq_bot.observability import metrics, set_trace_enabled
+from qq_bot.observability.logging import get_logger, install_logging, record_event
 from qq_bot.services.chat_memory import ChatMemoryRepository
-from qq_bot.services.reliability import CircuitBreaker
+from qq_bot.services.reliability import CircuitBreaker, CircuitState
 
 if TYPE_CHECKING:
     from nonebot import Driver
@@ -40,6 +42,29 @@ _DEFAULT_BREAKER_NAMES = (
     BREAKER_TAVILY,
     BREAKER_ONEBOT,
 )
+
+
+def _breaker_state_callback(
+    name: str,
+) -> Callable[[CircuitState, CircuitState], None]:
+    """Breaker transition callback, registered once per breaker at startup
+    (S4-METRIC-03): maintains the state gauge, counts transitions and emits a
+    structured event. Never registered on a hot path."""
+    runtime_logger = get_logger("qq_bot.runtime")
+
+    def _on_state_change(old_state: CircuitState, new_state: CircuitState) -> None:
+        metrics.CIRCUIT_INFO.labels(name, old_state.value).set(0)
+        metrics.CIRCUIT_INFO.labels(name, new_state.value).set(1)
+        metrics.CIRCUIT_TRANSITIONS.labels(name, new_state.value).inc()
+        record_event(
+            runtime_logger,
+            logging.INFO,
+            "circuit_state_changed",
+            message=f"circuit {name}: {old_state.value} -> {new_state.value}",
+            circuit_state=new_state.value,
+        )
+
+    return _on_state_change
 
 
 class RuntimeState(enum.Enum):
@@ -81,6 +106,11 @@ class AppRuntime:
             raise RuntimeStateError(f"cannot start runtime from state {self._state.value}")
         self._state = RuntimeState.STARTING
         settings = self._settings or get_settings()
+        # Production hookup of the observability facade (S4-LOG-05,
+        # S4-METRIC-12): applied once at startup, before any message flows.
+        install_logging(log_format=settings.log_format, log_level=settings.log_level)
+        metrics.set_metrics_enabled(settings.metrics_enabled)
+        set_trace_enabled(settings.trace_enabled)
         http_client: httpx.AsyncClient | None = None
         repository: ChatMemoryRepository | None = None
         try:
@@ -95,9 +125,12 @@ class AppRuntime:
                     name=name,
                     failure_threshold=settings.breaker_failure_threshold,
                     recovery_seconds=settings.breaker_recovery_seconds,
+                    on_state_change=_breaker_state_callback(name),
                 )
                 for name in _DEFAULT_BREAKER_NAMES
             }
+            for name, breaker in self._breakers.items():
+                metrics.CIRCUIT_INFO.labels(name, breaker.state.value).set(1)
         except Exception:
             if repository is not None:
                 try:

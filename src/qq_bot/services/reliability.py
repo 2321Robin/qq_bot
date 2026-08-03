@@ -184,6 +184,7 @@ class CircuitBreaker:
         failure_threshold: int,
         recovery_seconds: float,
         clock: Callable[[], float] = time.monotonic,
+        on_state_change: Callable[[CircuitState, CircuitState], None] | None = None,
     ) -> None:
         if failure_threshold < 1:
             raise ValueError("failure_threshold must be a positive integer")
@@ -193,11 +194,24 @@ class CircuitBreaker:
         self.failure_threshold = failure_threshold
         self.recovery_seconds = recovery_seconds
         self._clock = clock
+        self.on_state_change = on_state_change
         self._lock = asyncio.Lock()
         self._state = CircuitState.CLOSED
         self._consecutive_failures = 0
         self._opened_at: float | None = None
         self._probe_in_flight = False
+
+    def _notify_state_change(self, old_state: CircuitState) -> None:
+        """Fire the optional state-change callback (S4-METRIC-03).
+
+        Callback failures never propagate into the breaker call chain.
+        """
+        if self.on_state_change is None:
+            return
+        try:
+            self.on_state_change(old_state, self._state)
+        except Exception:
+            logger.exception("circuit state change callback failed")
 
     @property
     def state(self) -> CircuitState:
@@ -213,8 +227,10 @@ class CircuitBreaker:
                 if self._opened_at is not None and (
                     self._clock() - self._opened_at >= self.recovery_seconds
                 ):
+                    old_state = self._state
                     self._state = CircuitState.HALF_OPEN
                     self._probe_in_flight = True
+                    self._notify_state_change(old_state)
                     return
                 raise CircuitOpenError(f"circuit {self.name} is open")
             # HALF_OPEN: only the admitted probe may pass.
@@ -225,8 +241,10 @@ class CircuitBreaker:
     async def on_success(self) -> None:
         async with self._lock:
             if self._state is CircuitState.HALF_OPEN:
+                old_state = self._state
                 self._state = CircuitState.CLOSED
                 self._probe_in_flight = False
+                self._notify_state_change(old_state)
             self._consecutive_failures = 0
 
     async def on_failure(self, classification: ErrorClassification) -> None:
@@ -234,16 +252,20 @@ class CircuitBreaker:
             return
         async with self._lock:
             if self._state is CircuitState.HALF_OPEN:
+                old_state = self._state
                 self._state = CircuitState.OPEN
                 self._opened_at = self._clock()
                 self._probe_in_flight = False
+                self._notify_state_change(old_state)
                 return
             if self._state is CircuitState.OPEN:
                 return
             self._consecutive_failures += 1
             if self._consecutive_failures >= self.failure_threshold:
+                old_state = self._state
                 self._state = CircuitState.OPEN
                 self._opened_at = self._clock()
+                self._notify_state_change(old_state)
 
 
 def log_reliability_event(
