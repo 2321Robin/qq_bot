@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import io
 import json
 import tarfile
 from pathlib import Path
 
+import pytest
+
 from scripts.download_roco_data import (
+    _extract_to,
     _swap_directory,
     download_roco_data,
     parse_sums,
@@ -231,3 +235,42 @@ def test_parse_sums_rejects_malformed(tmp_path: Path) -> None:
         pass
     else:
         raise AssertionError("malformed line must raise")
+
+
+def test_extract_without_data_filter_still_installs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """3.11.0-3.11.3 simulate absence of tarfile.data_filter: install still works."""
+    monkeypatch.delattr(tarfile, "data_filter", raising=False)
+    archive, dataset_hash, sums = _packed(tmp_path)
+    transport = _serve(tmp_path, archive, sums)
+    dest = tmp_path / "data"
+    code = download_roco_data(
+        "https://dist.example.invalid",
+        dataset_hash,
+        dest,
+        tmp_path / "cache",
+        fetch=transport,
+    )
+    assert code == 0
+    assert (dest / "roco_pet_details" / "101-测试宠物A.json").exists()
+    assert (dest / "manifests" / "latest.json").exists()
+
+
+def test_extract_without_data_filter_still_rejects_unsafe_members(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without data_filter the pre-check loop still refuses absolute/'..' members."""
+    monkeypatch.delattr(tarfile, "data_filter", raising=False)
+    archive = tmp_path / "unsafe.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        payload = b"evil"
+        info = tarfile.TarInfo("../evil.txt")
+        info.size = len(payload)
+        tar.addfile(info, io.BytesIO(payload))
+    try:
+        _extract_to(archive, tmp_path / "target")
+    except ValueError as exc:
+        assert "unsafe archive member" in str(exc)
+    else:
+        raise AssertionError("unsafe member must be rejected")

@@ -85,7 +85,13 @@ def _extract_to(archive: Path, target_dir: Path) -> None:
             name = member.name.replace("\\", "/")
             if name.startswith("/") or ".." in name.split("/"):
                 raise ValueError(f"unsafe archive member: {member.name}")
-        tar.extractall(target_dir, filter="data")
+        # filter="data" only exists on Python >=3.11.4/3.12; 3.11.0-3.11.3
+        # reject the keyword entirely, so omit it there (pre-check loop above
+        # already rejects absolute/".." members).
+        if hasattr(tarfile, "data_filter"):
+            tar.extractall(target_dir, filter="data")
+        else:
+            tar.extractall(target_dir)
 
 
 def _swap_directory(tmp: Path, dest: Path) -> None:
