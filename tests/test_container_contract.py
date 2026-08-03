@@ -124,3 +124,15 @@ def test_readyz_is_ok_without_private_data_or_onebot(tmp_path, monkeypatch) -> N
             await repository.close()
 
     asyncio.run(scenario())
+
+
+def test_metrics_uses_existing_port_no_new_expose() -> None:
+    """S4-METRIC-11: /metrics is served on the same port as /healthz; the
+    container must not open additional ports."""
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    exposes = re.findall(r"EXPOSE\s+(\S+)", dockerfile)
+    assert exposes == ["8081"], f"unexpected EXPOSE set: {exposes}"
+    compose = yaml.safe_load((ROOT / "compose.yaml").read_text(encoding="utf-8"))
+    ports = str(compose["services"]["backend"].get("ports", []))
+    assert "8081" in ports
+    assert "metrics" not in (ROOT / "compose.yaml").read_text(encoding="utf-8").lower()

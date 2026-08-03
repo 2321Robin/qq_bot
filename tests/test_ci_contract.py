@@ -312,3 +312,35 @@ def test_console_scripts_declared_for_pipeline() -> None:
         "build-roco-search-index",
     ):
         assert entry in text, f"pyproject missing console script {entry}"
+
+
+def test_observability_job_runs_offline_load_test_without_secrets() -> None:
+    """S4-LOAD-06 / S4-GATE-03: the observability job runs the synthetic load
+    test offline at a small fixed scale and asserts report structure only."""
+    job = _workflow()["jobs"]["observability"]
+    assert job.get("timeout-minutes")
+    runs = " ".join(step.get("run", "") for step in job["steps"])
+    assert "run_load_test.py --cases 20 --concurrency 4" in runs
+    assert "$RUNNER_TEMP/loadtest" in runs
+    # the schema assertion must not depend on numeric performance values
+    assert "e2e_p95_ms" in runs
+    assert "postgresql_recommended" in runs
+    lowered = " ".join(str(step).lower() for step in job["steps"])
+    for marker in ("api_key", "token", "secret", "password"):
+        assert marker not in lowered, f"observability job references secret {marker!r}"
+
+
+def test_quality_job_has_privacy_grep_gate() -> None:
+    """S4-GATE-04: no logger call may carry raw event.user_id/group_id."""
+    runs = " ".join(step.get("run", "") for step in _workflow()["jobs"]["quality"]["steps"])
+    assert r"event\.(user_id|group_id)" in runs
+    assert "src/qq_bot/" in runs
+
+
+def test_container_job_smokes_metrics_endpoint() -> None:
+    """S4-METRIC-11: /metrics lives on the same port as /healthz and must
+    expose qq_bot_messages_total."""
+    runs = " ".join(step.get("run", "") for step in _workflow()["jobs"]["container"]["steps"])
+    assert "curl -fsS http://127.0.0.1:8081/metrics" in runs
+    assert "qq_bot_messages_total" in runs
+    assert "8081:8081" in runs

@@ -84,6 +84,7 @@ flowchart LR
 | 联网搜索 | 含"今天""搜索"等词的提问 | 可选 Tavily 搜索增强 |
 | 定时消息 | 环境变量配置 | 按 Cron 时间向指定群发送消息 |
 | 命名提及 | `NAMED_MENTION_REPLACEMENTS` | 定时消息与 AI 回复中的 `@昵称` 替换为真正的 @提及（账号仅从配置读取，不写死在源码） |
+| 配额与预算（阶段 4） | `QUOTA_ENABLED` 等 | 按群滑动窗口限流与每日费用上限（`actual` 强制、`estimated/unknown` 只记录）；`/配额`、`/最近故障` 管理员命令（按 `ADMIN_USER_IDS` 鉴权） |
 
 ### AI 对话能力
 
@@ -242,7 +243,7 @@ ws://127.0.0.1:8081/onebot/v11/ws
 .\\venv\Scripts\python -m pytest --cov=qq_bot --cov-branch --cov-report=term-missing
 ```
 
-当前自动化测试 **777 个**，Ruff 静态检查通过；分支覆盖率门槛 `fail_under` 由首次实测基线设定（当前 82%，见 `pyproject.toml`），未经明确评审不得下调。
+当前自动化测试 **873 个**，Ruff 静态检查通过；分支覆盖率门槛 `fail_under` 由首次实测基线设定（当前 82%，见 `pyproject.toml`），未经明确评审不得下调。
 
 开发前建议启用 pre-commit（含 ruff 与 Gitleaks 秘密扫描）：
 
@@ -276,7 +277,8 @@ docker compose up -d --build
 ```
 
 - 数据目录 `data/` 挂载为命名卷 `qq-bot-data`，配置文件通过 `env_file` 注入（不存在时跳过，用环境变量或默认值）
-- 健康检查：`GET /healthz`（存活）与 `GET /readyz`（就绪，含 SQLite 迁移与依赖可用性），由镜像内 Python 标准库探测
+- 健康检查：`GET /healthz`（进程存活）与 `GET /readyz`（就绪，含 `checks` 逐项检查：`database` SQLite 探针 + schema 版本、`data_version` 阶段 3 manifest、`onebot` 连接状态），由镜像内 Python 标准库探测；`READYZ_REQUIRE_DATA`/`READYZ_REQUIRE_ONEBOT` 可配置哪些检查阻断就绪
+- 指标：`GET /metrics` 与健康端点同端口（默认 8081），Prometheus 文本格式；由外部 Prometheus **按需抓取** `http://<host>:8081/metrics`，仓库不内置采集服务，Docker/Compose 不新增端口
 - 查看状态：`docker compose ps`；日志：`docker compose logs -f backend`
 - 本机开发请改用上方“启动”一节的 `python bot.py`（NapCat 需在宿主机或同网络可访问）
 
@@ -286,6 +288,46 @@ docker compose up -d --build
 - **QQ 发送超时永不重试**：消息可能已被服务端接受，自动重发会导致重复；只有确证发送前失败的连接级错误（如 WebSocket 断开）才重试
 - **熔断**：连续瞬时故障达到 `BREAKER_FAILURE_THRESHOLD` 后熔断，恢复窗口后单次探测；熔断器只统计瞬时故障，业务拒绝不计入
 - 参数见 `.env.example` 的“可靠性”段
+
+## 可观测性（阶段 4）
+
+### 结构化日志
+
+`LOG_FORMAT=json` 时输出单行 JSON 日志，键集固定白名单（`ts/level/logger/event/message/request_id/group_hash/user_hash/provider/tool/duration_ms` 等）；每条消息有唯一 `request_id` 贯穿处理链，span 的 `trace_id` 等于该 `request_id`。群号/用户号在日志、指标、span 中一律以不可逆哈希（sha256 截断 16 位 hex）出现；消息正文、prompt 原文、API Key、草稿不进入任何观测产物。`LOG_LEVEL` 可配置。
+
+### 指标
+
+`GET /metrics` 暴露 Prometheus 文本指标（同端口，见 Docker 一节）：消息量 `qq_bot_messages_total{kind}`、命令量 `qq_bot_commands_total{command}`、错误率 `qq_bot_errors_total{component,category}`、AI/搜索延迟直方图、主备切换 `qq_bot_provider_fallback_total`、重试 `qq_bot_retry_total{dependency}`、Token 与估算成本（诚实标记 `actual/estimated/unknown`）、breaker 状态与转换、发送/Agent/路由结果、配额拒绝 `qq_bot_quota_denied_total{scope_type,reason}`、六阶段 span 耗时。`METRICS_ENABLED=false` 时端点 404 且埋点零开销。
+
+### 追踪
+
+每条 AI 消息产生 span 树（消息接收、记忆检索、知识工具、搜索、模型调用、QQ 发送六阶段；Agent 路径另有路由分类与 `agent.loop`），共享 `trace_id`，父子嵌套；span 只承载耗时与状态（失败带 `category`），路由决策内容继续由阶段 2 `RouteTrace` 承载。`TRACE_ENABLED=false` 时 span 为空操作。
+
+### 配额与预算
+
+- `QUOTA_ENABLED`（默认 true）开启入口层配额：按群滑动窗口 `QUOTA_RATE_LIMIT_PER_MINUTE` 次/分钟（0 = 关闭），每日费用上限全局 `QUOTA_DAILY_COST_LIMIT_USD` 与每群 `QUOTA_GROUP_DAILY_COST_LIMIT_USD`（0 = 关闭）。
+- 只有 Provider 返回的 `actual` 成本计入强制预算；`estimated`/`unknown` 只记录与展示，不拒绝调用。阶段 2 单请求上限（轮次/调用/截止/Token 预算）不变。
+- 计数与事件持久化于 SQLite（migration 3：`quota_usage`/`quota_events`），重启不丢失当日计数。
+- 超限时：返回稳定用户提示、不调用模型、递增 `qq_bot_quota_denied_total`、写入 `quota_events`；显式命令（`/help`、`/精灵`、`/技能` 等）不受限流影响。
+- 管理员命令 `/配额` 与 `/最近故障`（按 `ADMIN_USER_IDS` 鉴权，非管理员拒绝并记录）：查看每群当日请求数、Token 用量、已用费用与上限，以及最近故障（时间/类别/原因）。
+
+### 健康检查
+
+- `/healthz`：进程存活，不访问任何依赖。
+- `/readyz`：200 需同时满足 runtime 就绪、`database`（SQLite 探针 + schema 版本等于 `SUPPORTED_SCHEMA_VERSION`）、数据目录存在时 `data_version`（`data/manifests/latest.json` 可解析且 schema 受支持）、以及 `READYZ_REQUIRE_ONEBOT=true` 时的 OneBot 连接；响应体含逐项 `checks` 对象，无环境变量/路径/账号/群号。
+
+### 压测与容量决策
+
+```powershell
+# 离线合成压测（fake Provider + 假搜索 + 临时 SQLite + fixture 数据 + fake bot，不触网）
+.\venv\Scripts\python scripts\run_load_test.py --cases 100 --concurrency 4
+# 只打印不写报告
+.\venv\Scripts\python scripts\run_load_test.py --cases 20 --concurrency 4 --no-write
+```
+
+报告写入 `data/reports/loadtest-<时间戳>.{json,md}`（Pydantic 固定 schema：五类场景 `local_knowledge/web_search/chat_memory/direct_chat/mixed` 的请求数、成功/失败、端到端 P50/P95、吞吐量、分阶段 P50/P95、环境摘要、结论与免责声明）。报告头部声明合成负载，不代表真实线上延迟/SLO。
+
+**容量结论：当前规模（单实例、本地 SQLite、无跨进程状态）不引入 PostgreSQL/Redis。** 触发重新评估的条件（写入报告）：端到端 P95 超过目标（默认 5s，可配置）且瓶颈定位为 SQLite 写入竞争；出现多实例/多进程部署需求；出现跨进程共享限流状态需求。
 
 ## 公开发布门禁
 
@@ -326,5 +368,5 @@ Gitleaks 安装参考：<https://gitleaks.io>。
 - **AI：** OpenAI 兼容 Chat Completions API（主备切换）
 - **搜索：** Tavily Search API
 - **数据：** SQLite、JSON、Pillow 图卡渲染
-- **工程：** pytest（含覆盖率门槛）、Ruff、pre-commit、Gitleaks、pydantic-settings、httpx、tenacity
+- **工程：** pytest（含覆盖率门槛）、Ruff、pre-commit、Gitleaks、pydantic-settings、httpx、tenacity、prometheus-client
 - **部署：** Docker / Docker Compose（非 root 后端镜像）、Python 3.11+（CI 验证 3.11 / 3.12）

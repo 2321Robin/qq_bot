@@ -45,6 +45,10 @@ jobs:
         run: python -m ruff check .
       - name: Ruff format check
         run: python -m ruff format --check .
+      - name: Privacy grep gate (S4-GATE-04)
+        run: >-
+          ! grep -rnE "logger\.(info|warning|error|exception|debug)\([^)]*event\.(user_id|group_id)"
+          src/qq_bot/ || (echo "raw group/user ids must never reach loggers" && exit 1)
 
   test:
     name: Test (Python ${{ matrix.python-version }})
@@ -150,6 +154,37 @@ jobs:
           --details-dir tests/fixtures/data_pipeline/details
           --manifest-dir tests/fixtures/data_pipeline/manifests
 
+  observability:
+    name: Observability gate (offline load test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install dev dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Offline synthetic load test (S4-LOAD-06)
+        run: >-
+          python scripts/run_load_test.py --cases 20 --concurrency 4
+          --output-dir "$RUNNER_TEMP/loadtest"
+      - name: Assert report schema and structure (no numeric thresholds)
+        run: >-
+          python -c "import glob,json,sys;
+          f=sorted(glob.glob('$RUNNER_TEMP/loadtest/loadtest-*.json'))[-1];
+          r=json.loads(open(f,encoding='utf-8').read());
+          assert r['schema_version']==1 and r['mode']=='synthetic';
+          assert {s['name'] for s in r['scenarios']}=={'local_knowledge','web_search','chat_memory','direct_chat','mixed'};
+          assert all(s['ok']==s['cases'] and s['errors']==0 and s['e2e_p95_ms']>=0 and s['throughput_req_per_s']>0 and s['phases'] for s in r['scenarios']);
+          assert r['conclusion']['postgresql_recommended'] is False;
+          assert r['conclusion']['redis_recommended'] is False;
+          assert r['disclaimer']"
+
   security:
     name: Secret scan (Gitleaks)
     runs-on: ubuntu-latest
@@ -201,4 +236,5 @@ jobs:
           done
           test "$ready" = "1" || { docker logs qq-bot-smoke; exit 1; }
           curl -fsS http://127.0.0.1:8081/readyz
+          curl -fsS http://127.0.0.1:8081/metrics | grep -q qq_bot_messages_total
           docker rm -f qq-bot-smoke >/dev/null
