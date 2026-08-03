@@ -85,3 +85,42 @@ def test_dockerignore_excludes_sensitive_paths() -> None:
     text = (ROOT / ".dockerignore").read_text(encoding="utf-8")
     for entry in (".git", ".env", ".venv", "data", "tests", "scripts", "docs"):
         assert entry in text, f".dockerignore missing entry {entry!r}"
+
+
+def test_readyz_is_ok_without_private_data_or_onebot(tmp_path, monkeypatch) -> None:
+    """Container smoke contract (S4-HEALTH-06, S1-CTR-04): an empty data
+    volume and no OneBot connection must still yield /readyz 200."""
+    import asyncio
+
+    from qq_bot import runtime as runtime_module
+    from qq_bot.plugins import health as health_module
+    from qq_bot.plugins.health import _response_body, readyz
+    from qq_bot.services.chat_memory import ChatMemoryRepository
+
+    async def scenario() -> None:
+        repository = ChatMemoryRepository(tmp_path / "chat.sqlite3", retention_days=30)
+        await repository.open()
+        try:
+
+            class ReadyRuntime:
+                def is_ready(self) -> bool:
+                    return True
+
+                def get_chat_repository(self) -> ChatMemoryRepository:
+                    return repository
+
+            monkeypatch.setattr(runtime_module, "get_runtime", lambda: ReadyRuntime())
+            health_module._details_dir = lambda: tmp_path / "missing_details"  # type: ignore[assignment]
+            response = await readyz()
+            body = _response_body(response)
+            assert response.status_code == 200
+            assert body["status"] == "ready"
+            assert body["checks"] == {
+                "database": "ok",
+                "data_version": "ok",
+                "onebot": "disconnected",
+            }
+        finally:
+            await repository.close()
+
+    asyncio.run(scenario())

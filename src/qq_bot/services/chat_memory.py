@@ -9,6 +9,7 @@ keeps the existing "cleanup before each read/write" observable semantics.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -115,6 +116,23 @@ class ChatMemoryRepository:
         if self._connection is None:
             raise RepositoryClosedError("chat memory repository is not open")
         return self._connection
+
+    async def check_ready(self) -> int | None:
+        """Read-only liveness probe: return the max applied schema version,
+        or None when the probe fails (S4-HEALTH-02). Bounded to 2 seconds so
+        a wedged database can never hang the health endpoint (S4-HEALTH-05)."""
+        try:
+
+            async def _probe() -> int | None:
+                cursor = await self._connection.execute(  # type: ignore[union-attr]
+                    "SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1"
+                )
+                row = await cursor.fetchone()
+                return int(row[0]) if row is not None else None
+
+            return await asyncio.wait_for(_probe(), timeout=2.0)
+        except Exception:
+            return None
 
     async def add_message(
         self,
