@@ -252,7 +252,8 @@ def test_rule_route_roco_commands_downgraded_when_disabled() -> None:
 def test_route_tools_filtered_when_disabled() -> None:
     tools = _route_tools(roco_enabled=False)
     assert all(
-        "lookup_pet" not in t and "find_skill_intersection" not in t
+        "lookup_pet" not in t
+        and "find_skill_intersection" not in t
         and "get_evolution_routes" not in t
         for t in tools.values()
     )

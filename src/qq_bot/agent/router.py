@@ -35,9 +35,7 @@ ROUTE_TOOLS: dict[RouteKind, tuple[str, ...]] = {
 }
 
 # S6-ROCO-03: the three roco tools leave the allowlist together when shelved.
-_ROCO_TOOL_NAMES = frozenset(
-    {"lookup_pet", "find_skill_intersection", "get_evolution_routes"}
-)
+_ROCO_TOOL_NAMES = frozenset({"lookup_pet", "find_skill_intersection", "get_evolution_routes"})
 
 ROUTER_SYSTEM_PROMPT = (
     "你是路由分类器。根据用户请求输出严格 JSON："

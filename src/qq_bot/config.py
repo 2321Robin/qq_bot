@@ -86,9 +86,7 @@ def parse_scheduled_jobs(value: str | None) -> list[tuple[str, int, int]]:
         try:
             hour_minute = parse_schedule_time_list(time_text)
         except ValueError as exc:
-            raise ValueError(
-                "scheduled_jobs must use type@HH:MM comma-separated values"
-            ) from exc
+            raise ValueError("scheduled_jobs must use type@HH:MM comma-separated values") from exc
         if len(hour_minute) != 1:
             raise ValueError("scheduled_jobs must use type@HH:MM comma-separated values")
         hour, minute = hour_minute[0]
