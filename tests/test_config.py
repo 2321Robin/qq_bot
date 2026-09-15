@@ -526,3 +526,13 @@ def test_quota_zero_values_disable_enforcement() -> None:
     assert settings.quota_rate_limit_per_minute == 0
     assert settings.quota_daily_cost_limit_usd == 0.0
     assert settings.quota_group_daily_cost_limit_usd == 0.0
+
+
+def test_roco_enabled_default_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ROCO_ENABLED", raising=False)
+    assert BotSettings().roco_enabled is True
+
+
+def test_roco_enabled_env_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ROCO_ENABLED", "false")
+    assert BotSettings().roco_enabled is False

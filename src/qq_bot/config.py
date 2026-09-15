@@ -147,6 +147,10 @@ class BotSettings(BaseSettings):
     ai_semantic_verifier_enabled: bool = False
     ai_verifier_model: str = ""
 
+    # 洛克王国功能总开关（S6-ROCO-01）。false 时命令/AI 上下文注入/Agent
+    # Tool/Router 路由四处同时退场；代码与数据保留，可随时开回。
+    roco_enabled: bool = True
+
     # Layered memory (S2-MEM-05..09, S2-CONFIG-03). Summaries are opt-in;
     # long-term preferences are only ever saved by an explicit user command.
     memory_summary_enabled: bool = False
