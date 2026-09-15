@@ -197,3 +197,146 @@ def test_missing_holiday_library_degrades(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(builtins, "__import__", _blocked)
     lines = build_date_lines(date(2026, 10, 1))
     assert lines[0].startswith("【早报】10月1日 周四")
+
+
+# ---- LLM 润色与每日上限（S6-REPORT-04）----
+
+
+def test_verify_polished_accepts_reorder_and_annotation() -> None:
+    from qq_bot.services.daily_report import verify_polished
+
+    titles = ("第一条新闻标题", "第二条新闻标题")
+    text = "· 第二条新闻标题（附短评）\n· 第一条新闻标题\n\n【寄语】今天也要加油"
+    assert verify_polished(titles, text) is True
+
+
+def test_verify_polished_rejects_missing_item() -> None:
+    from qq_bot.services.daily_report import verify_polished
+
+    titles = ("第一条新闻标题", "第二条新闻标题")
+    assert verify_polished(titles, "· 第一条新闻标题\n【寄语】好") is False
+
+
+def test_verify_polished_ignores_jiyu_section() -> None:
+    from qq_bot.services.daily_report import verify_polished
+
+    titles = ("标题甲",)
+    text = "· 标题甲\n【寄语】寄语区写什么都不参与比对"
+    assert verify_polished(titles, text) is True
+
+
+def test_verify_polished_rejects_extra_bullets() -> None:
+    from qq_bot.services.daily_report import verify_polished
+
+    titles = ("标题甲",)
+    text = "· 标题甲\n· 标题乙\n【寄语】好"
+    assert verify_polished(titles, text) is False
+
+
+def test_format_news_template_lists_titles() -> None:
+    from qq_bot.services.daily_report import format_news_template
+
+    text = format_news_template((NewsItem(title="甲"), NewsItem(title="乙")))
+    assert text == "📰 新闻\n· 甲\n· 乙"
+
+
+async def test_polish_disabled_returns_template() -> None:
+    from qq_bot.services.daily_report import polish_news
+
+    outcome = await polish_news((NewsItem(title="甲"), NewsItem(title="乙")), _settings())
+    assert outcome.reason == "disabled"
+    assert outcome.ok is False
+    assert "· 甲" in outcome.text
+
+
+async def test_polish_daily_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    from qq_bot.services import daily_report
+
+    class _Quota:
+        async def summary(self, *, scope_type: str, scope_id: int):
+            return {"requests": 1}
+
+        async def record_usage(self, **kwargs: Any) -> None:
+            raise AssertionError("capped 路径不应记录用量")
+
+    monkeypatch.setattr(daily_report, "_quota_service", lambda: _Quota())
+    outcome = await daily_report.polish_news(
+        (NewsItem(title="甲"),),
+        _settings(report_ai_enabled=True, report_ai_daily_max=1),
+    )
+    assert outcome.reason == "capped"
+    assert "· 甲" in outcome.text
+
+
+async def test_polish_model_failure_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    from qq_bot.services import daily_report
+    from qq_bot.services.ai_client import AIReplyError
+
+    class _Quota:
+        async def summary(self, *, scope_type: str, scope_id: int):
+            return {"requests": 0}
+
+    async def _boom(*args: Any, **kwargs: Any) -> str:
+        raise AIReplyError("down")
+
+    monkeypatch.setattr(daily_report, "_quota_service", lambda: _Quota())
+    monkeypatch.setattr(daily_report, "request_ai_reply", _boom)
+    outcome = await daily_report.polish_news(
+        (NewsItem(title="甲"),), _settings(report_ai_enabled=True)
+    )
+    assert outcome.reason == "error"
+    assert outcome.ok is False
+
+
+async def test_polish_check_failed_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    from qq_bot.services import daily_report
+
+    class _Quota:
+        def __init__(self) -> None:
+            self.recorded: list[dict[str, Any]] = []
+
+        async def summary(self, *, scope_type: str, scope_id: int):
+            return {"requests": 0}
+
+        async def record_usage(self, **kwargs: Any) -> None:
+            self.recorded.append(kwargs)
+
+    async def _bad_polish(*args: Any, **kwargs: Any) -> str:
+        return "· 凭空编造的标题\n【寄语】好"
+
+    quota = _Quota()
+    monkeypatch.setattr(daily_report, "_quota_service", lambda: quota)
+    monkeypatch.setattr(daily_report, "request_ai_reply", _bad_polish)
+    outcome = await daily_report.polish_news(
+        (NewsItem(title="甲"),), _settings(report_ai_enabled=True)
+    )
+    assert outcome.reason == "check_failed"
+    assert quota.recorded == []
+
+
+async def test_polish_success_records_usage(monkeypatch: pytest.MonkeyPatch) -> None:
+    from qq_bot.services import daily_report
+
+    class _Quota:
+        def __init__(self) -> None:
+            self.recorded: list[dict[str, Any]] = []
+
+        async def summary(self, *, scope_type: str, scope_id: int):
+            return {"requests": 0}
+
+        async def record_usage(self, **kwargs: Any) -> None:
+            self.recorded.append(kwargs)
+
+    async def _good_polish(*args: Any, **kwargs: Any) -> str:
+        return "· 甲\n\n【寄语】早上好"
+
+    quota = _Quota()
+    monkeypatch.setattr(daily_report, "_quota_service", lambda: quota)
+    monkeypatch.setattr(daily_report, "request_ai_reply", _good_polish)
+    outcome = await daily_report.polish_news(
+        (NewsItem(title="甲"),), _settings(report_ai_enabled=True)
+    )
+    assert outcome.reason == "ok"
+    assert outcome.ok is True
+    assert len(quota.recorded) == 1
+    assert quota.recorded[0]["scope_type"] == "report"
