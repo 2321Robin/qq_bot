@@ -150,6 +150,37 @@ def parse_named_mention_replacements(value: str | None) -> dict[str, str]:
     return replacements
 
 
+# ---- 自主群聊插话（S7-AUTO）内置词表与人设默认 ----
+# 放在 config 层避免 services -> config 的循环导入。
+DEFAULT_PERSONA_PROMPT = "说话简短随意，用口语和语气词，懂群聊梗，不端着；不要客服腔和书面腔。"
+BUILTIN_SENSITIVE_WORDS = (
+    "赌博",
+    "博彩",
+    "色情",
+    "裸聊",
+    "毒品",
+    "冰毒",
+    "枪支",
+    "军火",
+    "代开发票",
+    "刷单",
+    "传销",
+    "自杀",
+    "爆炸物",
+)
+BUILTIN_NEGATIVE_WORDS = (
+    "闭嘴",
+    "别说话",
+    "不许说话",
+    "禁言",
+    "烦不烦",
+    "滚",
+    "退群吧",
+    "别回了",
+    "吵死了",
+)
+
+
 class BotSettings(BaseSettings):
     allowed_group_ids: str = ""
     admin_user_ids: str = ""
@@ -274,6 +305,24 @@ class BotSettings(BaseSettings):
     report_ai_enabled: bool = False  # 新闻 LLM 润色 + 寄语
     report_ai_model: str = ""  # 空 = 复用 ai_model
     report_ai_daily_max: int = 20  # 定时任务 LLM 独立每日上限；0 = 关闭润色
+
+    # ---- 自主群聊插话与人设（S7-AUTO）----
+    auto_chat_enabled: bool = False
+    persona_name: str = ""  # 昵称；同时用于点名匹配；空 = 点名退化为仅 @
+    persona_aliases: str = ""  # 其他叫法，逗号分隔
+    persona_prompt: str = ""  # 空 = DEFAULT_PERSONA_PROMPT
+    auto_chat_sample_rate: float = 0.2
+    auto_chat_cooldown_seconds: float = 300.0
+    auto_chat_hourly_limit: int = 6
+    auto_chat_daily_limit: int = 30
+    auto_chat_confidence_threshold: float = 0.7
+    auto_chat_delay_min_seconds: float = 1.0
+    auto_chat_delay_max_seconds: float = 3.0
+    auto_chat_negative_backoff_seconds: float = 1800.0
+    auto_chat_sensitive_words: str = ""  # 追加词（逗号分隔），与内置表合并
+    auto_chat_negative_words: str = ""  # 追加词（逗号分隔），与内置表合并
+    auto_chat_ignored_user_ids: str = ""  # 自主插话忽略的发送者（可放其他机器人号）
+    auto_chat_context_messages: int = 10
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -573,6 +622,34 @@ class BotSettings(BaseSettings):
     @property
     def ai_ignored_user_id_list(self) -> list[int]:
         return parse_id_list(self.ai_ignored_user_ids)
+
+    @property
+    def auto_chat_ignored_user_id_list(self) -> list[int]:
+        return parse_id_list(self.auto_chat_ignored_user_ids)
+
+    @property
+    def persona_alias_list(self) -> tuple[str, ...]:
+        return tuple(
+            alias.strip() for alias in self.persona_aliases.split(",") if alias.strip()
+        )
+
+    @property
+    def effective_persona_prompt(self) -> str:
+        return self.persona_prompt.strip() or DEFAULT_PERSONA_PROMPT
+
+    @property
+    def auto_chat_sensitive_word_list(self) -> tuple[str, ...]:
+        extra = tuple(
+            word.strip() for word in self.auto_chat_sensitive_words.split(",") if word.strip()
+        )
+        return BUILTIN_SENSITIVE_WORDS + extra
+
+    @property
+    def auto_chat_negative_word_list(self) -> tuple[str, ...]:
+        extra = tuple(
+            word.strip() for word in self.auto_chat_negative_words.split(",") if word.strip()
+        )
+        return BUILTIN_NEGATIVE_WORDS + extra
 
     @property
     def scheduled_group_id_list(self) -> list[int]:

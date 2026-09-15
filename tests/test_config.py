@@ -644,3 +644,55 @@ def test_report_ai_daily_max_non_negative(monkeypatch: pytest.MonkeyPatch) -> No
 def test_report_timeout_must_be_positive() -> None:
     with pytest.raises(ValidationError, match="report_60s_timeout_seconds"):
         BotSettings(report_60s_timeout_seconds=0)
+
+
+# ---- 自主群聊插话与人设（S7-AUTO）----
+
+
+def test_auto_chat_defaults_match_spec() -> None:
+    settings = BotSettings(ai_api_key="k")
+    assert settings.auto_chat_enabled is False
+    assert settings.persona_name == ""
+    assert settings.auto_chat_sample_rate == 0.2
+    assert settings.auto_chat_cooldown_seconds == 300.0
+    assert settings.auto_chat_hourly_limit == 6
+    assert settings.auto_chat_daily_limit == 30
+    assert settings.auto_chat_confidence_threshold == 0.7
+    assert settings.auto_chat_delay_min_seconds == 1.0
+    assert settings.auto_chat_delay_max_seconds == 3.0
+    assert settings.auto_chat_negative_backoff_seconds == 1800.0
+    assert settings.auto_chat_context_messages == 10
+
+
+def test_persona_alias_list_parses_and_strips() -> None:
+    settings = BotSettings(persona_aliases=" 小洛, 洛洛 ,,")
+    assert settings.persona_alias_list == ("小洛", "洛洛")
+
+
+def test_effective_persona_prompt_falls_back_to_default() -> None:
+    from qq_bot.config import DEFAULT_PERSONA_PROMPT
+
+    assert BotSettings(ai_api_key="k").effective_persona_prompt == DEFAULT_PERSONA_PROMPT
+    assert BotSettings(persona_prompt="毒舌").effective_persona_prompt == "毒舌"
+
+
+def test_sensitive_words_merge_builtin_with_extra() -> None:
+    from qq_bot.config import BUILTIN_SENSITIVE_WORDS
+
+    settings = BotSettings(auto_chat_sensitive_words=" custom1 , custom2 ")
+    word_list = settings.auto_chat_sensitive_word_list
+    assert word_list[: len(BUILTIN_SENSITIVE_WORDS)] == BUILTIN_SENSITIVE_WORDS
+    assert word_list[-2:] == ("custom1", "custom2")
+
+
+def test_negative_words_merge_builtin_with_extra() -> None:
+    from qq_bot.config import BUILTIN_NEGATIVE_WORDS
+
+    settings = BotSettings(auto_chat_negative_words=" 别闹 ")
+    assert "别闹" in settings.auto_chat_negative_word_list
+    assert "闭嘴" in settings.auto_chat_negative_word_list
+
+
+def test_auto_chat_ignored_user_id_list_parses() -> None:
+    settings = BotSettings(auto_chat_ignored_user_ids="111, 222")
+    assert settings.auto_chat_ignored_user_id_list == [111, 222]
