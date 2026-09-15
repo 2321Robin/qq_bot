@@ -134,3 +134,48 @@ async def fetch_section_items(
 
 def truncate_items(items: tuple[NewsItem, ...], limit: int) -> tuple[NewsItem, ...]:
     return items[: max(limit, 0)]
+
+
+# ---- 离线日期板块（S6-REPORT-03）----
+# 两个可选库都允许缺失/异常：缺谁就降级掉谁的文本，日期行永远在场。
+_WEEKDAY_CN = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+
+
+def _lunar_text(today: Any) -> str:
+    try:
+        from datetime import datetime as _datetime
+
+        from cnlunar import Lunar
+
+        lunar = Lunar(_datetime(today.year, today.month, today.day))
+        month_cn = lunar.lunarMonthCn
+        for size in ("大", "小"):
+            if month_cn.endswith(size):
+                month_cn = month_cn[: -len(size)]
+        text = f"农历{month_cn}{lunar.lunarDayCn}"
+        term = lunar.get_todaySolarTerms()
+        if term and term != "无":
+            text = f"{text}·{term}"
+        return text
+    except Exception:
+        return ""
+
+
+def _holiday_text(today: Any) -> str:
+    try:
+        import chinese_calendar as _cn_holiday
+
+        is_holiday, name = _cn_holiday.get_holiday_detail(today)
+    except Exception:
+        return ""
+    if not is_holiday:
+        return ""
+    suffix = f"（{name}）" if name else ""
+    return f"🎉 法定节假日{suffix}"
+
+
+def build_date_lines(today: Any, *, kind: str = "早报") -> tuple[str, ...]:
+    header = f"【{kind}】{today.month}月{today.day}日 {_WEEKDAY_CN[today.weekday()]}"
+    extras = [text for text in (_lunar_text(today), _holiday_text(today)) if text]
+    line = f"{header} {''.join(extras)}" if extras else header
+    return (line,)

@@ -19,6 +19,8 @@ dependencies = [
   "tenacity>=8.2.0,<10.0.0",
   "tiktoken>=0.7.0,<1.0.0",
   "prometheus-client>=0.14.0,<2.0.0",
+  "chinese-calendar>=1.10,<2.0",
+  "cnlunar>=0.2,<0.3",
 ]
 
 [project.optional-dependencies]

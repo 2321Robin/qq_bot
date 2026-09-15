@@ -125,3 +125,75 @@ def test_truncate_items_limits_count() -> None:
     items = tuple(NewsItem(title=str(index)) for index in range(5))
     assert len(truncate_items(items, 2)) == 2
     assert truncate_items(items, 0) == ()
+
+
+# ---- 离线日期板块（S6-REPORT-03）----
+
+
+def test_date_line_present() -> None:
+    from datetime import date
+
+    from qq_bot.services.daily_report import build_date_lines
+
+    lines = build_date_lines(date(2026, 9, 15))
+    assert lines == ("【早报】9月15日 周二 农历八月初五",)
+
+
+def test_evening_variant_header() -> None:
+    from datetime import date
+
+    from qq_bot.services.daily_report import build_date_lines
+
+    assert build_date_lines(date(2026, 9, 15), kind="晚报")[0].startswith("【晚报】")
+
+
+def test_holiday_marked() -> None:
+    from datetime import date
+
+    from qq_bot.services.daily_report import build_date_lines
+
+    assert "法定节假日" in build_date_lines(date(2026, 10, 1))[0]
+
+
+def test_non_holiday_has_no_marker() -> None:
+    from datetime import date
+
+    from qq_bot.services.daily_report import build_date_lines
+
+    assert "法定节假日" not in build_date_lines(date(2026, 9, 16))[0]
+
+
+def test_missing_lunar_library_degrades(monkeypatch: pytest.MonkeyPatch) -> None:
+    import builtins
+    from datetime import date
+
+    from qq_bot.services.daily_report import build_date_lines
+
+    real_import = builtins.__import__
+
+    def _blocked(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "cnlunar":
+            raise ImportError("blocked for test")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _blocked)
+    lines = build_date_lines(date(2026, 9, 15))
+    assert lines[0].startswith("【早报】9月15日 周二")
+
+
+def test_missing_holiday_library_degrades(monkeypatch: pytest.MonkeyPatch) -> None:
+    import builtins
+    from datetime import date
+
+    from qq_bot.services.daily_report import build_date_lines
+
+    real_import = builtins.__import__
+
+    def _blocked(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "chinese_calendar":
+            raise ImportError("blocked for test")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _blocked)
+    lines = build_date_lines(date(2026, 10, 1))
+    assert lines[0].startswith("【早报】10月1日 周四")
