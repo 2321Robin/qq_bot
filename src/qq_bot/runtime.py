@@ -185,7 +185,8 @@ class AppRuntime:
         from qq_bot.services.layered_memory import LayeredMemoryService
 
         registry = ToolRegistry()
-        register_roco_tools(registry)
+        if settings.roco_enabled:
+            register_roco_tools(registry)
         register_web_tool(registry, settings=settings, client=http_client)
         register_memory_tools(registry, repository)
         registry.validate()

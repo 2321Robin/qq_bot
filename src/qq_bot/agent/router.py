@@ -34,11 +34,27 @@ ROUTE_TOOLS: dict[RouteKind, tuple[str, ...]] = {
     RouteKind.DIRECT_CHAT: (),
 }
 
+# S6-ROCO-03: the three roco tools leave the allowlist together when shelved.
+_ROCO_TOOL_NAMES = frozenset(
+    {"lookup_pet", "find_skill_intersection", "get_evolution_routes"}
+)
+
 ROUTER_SYSTEM_PROMPT = (
     "你是路由分类器。根据用户请求输出严格 JSON："
     '{"primary_route": "local_knowledge|web_search|chat_memory|direct_chat", '
     '"confidence": 0.0到1.0的小数}。'
     "local_knowledge=本地洛克王国图鉴查询；web_search=需要最新/联网信息；"
+    "chat_memory=需要参考最近聊天记录；direct_chat=寒暄、闲聊或不应执行的内容。"
+    "不要输出任何其他字段。"
+)
+
+# S6-ROCO-03: prompt variant used when roco is shelved — local_knowledge is no
+# longer an offerable route, so the classifier must not suggest it.
+_ROUTER_PROMPT_WITHOUT_ROCO = (
+    "你是路由分类器。根据用户请求输出严格 JSON："
+    '{"primary_route": "web_search|chat_memory|direct_chat", '
+    '"confidence": 0.0到1.0的小数}。'
+    "web_search=需要最新/联网信息；"
     "chat_memory=需要参考最近聊天记录；direct_chat=寒暄、闲聊或不应执行的内容。"
     "不要输出任何其他字段。"
 )
@@ -70,9 +86,19 @@ class RouteTrace:
     needs_clarification: bool = False
 
 
-def derive_allowed_tools(route: RouteKind) -> tuple[str, ...]:
+def _route_tools(roco_enabled: bool) -> dict[RouteKind, tuple[str, ...]]:
+    """Static policy map, optionally without the shelved roco tools (S6-ROCO-03)."""
+    if roco_enabled:
+        return ROUTE_TOOLS
+    return {
+        kind: tuple(name for name in tools if name not in _ROCO_TOOL_NAMES)
+        for kind, tools in ROUTE_TOOLS.items()
+    }
+
+
+def derive_allowed_tools(route: RouteKind, *, roco_enabled: bool = True) -> tuple[str, ...]:
     """Server-side tool allowlist per route (S2-ROUTE-03)."""
-    return ROUTE_TOOLS[route]
+    return _route_tools(roco_enabled)[route]
 
 
 def _is_small_talk(text: str) -> bool:
@@ -140,12 +166,14 @@ def _rule_route(
             needs_clarification=True,
             allowed_tools=(),
         )
-    if _explicit_command(text):
+    if settings.roco_enabled and _explicit_command(text):
         return RouteDecision(
             primary_route=RouteKind.LOCAL_KNOWLEDGE,
             confidence=0.95,
             reason_code=ReasonCode.EXPLICIT_COMMAND,
-            allowed_tools=derive_allowed_tools(RouteKind.LOCAL_KNOWLEDGE),
+            allowed_tools=derive_allowed_tools(
+                RouteKind.LOCAL_KNOWLEDGE, roco_enabled=settings.roco_enabled
+            ),
         )
     if _explicit_search(text):
         if settings.has_search_config():
@@ -153,7 +181,9 @@ def _rule_route(
                 primary_route=RouteKind.WEB_SEARCH,
                 confidence=0.95,
                 reason_code=ReasonCode.EXPLICIT_COMMAND,
-                allowed_tools=derive_allowed_tools(RouteKind.WEB_SEARCH),
+                allowed_tools=derive_allowed_tools(
+                    RouteKind.WEB_SEARCH, roco_enabled=settings.roco_enabled
+                ),
             )
         return RouteDecision(
             primary_route=RouteKind.DIRECT_CHAT,
@@ -168,7 +198,9 @@ def _rule_route(
                 primary_route=RouteKind.CHAT_MEMORY,
                 confidence=0.95,
                 reason_code=ReasonCode.EXPLICIT_COMMAND,
-                allowed_tools=derive_allowed_tools(RouteKind.CHAT_MEMORY),
+                allowed_tools=derive_allowed_tools(
+                    RouteKind.CHAT_MEMORY, roco_enabled=settings.roco_enabled
+                ),
             )
         return RouteDecision(
             primary_route=RouteKind.CHAT_MEMORY,
@@ -221,7 +253,7 @@ def _apply_confidence_policy(
             primary_route=route,
             confidence=confidence,
             reason_code=ReasonCode.STRUCTURED_CLASSIFIER,
-            allowed_tools=derive_allowed_tools(route),
+            allowed_tools=derive_allowed_tools(route, roco_enabled=settings.roco_enabled),
         )
     if confidence >= 0.5:
         if route in (RouteKind.LOCAL_KNOWLEDGE, RouteKind.DIRECT_CHAT):
@@ -229,14 +261,14 @@ def _apply_confidence_policy(
                 primary_route=route,
                 confidence=confidence,
                 reason_code=ReasonCode.STRUCTURED_CLASSIFIER,
-                allowed_tools=derive_allowed_tools(route),
+                allowed_tools=derive_allowed_tools(route, roco_enabled=settings.roco_enabled),
             )
         return RouteDecision(
             primary_route=route,
             confidence=confidence,
             reason_code=ReasonCode.STRUCTURED_CLASSIFIER,
             needs_clarification=True,
-            allowed_tools=derive_allowed_tools(route),
+            allowed_tools=derive_allowed_tools(route, roco_enabled=settings.roco_enabled),
         )
     if _is_small_talk(text):
         return RouteDecision(
@@ -299,9 +331,12 @@ async def route_request(
     decision = _fallback_decision(text)
     if gateway is not None:
         try:
+            system_prompt = (
+                ROUTER_SYSTEM_PROMPT if settings.roco_enabled else _ROUTER_PROMPT_WITHOUT_ROCO
+            )
             response = await gateway.request_model_turn(
                 messages=[
-                    {"role": "system", "content": ROUTER_SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": text},
                 ],
                 tools=None,
@@ -314,6 +349,11 @@ async def route_request(
                 parsed = _parse_classifier_output(response.text)
             if parsed is not None:
                 route, confidence = parsed
+                if route is RouteKind.LOCAL_KNOWLEDGE and not settings.roco_enabled:
+                    # S6-ROCO-03: the classifier ignored the shelved-route
+                    # prompt; degrade to direct chat instead of ever routing
+                    # to local knowledge, then let the confidence policy run.
+                    route = RouteKind.DIRECT_CHAT
                 decision = _apply_confidence_policy(route, confidence, settings=settings, text=text)
         except Exception:
             decision = _fallback_decision(text)

@@ -7,6 +7,8 @@ import asyncio
 from qq_bot.agent.models import NormalizedResponse, ReasonCode, RouteKind
 from qq_bot.agent.router import (
     RouteTrace,
+    _route_tools,
+    _rule_route,
     derive_allowed_tools,
     route_request,
 )
@@ -236,3 +238,38 @@ def test_route_kinds_are_strict() -> None:
         "get_evolution_routes",
     )
     assert derive_allowed_tools(RouteKind.DIRECT_CHAT) == ()
+
+
+def test_rule_route_roco_commands_downgraded_when_disabled() -> None:
+    decision = _rule_route(
+        "/精灵 迪莫",
+        settings=_settings(roco_enabled=False),
+        can_use_chat_memory=False,
+    )
+    assert decision is None or decision.primary_route is not RouteKind.LOCAL_KNOWLEDGE
+
+
+def test_route_tools_filtered_when_disabled() -> None:
+    tools = _route_tools(roco_enabled=False)
+    assert all(
+        "lookup_pet" not in t and "find_skill_intersection" not in t
+        and "get_evolution_routes" not in t
+        for t in tools.values()
+    )
+    assert tools[RouteKind.WEB_SEARCH] == ("search_web",)
+    # 开启时与现状一致：静态映射原样返回。
+    assert _route_tools(roco_enabled=True)[RouteKind.LOCAL_KNOWLEDGE] == (
+        "lookup_pet",
+        "find_skill_intersection",
+        "get_evolution_routes",
+    )
+
+
+def test_classifier_local_knowledge_downgraded_when_disabled() -> None:
+    gateway = FakeGateway(response=_json_response("local_knowledge", 0.9))
+    decision, _ = asyncio.run(
+        route_request("精灵资料", settings=_settings(roco_enabled=False), gateway=gateway)
+    )
+    assert decision.primary_route is RouteKind.DIRECT_CHAT
+    assert decision.needs_clarification is False
+    assert decision.allowed_tools == ()

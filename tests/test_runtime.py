@@ -211,6 +211,26 @@ async def test_startup_builds_agent_stack_with_five_tools(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_startup_excludes_roco_tools_when_disabled(tmp_path) -> None:
+    """ROCO_ENABLED=false: the registry keeps only web/memory tools (S6-ROCO-03)."""
+    runtime = AppRuntime(
+        settings=BotSettings(
+            chat_memory_path=str(tmp_path / "runtime.sqlite3"),
+            roco_enabled=False,
+        )
+    )
+    await runtime.startup()
+    try:
+        registry = runtime.get_tool_registry()
+        from qq_bot.agent.models import RouteKind
+
+        tool_names = set(registry.names_for(frozenset(RouteKind)))
+        assert tool_names == {"search_chat_memory", "search_web"}
+    finally:
+        await runtime.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_agent_getters_fail_while_not_ready(tmp_path) -> None:
     runtime = AppRuntime(settings=_settings(tmp_path))
     for getter in (
