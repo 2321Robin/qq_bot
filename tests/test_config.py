@@ -602,3 +602,45 @@ def test_game_calendar_path_default_and_override(monkeypatch):
 def test_game_calendar_path_rejects_blank():
     with pytest.raises(ValueError, match="game_calendar_path"):
         BotSettings(game_calendar_path="   ")
+
+
+def test_report_defaults_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("REPORT_60S_BASE_URL", raising=False)
+    monkeypatch.delenv("REPORT_AI_ENABLED", raising=False)
+    monkeypatch.delenv("REPORT_AI_DAILY_MAX", raising=False)
+    settings = BotSettings()
+    assert settings.report_60s_base_url == ""
+    assert settings.report_60s_timeout_seconds == 10.0
+    assert settings.report_hotlist_max_items == 3
+    assert settings.report_ai_enabled is False
+    assert settings.report_ai_daily_max == 20
+    assert settings.has_report_source_config() is False
+
+
+def test_report_base_url_normalized(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REPORT_60S_BASE_URL", "http://127.0.0.1:8787/")
+    assert BotSettings().normalized_report_60s_base_url == "http://127.0.0.1:8787"
+
+
+def test_report_llm_model_falls_back_to_main_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("REPORT_AI_MODEL", raising=False)
+    settings = BotSettings(ai_model="glm-4-flash")
+    assert settings.report_llm_model == "glm-4-flash"
+    assert BotSettings(ai_model="m", report_ai_model="v").report_llm_model == "v"
+
+
+def test_report_hotlist_max_items_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REPORT_HOTLIST_MAX_ITEMS", "0")
+    with pytest.raises(ValidationError, match="report_hotlist_max_items"):
+        BotSettings()
+
+
+def test_report_ai_daily_max_non_negative(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REPORT_AI_DAILY_MAX", "-1")
+    with pytest.raises(ValidationError, match="report_ai_daily_max"):
+        BotSettings()
+
+
+def test_report_timeout_must_be_positive() -> None:
+    with pytest.raises(ValidationError, match="report_60s_timeout_seconds"):
+        BotSettings(report_60s_timeout_seconds=0)

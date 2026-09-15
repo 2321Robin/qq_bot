@@ -267,6 +267,14 @@ class BotSettings(BaseSettings):
     quota_daily_cost_limit_usd: float = 2.0  # 0 = 关闭；全局每日 actual 成本上限
     quota_group_daily_cost_limit_usd: float = 0.5  # 0 = 关闭；每群每日上限
 
+    # ---- 生活早晚报（S6-REPORT-01）----
+    report_60s_base_url: str = ""  # 自部署 60s fork（含 /news /hot /heh 适配端点）
+    report_60s_timeout_seconds: float = 10.0
+    report_hotlist_max_items: int = 3  # 热搜/热帖榜截取条数
+    report_ai_enabled: bool = False  # 新闻 LLM 润色 + 寄语
+    report_ai_model: str = ""  # 空 = 复用 ai_model
+    report_ai_daily_max: int = 20  # 定时任务 LLM 独立每日上限；0 = 关闭润色
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -493,6 +501,27 @@ class BotSettings(BaseSettings):
             raise ValueError("quota cost limits must be non-negative")
         return value
 
+    @field_validator("report_60s_timeout_seconds")
+    @classmethod
+    def validate_report_timeout_seconds(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("report_60s_timeout_seconds must be greater than 0")
+        return value
+
+    @field_validator("report_hotlist_max_items")
+    @classmethod
+    def validate_report_hotlist_max_items(cls, value: int) -> int:
+        if value < 1 or value > 10:
+            raise ValueError("report_hotlist_max_items must be between 1 and 10")
+        return value
+
+    @field_validator("report_ai_daily_max")
+    @classmethod
+    def validate_report_ai_daily_max(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("report_ai_daily_max must be non-negative")
+        return value
+
     @field_validator(
         "ai_context_window_tokens", "ai_output_reserve_tokens", "ai_token_safety_margin"
     )
@@ -596,6 +625,18 @@ class BotSettings(BaseSettings):
     def router_model(self) -> str:
         """Router model; empty means the router reuses the main AI model."""
         return self.ai_router_model.strip() or self.ai_model
+
+    @property
+    def normalized_report_60s_base_url(self) -> str:
+        return self.report_60s_base_url.strip().rstrip("/")
+
+    @property
+    def report_llm_model(self) -> str:
+        """Report polish model; empty means it reuses the main AI model."""
+        return self.report_ai_model.strip() or self.ai_model
+
+    def has_report_source_config(self) -> bool:
+        return bool(self.normalized_report_60s_base_url)
 
 
 @lru_cache(maxsize=1)
