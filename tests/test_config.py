@@ -2,7 +2,9 @@ import pytest
 from pydantic import ValidationError
 
 from qq_bot.config import (
+    parse_countdown_events,
     parse_named_mention_replacements,
+    parse_scheduled_jobs,
     BotSettings,
     get_settings,
     parse_id_list,
@@ -536,3 +538,55 @@ def test_roco_enabled_default_true(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_roco_enabled_env_false(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ROCO_ENABLED", "false")
     assert BotSettings().roco_enabled is False
+
+
+def test_parse_scheduled_jobs_ok() -> None:
+    assert parse_scheduled_jobs("life_morning@07:30, static@09:00") == [
+        ("life_morning", 7, 30),
+        ("static", 9, 0),
+    ]
+
+
+def test_parse_scheduled_jobs_accepts_empty_value() -> None:
+    assert parse_scheduled_jobs("") == []
+    assert parse_scheduled_jobs(None) == []
+
+
+def test_parse_scheduled_jobs_rejects_unknown_type() -> None:
+    with pytest.raises(ValueError, match="scheduled_jobs"):
+        parse_scheduled_jobs("nonsense@07:30")
+
+
+def test_parse_scheduled_jobs_rejects_bad_time() -> None:
+    with pytest.raises(ValueError, match="scheduled_jobs"):
+        parse_scheduled_jobs("static@25:00")
+
+
+def test_parse_scheduled_jobs_rejects_duplicates() -> None:
+    with pytest.raises(ValueError, match="scheduled_jobs"):
+        parse_scheduled_jobs("static@09:00,static@09:00")
+
+
+def test_parse_countdown_events_ok() -> None:
+    assert parse_countdown_events("六级考试:2026-12-12, 期末周:2027-01-05") == [
+        ("六级考试", "2026-12-12"),
+        ("期末周", "2027-01-05"),
+    ]
+
+
+def test_parse_countdown_events_accepts_empty_value() -> None:
+    assert parse_countdown_events("") == []
+    assert parse_countdown_events(None) == []
+
+
+def test_parse_countdown_events_rejects_bad_date() -> None:
+    with pytest.raises(ValueError, match="countdown_events"):
+        parse_countdown_events("六级考试:2026-13-40")
+
+
+def test_scheduled_jobs_and_countdown_env_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SCHEDULED_JOBS", "game_morning@07:30")
+    monkeypatch.setenv("COUNTDOWN_EVENTS", "六级考试:2026-12-12")
+    settings = BotSettings()
+    assert settings.scheduled_job_list == [("game_morning", 7, 30)]
+    assert settings.countdown_event_list == [("六级考试", "2026-12-12")]

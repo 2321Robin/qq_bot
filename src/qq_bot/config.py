@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from functools import lru_cache
 
 from pydantic import Field, field_validator, model_validator
@@ -53,6 +54,75 @@ def parse_schedule_time_list(value: str | None) -> list[tuple[int, int]]:
     return times
 
 
+SCHEDULED_JOB_TYPES: tuple[str, ...] = (
+    "static",
+    "life_morning",
+    "life_evening",
+    "game_morning",
+    "game_evening",
+)
+
+
+def parse_scheduled_jobs(value: str | None) -> list[tuple[str, int, int]]:
+    """Parse ``type@HH:MM`` comma-separated job entries (S6-SCHED-01)."""
+    if value is None:
+        return []
+    text = value.strip()
+    if not text:
+        return []
+    jobs: list[tuple[str, int, int]] = []
+    seen: set[tuple[str, int, int]] = set()
+    for part in text.split(","):
+        item = part.strip()
+        pieces = item.split("@")
+        if len(pieces) != 2:
+            raise ValueError("scheduled_jobs must use type@HH:MM comma-separated values")
+        job_type, time_text = pieces[0].strip(), pieces[1].strip()
+        if job_type not in SCHEDULED_JOB_TYPES:
+            raise ValueError(
+                f"scheduled_jobs uses unknown job type: {job_type} "
+                f"(known: {', '.join(SCHEDULED_JOB_TYPES)})"
+            )
+        try:
+            hour_minute = parse_schedule_time_list(time_text)
+        except ValueError as exc:
+            raise ValueError(
+                "scheduled_jobs must use type@HH:MM comma-separated values"
+            ) from exc
+        if len(hour_minute) != 1:
+            raise ValueError("scheduled_jobs must use type@HH:MM comma-separated values")
+        hour, minute = hour_minute[0]
+        entry = (job_type, hour, minute)
+        if entry in seen:
+            raise ValueError("scheduled_jobs must not contain duplicate type@HH:MM entries")
+        seen.add(entry)
+        jobs.append(entry)
+    return jobs
+
+
+def parse_countdown_events(value: str | None) -> list[tuple[str, str]]:
+    """Parse ``名称:YYYY-MM-DD`` comma-separated countdown entries (S6-COUNT-01)."""
+    if value is None:
+        return []
+    text = value.strip()
+    if not text:
+        return []
+    events: list[tuple[str, str]] = []
+    for part in text.split(","):
+        item = part.strip()
+        name, sep, date_text = item.rpartition(":")
+        if not sep or not name.strip() or not date_text.strip():
+            raise ValueError("countdown_events must use 名称:YYYY-MM-DD comma-separated values")
+        try:
+            date.fromisoformat(date_text.strip())
+        except ValueError as exc:
+            raise ValueError(
+                "countdown_events must use 名称:YYYY-MM-DD comma-separated values"
+            ) from exc
+        events.append((name.strip(), date_text.strip()))
+    return events
+
+
 def parse_named_mention_replacements(value: str | None) -> dict[str, str]:
     """Parse ``name=qq,name=qq`` pairs into a replacement mapping.
 
@@ -93,6 +163,10 @@ class BotSettings(BaseSettings):
     # "@昵称=QQ号,@昵称2=QQ号2" pairs; only integer QQ numbers are accepted
     # so deployers never commit their real account into source.
     named_mention_replacements: str = ""
+    # 泛化定时任务表（type@HH:MM 逗号分隔）；非空时取代 scheduled_cron_* 旧路径
+    scheduled_jobs: str = ""
+    # 倒计时事件（名称:YYYY-MM-DD 逗号分隔）；过期自动隐藏
+    countdown_events: str = ""
 
     ai_api_key: str = Field(default="", repr=False)
     ai_base_url: str = "https://api.openai.com/v1"
@@ -211,6 +285,18 @@ class BotSettings(BaseSettings):
     @classmethod
     def validate_schedule_times(cls, value: str) -> str:
         parse_schedule_time_list(value)
+        return value.strip()
+
+    @field_validator("scheduled_jobs")
+    @classmethod
+    def validate_scheduled_jobs(cls, value: str) -> str:
+        parse_scheduled_jobs(value)
+        return value.strip()
+
+    @field_validator("countdown_events")
+    @classmethod
+    def validate_countdown_events(cls, value: str) -> str:
+        parse_countdown_events(value)
         return value.strip()
 
     @field_validator("named_mention_replacements")
@@ -461,6 +547,14 @@ class BotSettings(BaseSettings):
         if configured_times:
             return configured_times
         return [(self.scheduled_cron_hour, self.scheduled_cron_minute)]
+
+    @property
+    def scheduled_job_list(self) -> list[tuple[str, int, int]]:
+        return parse_scheduled_jobs(self.scheduled_jobs)
+
+    @property
+    def countdown_event_list(self) -> list[tuple[str, str]]:
+        return parse_countdown_events(self.countdown_events)
 
     @property
     def named_mention_replacement_map(self) -> dict[str, str]:
