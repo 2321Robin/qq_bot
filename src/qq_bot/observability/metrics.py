@@ -141,6 +141,13 @@ _define(
 )
 _define("AGENT_OUTCOMES", Counter, "qq_bot_agent_outcome_total", "Agent results", ["code"])
 _define(
+    "AUTO_CHAT",
+    Counter,
+    "qq_bot_auto_chat_total",
+    "Auto chat pipeline decisions",
+    ["stage", "result"],
+)
+_define(
     "ROUTES",
     Counter,
     "qq_bot_route_total",

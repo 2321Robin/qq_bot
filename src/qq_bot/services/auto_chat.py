@@ -8,11 +8,16 @@ fast-path too; state is process-local and lost on restart by design."""
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Callable
+from typing import Callable, Sequence
 
 from qq_bot.config import BotSettings
+from qq_bot.services.chat_memory import ChatMemoryRow
+from qq_bot.services.persona import Persona, mentions_persona
 
 
 def _default_bucket_clock() -> datetime:
@@ -87,3 +92,102 @@ class AutoChatState:
             del self._hourly[key]
         for key in [k for k in self._daily if k[1] != current_day]:
             del self._daily[key]
+
+
+# ---- 纯函数层：预筛 / 负反馈 / prompt 构建 / 决策门解析（S7-AUTO-05）----
+
+GATE_SYSTEM_PROMPT = (
+    "你是QQ群聊天决策器。根据最近群消息判断机器人此刻是否应该以普通群友身份发言。"
+    '输出严格 JSON：{"should_reply": true或false, '
+    '"reason": "addressed|question_answerable|banter|none", '
+    '"confidence": 0.0到1.0的小数}。'
+    "addressed=消息在喊机器人名字或明显对它说；question_answerable=有人提问且机器人能可靠回答；"
+    "banter=闲聊接梗且机器人有实质可说；none=没有实质可说。"
+    "只在有实质可说时才 should_reply=true；政治/色情/赌博/暴力/求医问药/投资建议等"
+    "敏感或高风险话题必须 false；纯表情包、灌水、上下文接不上也必须 false。"
+    "不要输出任何其他字段。"
+)
+
+_GATE_REASONS = frozenset({"addressed", "question_answerable", "banter", "none"})
+
+
+@dataclass(frozen=True)
+class GateDecision:
+    should_reply: bool
+    reason: str
+    confidence: float
+
+
+def static_prefilter(raw_text: str, *, settings: BotSettings) -> str:
+    """Zero-cost static text rules. Returns "pass" or a rejection reason:
+    "command" | "too_short" | "sensitive"."""
+    text = raw_text.strip()
+    prefix = settings.ai_prefix
+    if text.startswith("/") or text == prefix or text.startswith(prefix + " "):
+        return "command"
+    # \\W 对 CJK 是字母类（保留中文），剥掉表情、纯标点与空白
+    core = re.sub(r"[\W_]+", "", text, flags=re.UNICODE)
+    if len(core) < 2:
+        return "too_short"
+    if any(word in text for word in settings.auto_chat_sensitive_word_list):
+        return "sensitive"
+    return "pass"
+
+
+def detect_negative_feedback(
+    rows: Sequence[ChatMemoryRow],
+    *,
+    persona: Persona,
+    settings: BotSettings,
+    bot_recently_spoke: bool,
+) -> bool:
+    """spec 第六节语义：负反馈词与点名特征同现，或该群冷却窗口内刚插过话。"""
+    texts = [row.message_text for row in rows]
+    negative_words = settings.auto_chat_negative_word_list
+    if bot_recently_spoke and any(any(w in t for w in negative_words) for t in texts):
+        return True
+    return any(
+        any(w in t for w in negative_words) and mentions_persona(t, persona) for t in texts
+    )
+
+
+def build_gate_user_prompt(rows: Sequence[ChatMemoryRow]) -> str:
+    lines = ["最近群消息（最后一条是最新消息）："]
+    lines.extend(f"用户{row.user_id}：{row.message_text}" for row in rows)
+    return "\n".join(lines)
+
+
+def build_casual_user_prompt(rows: Sequence[ChatMemoryRow]) -> str:
+    lines = ["最近群消息（最后一条是最新消息）："]
+    lines.extend(f"用户{row.user_id}：{row.message_text}" for row in rows)
+    lines.append("请以群友身份对最新消息自然地接一句话。")
+    return "\n".join(lines)
+
+
+def parse_gate_output(content: str | None) -> GateDecision | None:
+    """Strict parse; anything unexpected returns None (fail closed)."""
+    if not content or not content.strip():
+        return None
+    text = content.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    should_reply = payload.get("should_reply")
+    reason = payload.get("reason", "none")
+    try:
+        confidence = float(payload.get("confidence", -1.0))
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(should_reply, bool):
+        return None
+    if reason not in _GATE_REASONS:
+        return None
+    if not 0.0 <= confidence <= 1.0:
+        return None
+    return GateDecision(should_reply=should_reply, reason=reason, confidence=confidence)
