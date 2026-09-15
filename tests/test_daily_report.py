@@ -340,3 +340,91 @@ async def test_polish_success_records_usage(monkeypatch: pytest.MonkeyPatch) -> 
     assert outcome.ok is True
     assert len(quota.recorded) == 1
     assert quota.recorded[0]["scope_type"] == "report"
+
+
+# ---- 早/晚报组装器（S6-REPORT-05）----
+
+
+def _all_sources_client() -> _FakeGetClient:
+    return _FakeGetClient(
+        {
+            "news": {"items": [{"title": "新闻甲"}, {"title": "新闻乙"}]},
+            "hot": {"items": [{"title": f"热搜{i}"} for i in range(1, 6)]},
+            "heh": {"items": [{"title": f"热帖{i}"} for i in range(1, 4)]},
+        }
+    )
+
+
+async def test_morning_message_assembles_all_sections() -> None:
+    from datetime import date
+
+    from qq_bot.services.daily_report import build_life_morning_message
+
+    settings = _settings(countdown_events="六级考试:2030-12-12")
+    text = await build_life_morning_message(
+        settings, client=_all_sources_client(), today=date(2026, 9, 15)
+    )
+    assert text.startswith("【早报】9月15日 周二 农历八月初五")
+    assert "⏰ 倒计时" in text
+    assert "距离六级考试还有" in text
+    assert "📰 新闻" in text
+    assert "· 新闻甲" in text
+    assert "· 热搜1" in text
+    assert "· 热帖1" in text
+
+
+async def test_evening_header_variant() -> None:
+    from datetime import date
+
+    from qq_bot.services.daily_report import build_life_evening_message
+
+    text = await build_life_evening_message(
+        _settings(), client=_all_sources_client(), today=date(2026, 9, 15)
+    )
+    assert text.startswith("【晚报】9月15日 周二")
+
+
+async def test_unavailable_sources_show_placeholder() -> None:
+    from datetime import date
+
+    from qq_bot.services.daily_report import build_life_morning_message
+
+    client = _FakeGetClient(always_raise=httpx.ConnectError("down"))
+    text = await build_life_morning_message(_settings(), client=client, today=date(2026, 9, 15))
+    assert "📰 新闻：—" in text
+    assert "🔥 热搜：—" in text
+    assert "🎮 小黑盒热帖：—" in text
+
+
+async def test_hotlists_truncated_to_max_items() -> None:
+    from datetime import date
+
+    from qq_bot.services.daily_report import build_life_morning_message
+
+    settings = _settings(report_hotlist_max_items=2)
+    text = await build_life_morning_message(
+        settings, client=_all_sources_client(), today=date(2026, 9, 15)
+    )
+    assert "· 热搜2" in text and "· 热搜3" not in text
+    assert "· 热帖2" in text and "· 热帖3" not in text
+
+
+async def test_polish_failure_keeps_template_news(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import date
+
+    from qq_bot.services import daily_report as dr
+    from qq_bot.services.ai_client import AIReplyError
+    from qq_bot.services.daily_report import build_life_morning_message
+
+    async def _boom(*args: Any, **kwargs: Any) -> str:
+        raise AIReplyError("down")
+
+    monkeypatch.setattr(dr, "_quota_service", lambda: None)
+    monkeypatch.setattr(dr, "request_ai_reply", _boom)
+    text = await build_life_morning_message(
+        _settings(report_ai_enabled=True),
+        client=_all_sources_client(),
+        today=date(2026, 9, 15),
+    )
+    assert "· 新闻甲" in text
+    assert "【寄语】" not in text

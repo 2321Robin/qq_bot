@@ -162,6 +162,20 @@ _define(
     "Scheduled job runs by job type and result",
     ["job", "result"],
 )
+_define(
+    "REPORT_SECTIONS_TOTAL",
+    Counter,
+    "qq_bot_report_sections_total",
+    "Life report section outcomes",
+    ["section", "result"],
+)
+_define(
+    "REPORT_LLM_TOTAL",
+    Counter,
+    "qq_bot_report_llm_total",
+    "Life report LLM polish outcomes",
+    ["result"],
+)
 
 
 def set_metrics_enabled(enabled: bool) -> None:

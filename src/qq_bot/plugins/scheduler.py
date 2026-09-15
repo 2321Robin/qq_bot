@@ -8,8 +8,9 @@ from nonebot.adapters.onebot.v11 import Bot as OneBotV11Bot
 
 from qq_bot.config import BotSettings, get_settings
 from qq_bot.observability import metrics
-from qq_bot.observability.logging import get_logger, record_event
+from qq_bot.observability.logging import LogContext, get_logger, new_request_id, record_event
 from qq_bot.services import game_digest
+from qq_bot.services.daily_report import build_life_evening_message, build_life_morning_message
 from qq_bot.services.game_calendar import load_game_calendar
 from qq_bot.services.scheduled_sender import (
     GroupMessageBot,
@@ -206,7 +207,9 @@ def _connected_onebot_bot() -> OneBotV11Bot | None:
 
 def _make_typed_job_runner(job: ScheduledJob):
     async def _run_typed_job() -> None:
-        await run_scheduled_job(job, _connected_onebot_bot())
+        # 定时任务同样有贯穿日志/指标/span 的合成 request_id（S6-OBS-01）
+        with LogContext(request_id=new_request_id()):
+            await run_scheduled_job(job, _connected_onebot_bot())
 
     return _run_typed_job
 
@@ -225,10 +228,28 @@ def _register_game_builders(settings: BotSettings) -> None:
     register_builder("game_evening", game_digest.build_game_evening_message)
 
 
+def _register_life_builders(settings: BotSettings) -> None:
+    """生活早/晚报生成器。板块级降级意味着配置不全是降级而非错误（与
+    SEARCH_ENABLED 的宽松语义一致），因此这里没有可失败的外部加载。"""
+    jobs = jobs_from_settings(settings)
+    if not any(job.job_type in ("life_morning", "life_evening") for job in jobs):
+        return
+
+    async def _morning(effective: BotSettings) -> str | None:
+        return await build_life_morning_message(effective)
+
+    async def _evening(effective: BotSettings) -> str | None:
+        return await build_life_evening_message(effective)
+
+    register_builder("life_morning", _morning)
+    register_builder("life_evening", _evening)
+
+
 settings = get_settings()
 if settings.scheduled_job_list:
     # 泛化路径为唯一权威；旧 SCHEDULED_CRON_* 变量不再参与注册
     _register_game_builders(settings)
+    _register_life_builders(settings)
     for job in jobs_from_settings(settings):
         scheduler.add_job(
             _make_typed_job_runner(job),

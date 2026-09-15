@@ -12,13 +12,17 @@ import asyncio
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Protocol
 
 import httpx
 
 from qq_bot.config import BotSettings
 from qq_bot.observability import metrics
+from qq_bot.observability.logging import current_request_id, new_request_id
+from qq_bot.observability.tracing import get_tracer
 from qq_bot.services.ai_client import request_ai_reply
+from qq_bot.services.countdown import entries_from_settings, format_countdown_section
 from qq_bot.services.reliability import (
     CircuitBreaker,
     CircuitOpenError,
@@ -275,3 +279,87 @@ async def polish_news(
         # 订阅套餐无按量账单：tokens/cost 如实记 0/None，requests 计数由表自增
         await quota.record_usage(scope_type="report", scope_id=0, tokens=0, cost=None)
     return PolishOutcome(ok=True, text=reply, reason="ok")
+
+
+# ---- 早/晚报组装器（S6-REPORT-05）----
+# 板块级独立降级：任何单一来源失败都渲染 '—' 占位，整报照发。
+_NEWS_TITLE = "📰 新闻"
+_HOT_TITLE = "🔥 热搜"
+_HEH_TITLE = "🎮 小黑盒热帖"
+_PLACEHOLDER = "—"
+
+
+async def _news_section(settings: BotSettings, client: AsyncGetClient | None) -> str:
+    try:
+        items = await fetch_section_items("news", settings, client)
+    except SourceError:
+        metrics.REPORT_SECTIONS_TOTAL.labels("news", "unavailable").inc()
+        return f"{_NEWS_TITLE}：{_PLACEHOLDER}"
+    outcome = await polish_news(items, settings, client=client)
+    metrics.REPORT_LLM_TOTAL.labels(outcome.reason).inc()
+    if outcome.ok:
+        return outcome.text
+    return format_news_template(items)
+
+
+async def _list_section(
+    endpoint: str,
+    title: str,
+    settings: BotSettings,
+    client: AsyncGetClient | None,
+) -> str:
+    try:
+        items = truncate_items(
+            await fetch_section_items(endpoint, settings, client),
+            settings.report_hotlist_max_items,
+        )
+    except SourceError:
+        metrics.REPORT_SECTIONS_TOTAL.labels(endpoint, "unavailable").inc()
+        return f"{title}：{_PLACEHOLDER}"
+    metrics.REPORT_SECTIONS_TOTAL.labels(endpoint, "ok").inc()
+    return "\n".join([title, *(f"· {item.title}" for item in items)])
+
+
+async def _build_life_message(
+    settings: BotSettings,
+    *,
+    kind: str,
+    client: AsyncGetClient | None = None,
+    today: date | None = None,
+) -> str:
+    effective_today = today if today is not None else date.today()
+    trace_id = current_request_id() or new_request_id()
+    tracer = get_tracer()
+    span = tracer.start_span("report.build", trace_id=trace_id)
+    try:
+        news_text, hot_text, heh_text = await asyncio.gather(
+            _news_section(settings, client),
+            _list_section("hot", _HOT_TITLE, settings, client),
+            _list_section("heh", _HEH_TITLE, settings, client),
+        )
+    finally:
+        tracer.end_span(span)
+    parts: list[str] = [*build_date_lines(effective_today, kind=kind)]
+    countdown = format_countdown_section(entries_from_settings(settings), effective_today)
+    if countdown:
+        parts.append(countdown)
+    parts.extend((news_text, hot_text, heh_text))
+    return "\n\n".join(parts)
+
+
+async def build_life_morning_message(
+    settings: BotSettings,
+    *,
+    client: AsyncGetClient | None = None,
+    today: date | None = None,
+) -> str | None:
+    return await _build_life_message(settings, kind="早报", client=client, today=today)
+
+
+async def build_life_evening_message(
+    settings: BotSettings,
+    *,
+    client: AsyncGetClient | None = None,
+    today: date | None = None,
+) -> str | None:
+    return await _build_life_message(settings, kind="晚报", client=client, today=today)

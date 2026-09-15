@@ -213,3 +213,54 @@ async def test_game_job_registration_requires_valid_calendar(tmp_path) -> None:
     assert "【游戏早报】" in message.extract_plain_text()
     assert "原神 7.0版本更新 今日开服" in message.extract_plain_text()
     assert _job_metric("game_morning", "ok") == before + 1
+
+
+async def test_life_job_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
+    """life_* 全链路：注册 → 组装（假客户端）→ 发送；指标 ok。"""
+    from qq_bot.services import daily_report as daily_report_module
+
+    class _FakeResponse:
+        def __init__(self, payload: object) -> None:
+            self._payload = payload
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> object:
+            return self._payload
+
+    class _Client:
+        async def get(self, url: str, *, timeout: float) -> _FakeResponse:
+            payloads = {
+                "news": {"items": [{"title": "新闻甲"}]},
+                "hot": {"items": [{"title": "热搜一"}]},
+                "heh": {"items": [{"title": "热帖一"}]},
+            }
+            return _FakeResponse(payloads[url.rsplit("/", 1)[-1]])
+
+    monkeypatch.setattr(daily_report_module, "_resolve_client", lambda client: _Client())
+    settings = _configured_settings(
+        scheduled_jobs="life_morning@07:30",
+        countdown_events="六级考试:2030-12-12",
+        report_60s_base_url="http://x",
+    )
+    fake_bot = FakeBot()
+    before = _job_metric("life_morning", "ok")
+    try:
+        scheduler_plugin._register_life_builders(settings)
+        await run_scheduled_job(
+            ScheduledJob(job_type="life_morning", hour=7, minute=30),
+            fake_bot,
+            settings=settings,
+        )
+    finally:
+        scheduler_jobs_module._CONTENT_BUILDERS.pop("life_morning", None)
+        scheduler_jobs_module._CONTENT_BUILDERS.pop("life_evening", None)
+
+    assert len(fake_bot.sent) == 1
+    group_id, message = fake_bot.sent[0]
+    text = message.extract_plain_text()
+    assert group_id == 111
+    assert "【早报】" in text
+    assert "· 新闻甲" in text
+    assert _job_metric("life_morning", "ok") == before + 1
