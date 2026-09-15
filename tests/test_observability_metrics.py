@@ -93,6 +93,7 @@ async def test_metrics_endpoint_returns_parseable_text() -> None:
         "qq_bot_route",
         "qq_bot_span_duration_seconds",
         "qq_bot_scheduler_send",
+        "qq_bot_scheduled_jobs",
     ):
         assert expected in families, f"missing metric family {expected}"
 

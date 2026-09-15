@@ -155,6 +155,13 @@ _define(
     "Scheduled send results",
     ["result"],
 )
+_define(
+    "SCHEDULED_JOBS_TOTAL",
+    Counter,
+    "qq_bot_scheduled_jobs_total",
+    "Scheduled job runs by job type and result",
+    ["job", "result"],
+)
 
 
 def set_metrics_enabled(enabled: bool) -> None:
