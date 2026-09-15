@@ -590,3 +590,15 @@ def test_scheduled_jobs_and_countdown_env_roundtrip(monkeypatch: pytest.MonkeyPa
     settings = BotSettings()
     assert settings.scheduled_job_list == [("game_morning", 7, 30)]
     assert settings.countdown_event_list == [("六级考试", "2026-12-12")]
+
+
+def test_game_calendar_path_default_and_override(monkeypatch):
+    monkeypatch.delenv("GAME_CALENDAR_PATH", raising=False)
+    assert BotSettings().game_calendar_path == "data/game_calendar.json"
+    monkeypatch.setenv("GAME_CALENDAR_PATH", "data/custom_calendar.json")
+    assert BotSettings().game_calendar_path == "data/custom_calendar.json"
+
+
+def test_game_calendar_path_rejects_blank():
+    with pytest.raises(ValueError, match="game_calendar_path"):
+        BotSettings(game_calendar_path="   ")

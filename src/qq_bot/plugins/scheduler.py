@@ -1,4 +1,7 @@
+import inspect
 import logging
+
+from pathlib import Path
 
 from nonebot import get_bots, require
 from nonebot.adapters.onebot.v11 import Bot as OneBotV11Bot
@@ -6,6 +9,8 @@ from nonebot.adapters.onebot.v11 import Bot as OneBotV11Bot
 from qq_bot.config import BotSettings, get_settings
 from qq_bot.observability import metrics
 from qq_bot.observability.logging import get_logger, record_event
+from qq_bot.services import game_digest
+from qq_bot.services.game_calendar import load_game_calendar
 from qq_bot.services.scheduled_sender import (
     GroupMessageBot,
     build_scheduler_jobs_kwargs,
@@ -13,7 +18,12 @@ from qq_bot.services.scheduled_sender import (
     filter_allowed_group_ids,
     send_group_messages,
 )
-from qq_bot.services.scheduler_jobs import ScheduledJob, get_builder, jobs_from_settings
+from qq_bot.services.scheduler_jobs import (
+    ScheduledJob,
+    get_builder,
+    jobs_from_settings,
+    register_builder,
+)
 
 require("nonebot_plugin_apscheduler")
 from nonebot_plugin_apscheduler import scheduler  # noqa: E402
@@ -125,7 +135,9 @@ async def run_scheduled_job(
             job=job.job_id,
         )
         return
-    message = await builder(effective)
+    # 生成器允许同步（确定性规则引擎，如 game_*）或异步（static/网络型）签名
+    built = builder(effective)
+    message = await built if inspect.isawaitable(built) else built
     if not message or not message.strip():
         metrics.SCHEDULED_JOBS_TOTAL.labels(job.job_type, "skipped_empty").inc()
         record_event(
@@ -199,9 +211,24 @@ def _make_typed_job_runner(job: ScheduledJob):
     return _run_typed_job
 
 
+def _register_game_builders(settings: BotSettings) -> None:
+    """Load and validate the game calendar, then register game_* builders.
+
+    坏文件在这里抛 GameCalendarError → 插件加载失败 → 启动失败（S6-GAME-04：
+    带病日历宁可拒绝启动，也不静默漏提醒）。
+    """
+    jobs = jobs_from_settings(settings)
+    if not any(job.job_type in ("game_morning", "game_evening") for job in jobs):
+        return
+    game_digest.set_calendar(load_game_calendar(Path(settings.game_calendar_path)))
+    register_builder("game_morning", game_digest.build_game_morning_message)
+    register_builder("game_evening", game_digest.build_game_evening_message)
+
+
 settings = get_settings()
 if settings.scheduled_job_list:
     # 泛化路径为唯一权威；旧 SCHEDULED_CRON_* 变量不再参与注册
+    _register_game_builders(settings)
     for job in jobs_from_settings(settings):
         scheduler.add_job(
             _make_typed_job_runner(job),

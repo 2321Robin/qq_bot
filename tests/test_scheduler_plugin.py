@@ -6,6 +6,10 @@ caller) so the generalized path is testable without a live NoneBot driver.
 
 from __future__ import annotations
 
+import json
+
+from datetime import date
+
 import bot  # noqa: F401  (initializes NoneBot before plugin imports)
 import pytest
 from prometheus_client import REGISTRY
@@ -13,6 +17,7 @@ from prometheus_client import REGISTRY
 from qq_bot.config import BotSettings
 from qq_bot.plugins import scheduler as scheduler_plugin
 from qq_bot.plugins.scheduler import run_scheduled_job
+from qq_bot.services.game_calendar import GameCalendarError
 from qq_bot.services import scheduler_jobs as scheduler_jobs_module
 from qq_bot.services import scheduled_sender as scheduled_sender_module
 from qq_bot.services.reliability import CircuitBreaker
@@ -153,3 +158,58 @@ async def test_legacy_path_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
     await scheduler_plugin.send_daily_messages()
 
     assert recorded == [(fake_bot, [111], "早上好")]
+
+
+async def test_game_job_registration_requires_valid_calendar(tmp_path) -> None:
+    # S6-GAME-04：注册 game_* job 时加载日历；坏文件 → GameCalendarError（启动即失败）
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"schema_version": 2}', encoding="utf-8")
+    settings = _configured_settings(
+        scheduled_jobs="game_morning@07:30",
+        game_calendar_path=str(bad),
+    )
+    with pytest.raises(GameCalendarError):
+        scheduler_plugin._register_game_builders(settings)
+
+    # 合法文件（版本活动就在今天）→ builder 注册生效，run_scheduled_job 全链路产出消息
+    good = tmp_path / "good.json"
+    good.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "events": [
+                    {
+                        "game": "原神",
+                        "kind": "version",
+                        "title": "7.0版本更新",
+                        "start": date.today().isoformat(),
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    settings = _configured_settings(
+        scheduled_jobs="game_morning@07:30",
+        game_calendar_path=str(good),
+    )
+    fake_bot = FakeBot()
+    before = _job_metric("game_morning", "ok")
+    try:
+        scheduler_plugin._register_game_builders(settings)
+        await run_scheduled_job(
+            ScheduledJob(job_type="game_morning", hour=7, minute=30),
+            fake_bot,
+            settings=settings,
+        )
+    finally:
+        scheduler_jobs_module._CONTENT_BUILDERS.pop("game_morning", None)
+        scheduler_jobs_module._CONTENT_BUILDERS.pop("game_evening", None)
+
+    assert len(fake_bot.sent) == 1
+    group_id, message = fake_bot.sent[0]
+    assert group_id == 111
+    assert "【游戏早报】" in message.extract_plain_text()
+    assert "原神 7.0版本更新 今日开服" in message.extract_plain_text()
+    assert _job_metric("game_morning", "ok") == before + 1

@@ -165,6 +165,8 @@ class BotSettings(BaseSettings):
     scheduled_jobs: str = ""
     # 倒计时事件（名称:YYYY-MM-DD 逗号分隔）；过期自动隐藏
     countdown_events: str = ""
+    # 游戏日历文件（S6-GAME-01）；模板见 tests/fixtures/game_reports/ 目录
+    game_calendar_path: str = "data/game_calendar.json"
 
     ai_api_key: str = Field(default="", repr=False)
     ai_base_url: str = "https://api.openai.com/v1"
@@ -296,6 +298,14 @@ class BotSettings(BaseSettings):
     def validate_countdown_events(cls, value: str) -> str:
         parse_countdown_events(value)
         return value.strip()
+
+    @field_validator("game_calendar_path")
+    @classmethod
+    def validate_game_calendar_path(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("game_calendar_path must be a non-empty string")
+        return value
 
     @field_validator("named_mention_replacements")
     @classmethod
