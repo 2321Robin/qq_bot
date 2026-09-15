@@ -91,6 +91,7 @@ flowchart LR
 | 精灵查询 | `/精灵 迪莫`、`/洛克 迪莫` | 本地精灵数据查询，优先发送静态图卡；`ROCO_ENABLED=false` 时整体弃置 |
 | 技能查询 | `/技能 闪光` | 查询技能效果及可学习精灵；`ROCO_ENABLED=false` 时整体弃置 |
 | AI 对话 | `ai 你好` 或 @机器人 | 多模型支持，群聊记忆，本地知识增强（`ROCO_ENABLED=false` 时弃置）；`AGENT_ENABLED=true` 时走结构化 Tool Calling 链路 |
+| 自主群聊插话 | `AUTO_CHAT_ENABLED=true` | 非 @ 消息经 规则预筛→采样→LLM 决策门（fail-closed）→群友模式生成（配置化人设）自主决定是否插话；被"点名"（`PERSONA_NAME`/别名）跳过采样与决策门；冷却/小时/每日上限/负反馈退避护栏；发送前随机延迟 |
 | 记忆命令 | `/记忆保存`、`/记忆查看`、`/记忆删除`、`/记忆关闭` | 显式保存/查看/删除/关闭长期偏好与分层记忆（阶段 2） |
 | 联网搜索 | 含"今天""搜索"等词的提问 | 可选 Tavily 搜索增强 |
 | 定时消息 | 环境变量配置 | 按 Cron 时间向指定群发送消息；`SCHEDULED_JOBS` 非空时按 `类型@HH:MM` 任务表泛化调度（生成器可注册扩展），为空时行为与旧配置完全一致 |
@@ -107,6 +108,15 @@ flowchart LR
 - **群聊记忆：** SQLite 存储短期消息，支持"参考最近 N 条""@某人"等自然语言检索
 - **主备模型：** 主模型不可用时自动切换到备用 OpenAI 兼容接口
 - **联网搜索：** 可选 Tavily 搜索，结果注入模型上下文并要求给出来源
+
+### 自主群聊插话（S7-AUTO，`AUTO_CHAT_ENABLED=true`）
+
+- **四段式管道：** 非 @ 消息先过零成本规则预筛（命令/过短/敏感词/冷却/上限/退避逐条短路），通过者按 `AUTO_CHAT_SAMPLE_RATE`（默认 0.2）采样进 LLM 决策门；决策门输出严格 JSON（`should_reply/reason/confidence`），低置信度、解析失败、模型故障一律**不回**（fail-closed）。
+- **群友模式生成：** 独立口语化 prompt（人设 + 近期消息上文 + 1~2 短句约束），不走问答链路的 JSON claims/证据格式；生成结果二次过敏感词表，失败静默放弃。
+- **人设配置：** `PERSONA_NAME`（同时用于"点名"匹配）、`PERSONA_ALIASES`、`PERSONA_PROMPT`（空 = 内置默认风格）；被 @ 的问答链路同样注入人设段，grounding 约束不变。
+- **护栏：** 每群冷却 `AUTO_CHAT_COOLDOWN_SECONDS`（默认 300s）、每小时/每日上限（6/30）、负反馈退避（"闭嘴/别说话"等指向机器人 → `AUTO_CHAT_NEGATIVE_BACKOFF_SECONDS` 默认 30 分钟内一切自主插话暂停，含点名通道；被 @ 问答不受影响）；生成前后各过一次 quota 准入。
+- **观测：** `qq_bot_auto_chat_total{stage,result}` 指标（prefilter/gate/generate/send 各阶段结果）+ `auto.gate`/`auto.generate` span；日志遵守隐私白名单，不落消息内容。
+- **状态：** 冷却/计数/退避为进程内存态，重启清零（只影响一轮冷却）。
 
 ### Agent 模式（阶段 2，`AGENT_ENABLED=true`）
 

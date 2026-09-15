@@ -102,6 +102,9 @@ Deployers should review the privacy policies of their chosen AI
 provider and Tavily, and are responsible for the upstream sources
 proxied by their self-hosted 60s instance.
 
+
+**自主群聊插话（S7-AUTO）：** 开启 `AUTO_CHAT_ENABLED` 后，机器人可能自主回复未被 @ 的群消息。为此，该群最近 `AUTO_CHAT_CONTEXT_MESSAGES` 条消息（默认 10 条）会作为上下文发送给已配置的模型服务商，用于插话决策与回复生成——与既有 AI 对话的记忆上下文同一边界、同一服务商集合。是否插话的决策结果只以计数指标（`qq_bot_auto_chat_total{stage,result}`）与哈希维度记录，日志不落消息正文、prompt 或明文群号/用户号；"点名"匹配、敏感词与负反馈词表仅在本进程内做子串匹配，不出网。
+
 ## 4. Access and deletion
 
 - The SQLite database is entirely under the deployer's control.
