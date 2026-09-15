@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "events": [
+    { "game": "原神", "kind": "version", "title": "6.1版本更新", "start": "2026-10-21" },
+    { "game": "明日方舟", "kind": "event", "title": "跨年欢庆", "start": "2026-12-25", "end": "2027-01-08" }
+  ],
+  "weekly": {
+    "day": "sunday",
+    "items": ["原神周本", "星穹铁道差分宇宙", "明日方舟剿灭", "终末地每周事务"]
+  },
+  "monthly": {
+    "trigger": "last_day",
+    "items": ["原神幻想真境剧诗", "原神/星穹铁道商城5+5抽", "明日方舟黄票商店"]
+  }
+}
