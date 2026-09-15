@@ -39,6 +39,8 @@ data/chat_memory.sqlite3*
 /data/.cache/
 /data/.staging/
 /data/roco_search.sqlite3
+# Game calendar — private, hand-maintained (template ships in tests/fixtures)
+/data/game_calendar.json
 
 # Fixture outputs produced by the offline CI data-gate rehearsal
 /tests/fixtures/data_pipeline/reports/

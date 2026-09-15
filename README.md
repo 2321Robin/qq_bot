@@ -95,6 +95,7 @@ flowchart LR
 | 联网搜索 | 含"今天""搜索"等词的提问 | 可选 Tavily 搜索增强 |
 | 定时消息 | 环境变量配置 | 按 Cron 时间向指定群发送消息；`SCHEDULED_JOBS` 非空时按 `类型@HH:MM` 任务表泛化调度（生成器可注册扩展），为空时行为与旧配置完全一致 |
 | 倒计时 | `COUNTDOWN_EVENTS` | `名称:日期` 倒计时事件，过期自动隐藏，作为板块出现在生活早/晚报（阶段 D 挂载） |
+| 游戏日历提醒 | `SCHEDULED_JOBS` 的 `game_morning`/`game_evening` + `GAME_CALENDAR_PATH` | 手工维护的游戏活动日历（模板：`tests/fixtures/game_reports/game_calendar.template.json`）驱动确定性规则引擎：版本更新仅早报、活动开启/结束窗口 2 天、周常周日、月常月末、过期自动隐藏；空内容不发消息，非法文件拒绝启动 |
 | 命名提及 | `NAMED_MENTION_REPLACEMENTS` | 定时消息与 AI 回复中的 `@昵称` 替换为真正的 @提及（账号仅从配置读取，不写死在源码） |
 | 配额与预算（阶段 4） | `QUOTA_ENABLED` 等 | 按群滑动窗口限流与每日费用上限（`actual` 强制、`estimated/unknown` 只记录）；`/配额`、`/最近故障` 管理员命令（按 `ADMIN_USER_IDS` 鉴权） |
 
