@@ -17,7 +17,9 @@ from qq_bot.runtime import (
     get_runtime,
 )
 from qq_bot.services.ai_client import AIReplyError, request_ai_reply
+from qq_bot.services.auto_chat import run_auto_chat
 from qq_bot.services.chat_memory import ChatMemoryRepository
+from qq_bot.services.persona import load_persona
 from qq_bot.services.memory_prompt import (
     extract_at_user_ids,
     extract_at_user_ids_before_separator,
@@ -120,6 +122,15 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                         logger.exception(
                             "Chat memory write failed; continuing without storing message"
                         )
+                    else:
+                        if settings.auto_chat_enabled:
+                            await _maybe_auto_reply(
+                                event,
+                                raw_text=raw_text,
+                                settings=settings,
+                                memory_store=memory_store,
+                                http_client=http_client,
+                            )
                 return
 
             if not prompt:
@@ -332,6 +343,46 @@ async def _handle_agent_chat(
         return None
     store = orchestrator.last_store or EvidenceStore()
     return render_answer(outcome, store)
+
+
+async def _maybe_auto_reply(
+    event: GroupMessageEvent,
+    *,
+    raw_text: str,
+    settings: BotSettings,
+    memory_store: ChatMemoryRepository,
+    http_client: object | None,
+) -> None:
+    """Bridge from the plugin into the auto-chat pipeline (S7-AUTO-07).
+    Send/quota are injected so the service stays matcher- and runtime-free."""
+    load_persona(settings)  # 前置校验：人设配置可解析（坏配置早失败）
+
+    async def quota_check() -> bool:
+        try:
+            quota_service = get_runtime().get_quota_service()
+        except RuntimeStateError:
+            return True
+        decision = await quota_service.check_admission(
+            scope_type="group", scope_id=event.group_id
+        )
+        if not decision.allowed:
+            metrics.QUOTA_DENIED.labels("group", decision.reason).inc()
+        return decision.allowed
+
+    async def send(text: str) -> None:
+        await finish_with_send_errors_logged(
+            ai_chat, replace_named_mentions(text, settings.named_mention_replacement_map)
+        )
+
+    await run_auto_chat(
+        event=event,
+        raw_text=raw_text,
+        settings=settings,
+        memory_store=memory_store,
+        send=send,
+        quota_check=quota_check,
+        client=http_client,
+    )
 
 
 def _mentions_self(event: GroupMessageEvent) -> bool:

@@ -1824,3 +1824,129 @@ class _QuotaRuntime:
 
     def get_quota_service(self):
         return self._service
+
+
+# ---- 自主群聊插话接线（S7-AUTO-07）----
+
+
+@pytest.mark.asyncio
+async def test_auto_chat_disabled_keeps_legacy_behavior(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = {"auto": 0}
+
+    async def fake_run_auto_chat(**kwargs):
+        calls["auto"] += 1
+
+    written: list[dict] = []
+
+    class RecordingStore(EmptyMemoryStore):
+        async def add_message(self, **kwargs) -> int:
+            written.append(kwargs)
+            return 123
+
+    monkeypatch.setattr(ai_chat_plugin, "run_auto_chat", fake_run_auto_chat)
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", auto_chat_enabled=False),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: RecordingStore())
+
+    await ai_chat_plugin.handle_ai_chat(FakeEvent("随便聊聊"))  # type: ignore[arg-type]
+
+    assert calls["auto"] == 0
+    assert len(written) == 1
+    assert written[0]["message_text"] == "随便聊聊"
+    assert written[0]["is_ai_prompt"] is False
+
+
+@pytest.mark.asyncio
+async def test_auto_chat_enabled_routes_plain_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict = {}
+
+    async def fake_run_auto_chat(**kwargs):
+        captured.update(kwargs)
+
+    class RecordingStore(EmptyMemoryStore):
+        async def add_message(self, **kwargs) -> int:
+            return 123
+
+    monkeypatch.setattr(ai_chat_plugin, "run_auto_chat", fake_run_auto_chat)
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", auto_chat_enabled=True),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: RecordingStore())
+
+    await ai_chat_plugin.handle_ai_chat(FakeEvent("小洛在吗"))  # type: ignore[arg-type]
+
+    assert captured["raw_text"] == "小洛在吗"
+    assert captured["settings"].auto_chat_enabled is True
+    assert callable(captured["send"])
+    assert callable(captured["quota_check"])
+    assert captured["memory_store"] is not None
+
+
+@pytest.mark.asyncio
+async def test_auto_chat_skipped_when_memory_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = {"auto": 0}
+
+    async def fake_run_auto_chat(**kwargs):
+        calls["auto"] += 1
+
+    def broken_repository():
+        raise RuntimeError("no runtime")
+
+    monkeypatch.setattr(ai_chat_plugin, "run_auto_chat", fake_run_auto_chat)
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", auto_chat_enabled=True),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", broken_repository)
+
+    await ai_chat_plugin.handle_ai_chat(FakeEvent("随便聊聊"))  # type: ignore[arg-type]
+
+    assert calls["auto"] == 0
+
+
+@pytest.mark.asyncio
+async def test_auto_chat_quota_and_send_closures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """send 闭包走 replace_named_mentions + finish；quota 闭包走 runtime。"""
+    captured: dict = {}
+
+    async def fake_run_auto_chat(**kwargs):
+        captured.update(kwargs)
+
+    class RecordingStore(EmptyMemoryStore):
+        async def add_message(self, **kwargs) -> int:
+            return 123
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(ai_chat_plugin, "run_auto_chat", fake_run_auto_chat)
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(
+            allowed_group_ids="1001",
+            auto_chat_enabled=True,
+            named_mention_replacements="@小洛=2880000001",
+        ),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: RecordingStore())
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    await ai_chat_plugin.handle_ai_chat(FakeEvent("来玩"))  # type: ignore[arg-type]
+
+    with pytest.raises(FinishCalled):
+        await captured["send"]("你好，@小洛")
