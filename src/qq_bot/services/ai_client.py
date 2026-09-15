@@ -238,6 +238,96 @@ async def request_ai_reply(
         )
 
 
+async def request_completion(
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    settings: BotSettings | None = None,
+    client: AsyncPostClient | None = None,
+    model: str = "",
+    max_tokens: int = 256,
+    temperature: float = 0.7,
+    json_mode: bool = False,
+) -> str:
+    """Single-turn completion with primary->fallback switching (S7-AUTO).
+
+    Used by the auto-chat gate (json_mode + router model) and the casual
+    persona replies. Separated from ``request_ai_reply`` because these calls
+    carry no search/memory/roco context blocks."""
+    active_settings = settings or get_settings()
+    if not active_settings.has_ai_config():
+        raise AIReplyError("AI_API_KEY is not configured")
+    active_client = _resolve_client(client)
+    chosen_model = model.strip() or active_settings.ai_model
+
+    def _payload(for_model: str) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "model": for_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
+        return payload
+
+    try:
+        return await _call_small_provider(
+            _payload(chosen_model),
+            settings=active_settings,
+            client=active_client,
+            base_url=active_settings.normalized_ai_base_url,
+            api_key=active_settings.ai_api_key,
+            model=chosen_model,
+            breaker_name=BREAKER_AI_PRIMARY,
+        )
+    except AIReplyError:
+        if not active_settings.has_ai_fallback_config():
+            raise
+        metrics.FALLBACKS.labels("ai").inc()
+        # 备用侧永远用 ai_fallback_model（与 _call_provider 一致）：
+        # 显式指定的主侧模型（如 router 便宜模型）在备用商可能不存在。
+        effective = active_settings.ai_fallback_model
+        return await _call_small_provider(
+            _payload(effective),
+            settings=active_settings,
+            client=active_client,
+            base_url=active_settings.normalized_ai_fallback_base_url,
+            api_key=active_settings.ai_fallback_api_key,
+            model=effective,
+            breaker_name=BREAKER_AI_FALLBACK,
+        )
+
+
+async def _call_small_provider(
+    payload: dict[str, Any],
+    *,
+    settings: BotSettings,
+    client: AsyncPostClient,
+    base_url: str,
+    api_key: str,
+    model: str,
+    breaker_name: str,
+) -> str:
+    data = await _post_chat_completion(
+        payload,
+        settings=settings,
+        client=client,
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        breaker_name=breaker_name,
+    )
+    normalized = _normalize_response(data)
+    await _account_usage(model, normalized.usage)
+    if normalized.text is None:
+        raise AIReplyError("AI API returned an empty response")
+    return normalized.text
+
+
 async def _call_provider(
     prompt: str,
     *,

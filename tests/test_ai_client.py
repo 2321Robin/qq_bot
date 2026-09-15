@@ -807,3 +807,97 @@ def test_provider_capabilities_reflect_config() -> None:
     assert caps.usage is True
     full = provider_capabilities(BotSettings())
     assert full.tools is True and full.structured_output is True
+
+
+# ---- 通用单轮补全 request_completion（S7-AUTO）----
+
+
+def _completion_payload(content: str) -> dict:
+    return {
+        "choices": [
+            {"message": {"content": content, "role": "assistant"}, "finish_reason": "stop"}
+        ],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    }
+
+
+@pytest.mark.asyncio
+async def test_request_completion_returns_text_and_posts_expected_payload() -> None:
+    client = FakeClient(FakeResponse(_completion_payload("好的呀")))
+    settings = _fast_retry_settings(ai_api_key="k", ai_model="test-model")
+    reply = await ai_client.request_completion(
+        system_prompt="sys",
+        user_prompt="usr",
+        settings=settings,
+        client=client,
+        max_tokens=100,
+    )
+    assert reply == "好的呀"
+    body = client.calls[0]["json"]
+    assert body["model"] == "test-model"
+    assert body["max_tokens"] == 100
+    assert body["messages"][0] == {"role": "system", "content": "sys"}
+    assert body["messages"][1] == {"role": "user", "content": "usr"}
+    assert "response_format" not in body
+
+
+@pytest.mark.asyncio
+async def test_request_completion_json_mode_sets_response_format() -> None:
+    client = FakeClient(FakeResponse(_completion_payload('{"a": 1}')))
+    settings = _fast_retry_settings(ai_api_key="k", ai_model="test-model")
+    await ai_client.request_completion(
+        system_prompt="sys",
+        user_prompt="usr",
+        settings=settings,
+        client=client,
+        json_mode=True,
+    )
+    assert client.calls[0]["json"]["response_format"] == {"type": "json_object"}
+
+
+@pytest.mark.asyncio
+async def test_request_completion_empty_model_reuses_settings_model() -> None:
+    client = FakeClient(FakeResponse(_completion_payload("好")))
+    settings = _fast_retry_settings(ai_api_key="k", ai_model="main-model")
+    await ai_client.request_completion(
+        system_prompt="sys", user_prompt="usr", settings=settings, client=client
+    )
+    assert client.calls[0]["json"]["model"] == "main-model"
+
+
+@pytest.mark.asyncio
+async def test_request_completion_falls_back_to_fallback_model() -> None:
+    client = SequenceClient(
+        [
+            HttpErrorResponse(_completion_payload("x")),
+            HttpErrorResponse(_completion_payload("x")),
+            FakeResponse(_completion_payload("备用")),
+        ]
+    )
+    settings = _fast_retry_settings(
+        ai_api_key="k",
+        ai_model="primary-model",
+        ai_fallback_api_key="fk",
+        ai_fallback_model="fallback-model",
+    )
+    reply = await ai_client.request_completion(
+        system_prompt="sys",
+        user_prompt="usr",
+        settings=settings,
+        client=client,
+        model="cheap-model",
+    )
+    assert reply == "备用"
+    assert client.calls[0]["json"]["model"] == "cheap-model"
+    assert client.calls[-1]["json"]["model"] == "fallback-model"
+
+
+@pytest.mark.asyncio
+async def test_request_completion_requires_api_key() -> None:
+    settings = BotSettings(ai_api_key="")
+    with pytest.raises(AIReplyError):
+        await ai_client.request_completion(
+            system_prompt="sys", user_prompt="usr", settings=settings, client=FakeClient(
+                FakeResponse(_completion_payload("x"))
+            )
+        )
