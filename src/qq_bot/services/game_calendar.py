@@ -10,8 +10,10 @@ silently skip reminders, so every IO/JSON error is normalized to
 
 from __future__ import annotations
 
+import calendar as _calendar_module
 import json
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -101,9 +103,7 @@ def parse_game_calendar(raw: object) -> GameCalendar:
         if key in seen:
             raise GameCalendarError(f"duplicate event entry: {key}")
         seen.add(key)
-        events.append(
-            GameEvent(game=game, kind=kind, title=title.strip(), start=start, end=end)
-        )
+        events.append(GameEvent(game=game, kind=kind, title=title.strip(), start=start, end=end))
     weekly_raw = raw.get("weekly")
     weekly = None
     if weekly_raw is not None:
@@ -124,8 +124,10 @@ def parse_game_calendar(raw: object) -> GameCalendar:
 
 
 def _parse_items(value: object, field: str) -> tuple[str, ...]:
-    if not isinstance(value, list) or not value or not all(
-        isinstance(item, str) and item.strip() for item in value
+    if (
+        not isinstance(value, list)
+        or not value
+        or not all(isinstance(item, str) and item.strip() for item in value)
     ):
         raise GameCalendarError(f"{field} must be a non-empty list of non-empty strings")
     return tuple(item.strip() for item in value)
@@ -137,3 +139,100 @@ def load_game_calendar(path: Path) -> GameCalendar:
     except (OSError, json.JSONDecodeError) as exc:
         raise GameCalendarError(f"cannot read game calendar {path}: {exc}") from exc
     return parse_game_calendar(raw)
+
+
+# ---- 规则引擎（S6-GAME-02）：纯函数、离线、today 可注入 ----
+
+ENDING_SOON_WINDOW_DAYS = 2
+
+_VERSION_FMT = "{game} {title} 今日开服"
+_START_FMT = "{game} 「{title}」今日开启"
+_ENDING_TODAY_FMT = "{game} 「{title}」今日结束"
+_ENDING_SOON_FMT = "{game} 「{title}」还有 {days} 天结束（{month}月{day}日截止）"
+
+
+def _is_live(event: GameEvent, today: date) -> bool:
+    # 过期隐藏：version 看 start，event 看 end（S6-GAME-02）
+    boundary = event.start if event.kind == "version" else event.end
+    assert boundary is not None
+    return boundary >= today
+
+
+def is_last_day_of_month(today: date) -> bool:
+    last_day = _calendar_module.monthrange(today.year, today.month)[1]
+    return today.day == last_day
+
+
+def _merge_cleanup(weekly: Iterable[str], monthly: Iterable[str]) -> tuple[str, ...]:
+    merged: list[str] = []
+    for item in (*weekly, *monthly):
+        if item not in merged:
+            merged.append(item)
+    return tuple(merged)
+
+
+@dataclass(frozen=True)
+class MorningSections:
+    versions: tuple[str, ...]
+    starting: tuple[str, ...]
+
+    def is_empty(self) -> bool:
+        return not self.versions and not self.starting
+
+
+@dataclass(frozen=True)
+class EveningSections:
+    cleanup: tuple[str, ...]
+    ending_today: tuple[str, ...]
+    ending_soon: tuple[str, ...]
+
+    def is_empty(self) -> bool:
+        return not self.cleanup and not self.ending_today and not self.ending_soon
+
+
+def morning_sections(calendar: GameCalendar, today: date) -> MorningSections:
+    live = [event for event in calendar.events if _is_live(event, today)]
+    versions = tuple(
+        _VERSION_FMT.format(game=e.game, title=e.title)
+        for e in live
+        if e.kind == "version" and e.start == today
+    )
+    starting = tuple(
+        _START_FMT.format(game=e.game, title=e.title)
+        for e in live
+        if e.kind == "event" and e.start == today
+    )
+    return MorningSections(versions=versions, starting=starting)
+
+
+def evening_sections(calendar: GameCalendar, today: date) -> EveningSections:
+    live = [
+        event
+        for event in calendar.events
+        if event.kind == "event" and event.end is not None and _is_live(event, today)
+    ]
+    ending_today = tuple(
+        _ENDING_TODAY_FMT.format(game=e.game, title=e.title) for e in live if e.end == today
+    )
+    ending_soon = tuple(
+        _ENDING_SOON_FMT.format(
+            game=e.game, title=e.title, days=(e.end - today).days, month=e.end.month, day=e.end.day
+        )
+        for e in live
+        if 1 <= (e.end - today).days <= ENDING_SOON_WINDOW_DAYS
+    )
+    cleanup: tuple[str, ...] = ()
+    weekly_items: tuple[str, ...] = ()
+    monthly_items: tuple[str, ...] = ()
+    if calendar.weekly is not None and today.weekday() == calendar.weekly.weekday:
+        weekly_items = calendar.weekly.items
+    if calendar.monthly is not None and is_last_day_of_month(today):
+        monthly_items = calendar.monthly.items
+    if weekly_items or monthly_items:
+        parts = []
+        if weekly_items:
+            parts.append("周常清理：" + " / ".join(calendar.weekly.items))
+        if monthly_items:
+            parts.append("月常清理：" + " / ".join(calendar.monthly.items))
+        cleanup = ("🧹 " + "；".join(parts),)
+    return EveningSections(cleanup=cleanup, ending_today=ending_today, ending_soon=ending_soon)
