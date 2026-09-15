@@ -25,7 +25,7 @@ docs/*
 docs/assets/*
 !docs/assets/screenshots/
 
-data/chat_memory.sqlite3
+data/chat_memory.sqlite3*
 # Game data — not redistributable
 /data/roco_pet_details/
 /data/roco_assets/
