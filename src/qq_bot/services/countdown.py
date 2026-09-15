@@ -35,9 +35,7 @@ def _format_entry(entry: CountdownEntry, today: date) -> str | None:
     return f"距离{entry.name}还有 {days} 天"
 
 
-def format_countdown_section(
-    entries: Sequence[CountdownEntry], today: date | None = None
-) -> str:
+def format_countdown_section(entries: Sequence[CountdownEntry], today: date | None = None) -> str:
     effective_today = today if today is not None else date.today()
     lines = [
         line
