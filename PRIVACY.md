@@ -86,11 +86,21 @@ When the bot is running, it may process the following categories of data:
   are sent to **Tavily** (https://tavily.com/) over HTTPS. Search result
   excerpts are treated as untrusted data; the bot never re-fetches the
   result URLs and only reports URLs the search tool actually returned.
+- **Scheduled life reports (optional, stage D):** When
+  `SCHEDULED_JOBS` enables `life_morning`/`life_evening`, the bot fetches
+  news, hot lists and gaming-community posts from the deployer's own
+  60s-API instance (`REPORT_60S_BASE_URL`). These requests carry **no
+  group ids, user ids or message content** — they are anonymous content
+  fetches on a fixed schedule. When `REPORT_AI_ENABLED=true`, only the
+  fetched news titles (no user data) are sent to the AI provider for
+  reformatting; the deterministic check and template fallback keep the
+  provider from becoming a source of facts.
 - **No other external transmission:** The bot does not phone home,
   send analytics, or transmit group data to any other endpoint.
 
 Deployers should review the privacy policies of their chosen AI
-provider and Tavily.
+provider and Tavily, and are responsible for the upstream sources
+proxied by their self-hosted 60s instance.
 
 ## 4. Access and deletion
 
