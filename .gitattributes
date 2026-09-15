@@ -1,0 +1,6 @@
+# Hash-sensitive test data: refresh manifests record sha256 of these files'
+# exact bytes, and the eval gate freezes dataset hashes. With core.autocrlf=true
+# a fresh checkout would otherwise get CRLF and every hash would mismatch
+# (phantom "modified" entries in data-pipeline diff tests). Never convert them.
+tests/fixtures/** -text
+evals/cases/** -text
