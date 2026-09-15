@@ -112,9 +112,18 @@ def build_chat_payload(
     if not cleaned_prompt:
         raise AIReplyError("prompt cannot be empty")
 
+    # 人设注入（S7-AUTO-09）：人设来自 settings，随 _call_provider 的
+    # model_copy 透传，无需改函数签名；grounding 约束全部保留。
+    persona_name = settings.persona_name.strip()
+    identity = (
+        f"你是QQ群里的助手“{persona_name}”，像 QQ 群友聊天。"
+        if persona_name
+        else "你是一个自然的 QQ 群助手，像 QQ 群友聊天。"
+    )
     system_prompt = (
-        "你是一个自然的 QQ 群助手，像 QQ 群友聊天。"
-        f"当前本地时间：{current_time or _format_current_local_time()}。"
+        identity
+        + f"你的说话风格：{settings.effective_persona_prompt}。"
+        + f"当前本地时间：{current_time or _format_current_local_time()}。"
         "回答当前日期、时间、星期时必须以该本地时间为准，不要自行推算或改写。"
         "先直接回答问题，不要总用“好的”“当然”“我来整理”开头。"
         "语气自然，不要像新闻稿或客服；不确定就说不确定。"

@@ -901,3 +901,24 @@ async def test_request_completion_requires_api_key() -> None:
                 FakeResponse(_completion_payload("x"))
             )
         )
+
+
+# ---- 被 @ 链路人设注入（S7-AUTO-09）----
+
+
+def test_build_chat_payload_injects_persona_when_configured() -> None:
+    settings = BotSettings(
+        ai_model="test-model", persona_name="小洛", persona_prompt="毒舌但心软"
+    )
+    payload = build_chat_payload("你好", settings)
+    system = payload["messages"][0]["content"]
+    assert "小洛" in system
+    assert "毒舌但心软" in system
+    assert "不要编造事实" in system  # grounding 约束保留
+
+
+def test_build_chat_payload_without_persona_keeps_default_style_line() -> None:
+    payload = build_chat_payload("你好", BotSettings(ai_model="test-model"))
+    system = payload["messages"][0]["content"]
+    assert "像 QQ 群友聊天" in system
+    assert "说话风格" in system  # 内置默认风格仍然注入

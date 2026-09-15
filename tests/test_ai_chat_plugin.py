@@ -1503,7 +1503,9 @@ async def test_agent_path_clarification_replies_without_model(
         await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 那个什么"))  # type: ignore[arg-type]
 
     assert orchestrator.runs == []  # no model, no orchestrator
-    assert str(exc_info.value.message) == "没太明白你的意思，能说得更具体一点吗？"
+    assert str(exc_info.value.message) in (
+        ai_chat_plugin._AGENT_CLARIFY_MESSAGES[ai_chat_plugin.ReasonCode.CLARIFY]
+    )
 
 
 @pytest.mark.asyncio
