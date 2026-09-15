@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+import random
 
 from nonebot import logger, on_message
 from nonebot.adapters.onebot.v11 import GroupMessageEvent
@@ -42,16 +43,36 @@ from qq_bot.services.search import (
 ai_chat = on_message(priority=20, block=False)
 
 # Stable clarification replies (S2-AGENT-09): no model call, no draft, and
-# never a reason for the user to rephrase with private details.
-_AGENT_CLARIFY_MESSAGES: dict[ReasonCode, str] = {
-    ReasonCode.CLARIFY: "没太明白你的意思，能说得更具体一点吗？",
-    ReasonCode.CAPABILITY_ERROR: "这个功能还没有配置好，先换个问题试试吧。",
-    ReasonCode.RULE_FALLBACK: "暂时无法处理这个问题，请稍后再试。",
+# never a reason for the user to rephrase with private details. Variant
+# pools (S7-AUTO-08) remove the "always the same sentence" machine feel;
+# every variant keeps the original meaning.
+_AGENT_CLARIFY_MESSAGES: dict[ReasonCode, tuple[str, ...]] = {
+    ReasonCode.CLARIFY: (
+        "没太明白你的意思，能说得更具体一点吗？",
+        "这个我没太看懂，再说细一点？",
+        "信息有点少，你想问的是什么呢？",
+    ),
+    ReasonCode.CAPABILITY_ERROR: (
+        "这个功能还没有配置好，先换个问题试试吧。",
+        "这个我现在答不了，换个问题试试。",
+    ),
+    ReasonCode.RULE_FALLBACK: (
+        "暂时无法处理这个问题，请稍后再试。",
+        "这个问题我现在处理不了，稍后再试试吧。",
+    ),
 }
 _AGENT_DEFAULT_CLARIFY = "没太明白你的意思，能说得更具体一点吗？"
-_AGENT_UNAVAILABLE = "AI 服务暂时不可用，请稍后再试。"
+_UNAVAILABLE_MESSAGES = (
+    "AI 服务暂时不可用，请稍后再试。",
+    "AI 这边临时出问题了，等会儿再问我。",
+    "现在答不了，过一会儿再试试。",
+)
 _QUOTA_RATE_MESSAGE = "提问太频繁了，请稍后再试。"
 _QUOTA_COST_MESSAGE = "今日 AI 用量已达预算上限，请明天再试。"
+
+
+def _pick_variants(pool: tuple[str, ...]) -> str:
+    return random.choice(pool)
 
 
 def _quota_message(reason: str) -> str:
@@ -269,7 +290,7 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                         roco_context=roco_context,
                     )
         except AIReplyError:
-            await finish_with_send_errors_logged(ai_chat, _AGENT_UNAVAILABLE)
+            await finish_with_send_errors_logged(ai_chat, _pick_variants(_UNAVAILABLE_MESSAGES))
 
         if memory_message_id is not None:
             try:
@@ -300,7 +321,7 @@ async def _handle_agent_chat(
         gateway = runtime.get_model_gateway()
     except RuntimeStateError:
         logger.exception("Agent stack unavailable; refusing to fabricate a reply")
-        await finish_with_send_errors_logged(ai_chat, _AGENT_UNAVAILABLE)
+        await finish_with_send_errors_logged(ai_chat, _pick_variants(_UNAVAILABLE_MESSAGES))
         return None
 
     scope = AgentScope(
@@ -327,7 +348,9 @@ async def _handle_agent_chat(
         # directly; no model call, no tools.
         await finish_with_send_errors_logged(
             ai_chat,
-            _AGENT_CLARIFY_MESSAGES.get(route.reason_code, _AGENT_DEFAULT_CLARIFY),
+            _pick_variants(
+                _AGENT_CLARIFY_MESSAGES.get(route.reason_code, (_AGENT_DEFAULT_CLARIFY,))
+            ),
         )
         return None
 

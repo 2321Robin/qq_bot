@@ -1616,7 +1616,7 @@ async def test_agent_path_runtime_unavailable_fails_explicitly(
     with pytest.raises(FinishCalled) as exc_info:
         await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 你好"))  # type: ignore[arg-type]
 
-    assert str(exc_info.value.message) == "AI 服务暂时不可用，请稍后再试。"
+    assert str(exc_info.value.message) in ai_chat_plugin._UNAVAILABLE_MESSAGES
 
 
 @pytest.mark.asyncio
@@ -1950,3 +1950,19 @@ async def test_auto_chat_quota_and_send_closures(
 
     with pytest.raises(FinishCalled):
         await captured["send"]("你好，@小洛")
+
+
+# ---- 固定文案池化（S7-AUTO-08）----
+
+
+def test_clarify_and_unavailable_messages_are_pools() -> None:
+    assert len(ai_chat_plugin._AGENT_CLARIFY_MESSAGES[ai_chat_plugin.ReasonCode.CLARIFY]) >= 3
+    assert len(ai_chat_plugin._UNAVAILABLE_MESSAGES) >= 3
+    for pool in ai_chat_plugin._AGENT_CLARIFY_MESSAGES.values():
+        assert all(isinstance(m, str) and m for m in pool)
+
+
+def test_pick_variants_stays_within_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    pool = ("a", "b", "c")
+    monkeypatch.setattr(ai_chat_plugin.random, "choice", lambda seq: seq[0])
+    assert ai_chat_plugin._pick_variants(pool) == "a"
