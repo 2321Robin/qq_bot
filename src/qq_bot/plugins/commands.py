@@ -20,7 +20,9 @@ async def handle_help(event: GroupMessageEvent) -> None:
 
     metrics.COMMANDS.labels("help").inc()
 
-    await finish_with_send_errors_logged(help_command, build_help_text(settings.ai_prefix))
+    await finish_with_send_errors_logged(
+        help_command, build_help_text(settings.ai_prefix, roco_enabled=settings.roco_enabled)
+    )
 
 
 @version_command.handle()

@@ -28,3 +28,11 @@ def test_help_text_uses_configured_ai_prefix() -> None:
     text = build_help_text(ai_prefix="ask")
 
     assert "ask" not in text
+
+
+def test_help_text_omits_roco_block_when_disabled() -> None:
+    text = build_help_text("ai", roco_enabled=False)
+
+    assert "洛克" not in text
+    assert "精灵" not in text
+    assert "/help 或 /帮助" in text

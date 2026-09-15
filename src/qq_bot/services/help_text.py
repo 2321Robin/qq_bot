@@ -1,11 +1,13 @@
-def build_help_text(ai_prefix: str) -> str:
-    return "\n".join(
-        [
-            "可用功能：",
-            "",
-            "基础命令：",
-            "/help 或 /帮助 - 查看这份帮助",
-            "/version 或 /版本 - 查看当前机器人版本",
+def build_help_text(ai_prefix: str, *, roco_enabled: bool = True) -> str:
+    lines = [
+        "可用功能：",
+        "",
+        "基础命令：",
+        "/help 或 /帮助 - 查看这份帮助",
+        "/version 或 /版本 - 查看当前机器人版本",
+    ]
+    if roco_enabled:
+        lines += [
             "",
             "洛克查询：",
             "/精灵 迪莫 - 查询洛克王国世界精灵图鉴、属性、种族值和进化条件",
@@ -13,4 +15,4 @@ def build_help_text(ai_prefix: str) -> str:
             "/技能 闪光 - 查询技能效果、类型、威力、PP 和可用精灵",
             "@机器人 迪莫 - 直接查询精灵；@机器人 闪光 - 直接查询技能",
         ]
-    )
+    return "\n".join(lines)

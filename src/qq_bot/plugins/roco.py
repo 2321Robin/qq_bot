@@ -27,6 +27,8 @@ async def handle_roco_pet(event: GroupMessageEvent, args: Message = CommandArg()
     settings = get_settings()
     if not settings.group_allowed(event.group_id):
         return
+    if not settings.roco_enabled:
+        return
 
     metrics.COMMANDS.labels("精灵").inc()
 
@@ -45,6 +47,8 @@ async def handle_roco_skill(event: GroupMessageEvent, args: Message = CommandArg
     settings = get_settings()
     if not settings.group_allowed(event.group_id):
         return
+    if not settings.roco_enabled:
+        return
 
     metrics.COMMANDS.labels("技能").inc()
 
@@ -59,6 +63,8 @@ async def handle_roco_skill(event: GroupMessageEvent, args: Message = CommandArg
 async def handle_roco_mention_pet(event: GroupMessageEvent) -> None:
     settings = get_settings()
     if not settings.group_allowed(event.group_id):
+        return
+    if not settings.roco_enabled:
         return
 
     if not event.is_tome():

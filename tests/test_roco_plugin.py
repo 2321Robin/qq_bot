@@ -3,6 +3,7 @@ from pathlib import Path
 
 import bot  # noqa: F401  # Initialize NoneBot before importing command plugins.
 from qq_bot.config import BotSettings
+from qq_bot.observability import metrics
 from qq_bot.plugins import roco as roco_plugin
 from qq_bot.services.roco_pets import PetRecord, load_pet_records
 from qq_bot.services.roco_skills import SkillRecord
@@ -10,6 +11,10 @@ from qq_bot.services.roco_skills import SkillRecord
 
 def test_roco_mention_matcher_does_not_block_ai_chat() -> None:
     assert not roco_plugin.roco_mention_pet.block
+
+
+def _command_count(name: str) -> float:
+    return metrics.COMMANDS.labels(name)._value.get()
 
 
 class FakeArgs:
@@ -349,3 +354,28 @@ async def test_roco_mention_lookup_ignores_sentences_containing_pet_or_skill_nam
 
     await roco_plugin.handle_roco_mention_pet(FakeEvent("你发送雪影娃娃，注意一个字都不要多"))  # type: ignore[arg-type]
     await roco_plugin.handle_roco_mention_pet(FakeEvent("请查询闪光"))  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_roco_handlers_noop_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        roco_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", roco_enabled=False),
+    )
+    monkeypatch.setattr(roco_plugin.roco_pet_command, "finish", fake_finish)
+    monkeypatch.setattr(roco_plugin.roco_skill_command, "finish", fake_finish)
+    monkeypatch.setattr(roco_plugin.roco_mention_pet, "finish", fake_finish)
+
+    pet_before = _command_count("精灵")
+    skill_before = _command_count("技能")
+
+    await roco_plugin.handle_roco_pet(FakeEvent(), FakeArgs("TestPetA"))  # type: ignore[arg-type]
+    await roco_plugin.handle_roco_skill(FakeEvent(), FakeArgs("闪光"))  # type: ignore[arg-type]
+    await roco_plugin.handle_roco_mention_pet(FakeEvent("TestPetA"))  # type: ignore[arg-type]
+
+    assert _command_count("精灵") == pet_before
+    assert _command_count("技能") == skill_before
