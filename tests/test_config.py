@@ -686,8 +686,6 @@ def test_sensitive_words_merge_builtin_with_extra() -> None:
 
 
 def test_negative_words_merge_builtin_with_extra() -> None:
-    from qq_bot.config import BUILTIN_NEGATIVE_WORDS
-
     settings = BotSettings(auto_chat_negative_words=" 别闹 ")
     assert "别闹" in settings.auto_chat_negative_word_list
     assert "闭嘴" in settings.auto_chat_negative_word_list

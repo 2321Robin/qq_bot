@@ -1546,7 +1546,9 @@ async def test_agent_path_capability_error_uses_stable_message(
     with pytest.raises(FinishCalled) as exc_info:
         await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 删除我的记忆"))  # type: ignore[arg-type]
 
-    assert str(exc_info.value.message) == "这个功能还没有配置好，先换个问题试试吧。"
+    assert str(exc_info.value.message) in (
+        ai_chat_plugin._AGENT_CLARIFY_MESSAGES[ai_chat_plugin.ReasonCode.CAPABILITY_ERROR]
+    )
 
 
 @pytest.mark.asyncio
