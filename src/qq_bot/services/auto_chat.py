@@ -9,15 +9,25 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Callable, Sequence
+from typing import Any, Awaitable, Callable, Sequence
 
 from qq_bot.config import BotSettings
+from qq_bot.observability import metrics, record_error
+from qq_bot.observability.logging import current_request_id
+from qq_bot.observability.tracing import get_tracer
 from qq_bot.services.chat_memory import ChatMemoryRow
-from qq_bot.services.persona import Persona, mentions_persona
+from qq_bot.services.persona import (
+    Persona,
+    casual_system_prompt,
+    load_persona,
+    mentions_persona,
+)
+from qq_bot.services.reliability import classify_exception
 
 
 def _default_bucket_clock() -> datetime:
@@ -191,3 +201,170 @@ def parse_gate_output(content: str | None) -> GateDecision | None:
     if not 0.0 <= confidence <= 1.0:
         return None
     return GateDecision(should_reply=should_reply, reason=reason, confidence=confidence)
+
+
+# ---- 编排：run_auto_chat（S7-AUTO-06）----
+
+_SHARED_STATE = AutoChatState()
+
+
+async def run_auto_chat(
+    *,
+    event: Any,
+    raw_text: str,
+    settings: BotSettings,
+    memory_store: Any,
+    send: Callable[[str], Awaitable[None]],
+    quota_check: Callable[[], Awaitable[bool]] | None = None,
+    client: Any | None = None,
+    state: AutoChatState | None = None,
+    rng: Callable[[], float] = random.random,
+    sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    _request_completion: Any = None,
+) -> None:
+    """Full pipeline for one non-addressed group message (spec 一/二/三/四节).
+
+    ``_request_completion`` is a test seam defaulting to the real
+    ``request_completion``; production callers never pass it. Send and quota
+    are injected so this service stays matcher- and runtime-free."""
+    from qq_bot.services.ai_client import request_completion as _real_completion
+
+    complete = _request_completion or _real_completion
+    state = state or _SHARED_STATE
+    persona = load_persona(settings)
+    group_id = event.group_id
+
+    def _metric(stage: str, result: str) -> None:
+        metrics.AUTO_CHAT.labels(stage, result).inc()
+
+    if event.user_id in settings.auto_chat_ignored_user_id_list:
+        _metric("prefilter", "ignored")
+        return
+    static = static_prefilter(raw_text, settings=settings)
+    if static != "pass":
+        _metric("prefilter", static)
+        return
+
+    try:
+        rows = await memory_store.recent_group_messages(
+            group_id=group_id, limit=settings.auto_chat_context_messages
+        )
+    except Exception as exc:
+        _metric("prefilter", "error")
+        record_error("auto_chat", classify_exception(exc).category.value)
+        return
+    if not rows:
+        _metric("prefilter", "no_context")
+        return
+
+    bot_recently = state.recently_spoke(group_id, settings.auto_chat_cooldown_seconds)
+    if detect_negative_feedback(
+        rows, persona=persona, settings=settings, bot_recently_spoke=bot_recently
+    ):
+        state.set_backoff(group_id, settings.auto_chat_negative_backoff_seconds)
+        _metric("prefilter", "backoff")
+        return
+    if state.in_backoff(group_id):
+        _metric("prefilter", "backoff")
+        return
+    limit = state.limit_reason(group_id, settings=settings)
+    if limit == "cooldown":
+        _metric("prefilter", "cooldown")
+        return
+    if limit:
+        _metric("prefilter", "limit")
+        return
+
+    named = mentions_persona(raw_text, persona)
+    tracer = get_tracer()
+    if named:
+        _metric("prefilter", "nicknamed")
+    else:
+        if rng() >= settings.auto_chat_sample_rate:
+            _metric("prefilter", "sampled_out")
+            return
+        _metric("prefilter", "passed")
+        gate_span = tracer.start_span("auto.gate", trace_id=current_request_id())
+        try:
+            content = await complete(
+                system_prompt=GATE_SYSTEM_PROMPT,
+                user_prompt=build_gate_user_prompt(rows),
+                settings=settings,
+                client=client,
+                model=settings.router_model,
+                max_tokens=120,
+                json_mode=True,
+            )
+        except Exception as exc:
+            tracer.end_span(
+                gate_span, status="error", category=classify_exception(exc).category.value
+            )
+            record_error("auto_chat", classify_exception(exc).category.value)
+            _metric("gate", "error")
+            return
+        decision = parse_gate_output(content)
+        if decision is None:
+            tracer.end_span(gate_span)
+            _metric("gate", "error")
+            return
+        if not decision.should_reply:
+            tracer.end_span(gate_span)
+            _metric("gate", "skip")
+            return
+        if decision.confidence < settings.auto_chat_confidence_threshold:
+            tracer.end_span(gate_span)
+            _metric("gate", "low_confidence")
+            return
+        tracer.end_span(gate_span)
+        _metric("gate", "reply")
+
+    if quota_check is not None and not await quota_check():
+        _metric("gate", "quota_denied")
+        return
+    async with state.lock(group_id):
+        if state.acquire(group_id, settings=settings):
+            _metric("prefilter", "limit")
+            return
+        generate_span = tracer.start_span("auto.generate", trace_id=current_request_id())
+
+        async def _generate() -> str:
+            return await complete(
+                system_prompt=casual_system_prompt(persona),
+                user_prompt=build_casual_user_prompt(rows),
+                settings=settings,
+                client=client,
+                model=settings.ai_model,
+                max_tokens=100,
+            )
+
+        gen = asyncio.ensure_future(_generate())
+        try:
+            delay_min = settings.auto_chat_delay_min_seconds
+            delay_max = settings.auto_chat_delay_max_seconds
+            await sleeper(delay_min + (delay_max - delay_min) * rng())
+            reply = (await gen).strip()
+        except Exception as exc:
+            gen.cancel()
+            tracer.end_span(
+                generate_span, status="error", category=classify_exception(exc).category.value
+            )
+            record_error("auto_chat", classify_exception(exc).category.value)
+            _metric("generate", "error")
+            return  # 冷却已被占用：有意的保守行为
+        tracer.end_span(generate_span)
+
+    if not reply:
+        _metric("generate", "error")
+        return
+    _metric("generate", "ok")
+    if any(word in reply for word in settings.auto_chat_sensitive_word_list):
+        _metric("generate", "filtered")
+        return
+    if quota_check is not None and not await quota_check():
+        _metric("send", "quota_denied")
+        return
+    if state.in_backoff(group_id):
+        _metric("send", "backoff")
+        return
+    await send(reply)
+    _metric("send", "ok")  # 已移交发送器；发送失败由 onebot_send 的 SEND_RESULTS 计数

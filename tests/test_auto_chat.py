@@ -1,5 +1,7 @@
 import asyncio
 
+import pytest
+
 from qq_bot.config import BotSettings
 from qq_bot.observability import metrics
 from qq_bot.services.auto_chat import (
@@ -9,6 +11,7 @@ from qq_bot.services.auto_chat import (
     build_gate_user_prompt,
     detect_negative_feedback,
     parse_gate_output,
+    run_auto_chat,
     static_prefilter,
 )
 from qq_bot.services.chat_memory import ChatMemoryRow
@@ -222,3 +225,248 @@ class TestGateParsing:
 
 def test_auto_chat_counter_registered() -> None:
     metrics.AUTO_CHAT.labels("prefilter", "passed").inc()
+
+
+# ---- 编排：run_auto_chat（S7-AUTO-06）----
+
+class FakeEvent:
+    def __init__(self, group_id: int = 1001, user_id: int = 2001):
+        self.group_id = group_id
+        self.user_id = user_id
+
+
+class FakeMemory:
+    def __init__(self, texts: list[str]):
+        self.texts = texts
+        self.calls: list[dict] = []
+
+    async def recent_group_messages(self, *, group_id: int, limit: int):
+        self.calls.append({"group_id": group_id, "limit": limit})
+        return [_row(t, user_id=2001 + i, row_id=i + 1) for i, t in enumerate(self.texts)]
+
+
+class FakeAutoChatSettings(BotSettings):
+    model_config = BotSettings.model_config.copy()
+    model_config["env_file"] = None
+
+
+def _run_settings(**overrides) -> BotSettings:
+    base = {
+        "ai_api_key": "k",
+        "persona_name": "小洛",
+        "auto_chat_enabled": True,
+        "auto_chat_sample_rate": 1.0,
+        "auto_chat_delay_min_seconds": 0.0,
+        "auto_chat_delay_max_seconds": 0.0,
+        "auto_chat_cooldown_seconds": 0.0,
+        "auto_chat_hourly_limit": 10,
+        "auto_chat_daily_limit": 10,
+    }
+    base.update(overrides)
+    return FakeAutoChatSettings(**base)
+
+
+class Harness:
+    def __init__(self, texts: list[str], settings: BotSettings):
+        self.settings = settings
+        self.memory = FakeMemory(texts)
+        self.state = AutoChatState()
+        self.sent: list[str] = []
+        self.rng_value = 0.0
+        self.slept: list[float] = []
+        self.gate_content = '{"should_reply": true, "reason": "banter", "confidence": 0.9}'
+        self.casual_content = "哈哈冲"
+        self.quota_allowed = True
+        self.completions: list[dict] = []
+
+    async def send(self, text: str) -> None:
+        self.sent.append(text)
+
+    async def quota_check(self) -> bool:
+        return self.quota_allowed
+
+    async def sleeper(self, seconds: float) -> None:
+        self.slept.append(seconds)
+
+    def rng(self) -> float:
+        return self.rng_value
+
+    def completion(self):
+        async def fake_request_completion(**kwargs) -> str:
+            self.completions.append(kwargs)
+            if "决策器" in kwargs["system_prompt"]:
+                return self.gate_content
+            return self.casual_content
+
+        return fake_request_completion
+
+
+async def _run(h: Harness, raw_text: str = "一起去打新活动吗") -> None:
+    await run_auto_chat(
+        event=FakeEvent(),
+        raw_text=raw_text,
+        settings=h.settings,
+        memory_store=h.memory,
+        send=h.send,
+        quota_check=h.quota_check,
+        state=h.state,
+        rng=h.rng,
+        sleeper=h.sleeper,
+        _request_completion=h.completion(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_happy_path_gate_pass_send_with_delay() -> None:
+    h = Harness(["在吗", "新活动开了"], _run_settings())
+    await _run(h)
+    assert h.sent == ["哈哈冲"]
+    assert h.slept == [0.0]
+    assert h.state.recently_spoke(1001, 300.0) is True
+    gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
+    casual_calls = [c for c in h.completions if "决策器" not in c["system_prompt"]]
+    assert len(gate_calls) == 1
+    assert len(casual_calls) == 1
+    assert casual_calls[0]["max_tokens"] == 100
+
+
+@pytest.mark.asyncio
+async def test_gate_no_reply_means_no_send_and_no_cooldown() -> None:
+    h = Harness(["在吗", "新活动开了"], _run_settings())
+    h.gate_content = '{"should_reply": false, "reason": "none", "confidence": 0.9}'
+    await _run(h)
+    assert h.sent == []
+    assert h.state.recently_spoke(1001, 300.0) is False
+
+
+@pytest.mark.asyncio
+async def test_low_confidence_is_fail_closed() -> None:
+    h = Harness(["在吗", "冲"], _run_settings())
+    h.gate_content = '{"should_reply": true, "reason": "banter", "confidence": 0.5}'
+    await _run(h)
+    assert h.sent == []
+
+
+@pytest.mark.asyncio
+async def test_gate_error_is_fail_closed() -> None:
+    h = Harness(["在吗", "冲"], _run_settings())
+
+    async def boom(**kwargs):
+        raise RuntimeError("gateway down")
+
+    await run_auto_chat(
+        event=FakeEvent(),
+        raw_text="冲",
+        settings=h.settings,
+        memory_store=h.memory,
+        send=h.send,
+        quota_check=h.quota_check,
+        state=h.state,
+        rng=h.rng,
+        sleeper=h.sleeper,
+        _request_completion=boom,
+    )
+    assert h.sent == []
+    assert h.state.recently_spoke(1001, 300.0) is False
+
+
+@pytest.mark.asyncio
+async def test_gate_bad_json_is_fail_closed() -> None:
+    h = Harness(["在吗", "冲"], _run_settings())
+    h.gate_content = "随便说点什么"
+    await _run(h)
+    assert h.sent == []
+    assert h.state.recently_spoke(1001, 300.0) is False
+
+
+@pytest.mark.asyncio
+async def test_nicknamed_message_skips_gate() -> None:
+    h = Harness(["有人在吗", "小洛 在吗"], _run_settings())
+    await _run(h, raw_text="小洛 在吗")
+    gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
+    assert gate_calls == []
+    assert h.sent == ["哈哈冲"]
+
+
+@pytest.mark.asyncio
+async def test_sampling_reject_without_gate_call() -> None:
+    h = Harness(["消息"], _run_settings(auto_chat_sample_rate=0.5))
+    h.rng_value = 0.9  # >= 0.5 → 采样未中
+    await _run(h)
+    assert h.sent == []
+    assert h.completions == []
+
+
+@pytest.mark.asyncio
+async def test_negative_feedback_sets_backoff_and_blocks() -> None:
+    h = Harness(["小洛你闭嘴啊"], _run_settings())
+    await _run(h, raw_text="随便")
+    assert h.sent == []
+    assert h.state.in_backoff(1001) is True
+
+
+@pytest.mark.asyncio
+async def test_sensitive_reply_dropped_silently() -> None:
+    h = Harness(["聊会"], _run_settings())
+    h.casual_content = "来玩博彩吗"
+    await _run(h)
+    assert h.sent == []
+    assert h.state.recently_spoke(1001, 300.0) is True  # 冷却已被占用（保守）
+
+
+@pytest.mark.asyncio
+async def test_quota_denied_blocks_before_generation() -> None:
+    h = Harness(["聊会"], _run_settings())
+    h.quota_allowed = False
+    await _run(h)
+    assert h.sent == []
+    assert h.state.recently_spoke(1001, 300.0) is False
+    # quota 检查在决策门之后、生成之前：门调用发生，生成调用不发生
+    casual_calls = [c for c in h.completions if "决策器" not in c["system_prompt"]]
+    assert casual_calls == []
+
+
+@pytest.mark.asyncio
+async def test_ignored_user_short_circuits() -> None:
+    h = Harness(["聊会"], _run_settings(auto_chat_ignored_user_ids="2001"))
+    await _run(h)
+    assert h.sent == []
+    assert h.memory.calls == []
+
+
+@pytest.mark.asyncio
+async def test_command_message_short_circuits() -> None:
+    h = Harness(["/帮助"], _run_settings())
+    await _run(h, raw_text="/帮助")
+    assert h.sent == []
+    assert h.memory.calls == []
+
+
+@pytest.mark.asyncio
+async def test_empty_history_skips_pipeline() -> None:
+    h = Harness([], _run_settings())
+    await _run(h)
+    assert h.sent == []
+
+
+@pytest.mark.asyncio
+async def test_send_failure_propagates_after_state_occupied() -> None:
+    h = Harness(["聊会"], _run_settings())
+
+    async def failing_send(text: str) -> None:
+        raise RuntimeError("send failed")
+
+    with pytest.raises(RuntimeError):
+        await run_auto_chat(
+            event=FakeEvent(),
+            raw_text="聊会",
+            settings=h.settings,
+            memory_store=h.memory,
+            send=failing_send,
+            quota_check=h.quota_check,
+            state=h.state,
+            rng=h.rng,
+            sleeper=h.sleeper,
+            _request_completion=h.completion(),
+        )
+    assert h.state.recently_spoke(1001, 300.0) is True
