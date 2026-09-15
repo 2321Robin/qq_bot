@@ -282,11 +282,11 @@ async def polish_news(
 
 
 # ---- 早/晚报组装器（S6-REPORT-05）----
-# 板块级独立降级：任何单一来源失败都渲染 '—' 占位，整报照发。
+# 板块级独立降级：任何单一来源失败都整块省略，整报照发（2026-09-16 用户裁决：
+# 失败板块直接省略，不渲染占位）。
 _NEWS_TITLE = "📰 新闻"
 _HOT_TITLE = "🔥 热搜"
 _HEH_TITLE = "🎮 小黑盒热帖"
-_PLACEHOLDER = "—"
 
 
 async def _news_section(settings: BotSettings, client: AsyncGetClient | None) -> str:
@@ -294,7 +294,7 @@ async def _news_section(settings: BotSettings, client: AsyncGetClient | None) ->
         items = await fetch_section_items("news", settings, client)
     except SourceError:
         metrics.REPORT_SECTIONS_TOTAL.labels("news", "unavailable").inc()
-        return f"{_NEWS_TITLE}：{_PLACEHOLDER}"
+        return ""
     outcome = await polish_news(items, settings, client=client)
     metrics.REPORT_LLM_TOTAL.labels(outcome.reason).inc()
     if outcome.ok:
@@ -315,7 +315,7 @@ async def _list_section(
         )
     except SourceError:
         metrics.REPORT_SECTIONS_TOTAL.labels(endpoint, "unavailable").inc()
-        return f"{title}：{_PLACEHOLDER}"
+        return ""
     metrics.REPORT_SECTIONS_TOTAL.labels(endpoint, "ok").inc()
     return "\n".join([title, *(f"· {item.title}" for item in items)])
 
@@ -343,7 +343,7 @@ async def _build_life_message(
     countdown = format_countdown_section(entries_from_settings(settings), effective_today)
     if countdown:
         parts.append(countdown)
-    parts.extend((news_text, hot_text, heh_text))
+    parts.extend(part for part in (news_text, hot_text, heh_text) if part)
     return "\n\n".join(parts)
 
 

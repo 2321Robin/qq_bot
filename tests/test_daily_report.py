@@ -384,16 +384,18 @@ async def test_evening_header_variant() -> None:
     assert text.startswith("【晚报】9月15日 周二")
 
 
-async def test_unavailable_sources_show_placeholder() -> None:
+async def test_unavailable_sources_omitted() -> None:
+    """2026-09-16 用户裁决：板块失败直接省略，不再渲染 '—' 占位。"""
     from datetime import date
 
     from qq_bot.services.daily_report import build_life_morning_message
 
     client = _FakeGetClient(always_raise=httpx.ConnectError("down"))
     text = await build_life_morning_message(_settings(), client=client, today=date(2026, 9, 15))
-    assert "📰 新闻：—" in text
-    assert "🔥 热搜：—" in text
-    assert "🎮 小黑盒热帖：—" in text
+    assert "📰 新闻" not in text
+    assert "🔥 热搜" not in text
+    assert "🎮 小黑盒热帖" not in text
+    assert text.startswith("【早报】9月15日 周二")
 
 
 async def test_hotlists_truncated_to_max_items() -> None:

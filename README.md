@@ -96,7 +96,8 @@ flowchart LR
 | 定时消息 | 环境变量配置 | 按 Cron 时间向指定群发送消息；`SCHEDULED_JOBS` 非空时按 `类型@HH:MM` 任务表泛化调度（生成器可注册扩展），为空时行为与旧配置完全一致 |
 | 倒计时 | `COUNTDOWN_EVENTS` | `名称:日期` 倒计时事件，过期自动隐藏，作为板块出现在生活早/晚报（阶段 D 挂载） |
 | 游戏日历提醒 | `SCHEDULED_JOBS` 的 `game_morning`/`game_evening` + `GAME_CALENDAR_PATH` | 手工维护的游戏活动日历（模板：`tests/fixtures/game_reports/game_calendar.template.json`）驱动确定性规则引擎：版本更新仅早报、活动开启/结束窗口 2 天、周常周日、月常月末、过期自动隐藏；空内容不发消息，非法文件拒绝启动 |
-| 生活早晚报 | `SCHEDULED_JOBS` 的 `life_morning`/`life_evening` | 自部署 60s fork 提供"每天60秒读懂世界"新闻、热搜与小黑盒热帖；离线日期/农历/节日与倒计时板块；可选 LLM 润色与寄语（确定性校验兜底、失败回退模板、独立每日上限）；板块级独立降级，任一来源失败显示占位符 |
+| 生活早晚报 | `SCHEDULED_JOBS` 的 `life_morning`/`life_evening` | 自部署 60s fork 提供"每天60秒读懂世界"新闻、热搜与小黑盒热帖；离线日期/农历/节日与倒计时板块；可选 LLM 润色与寄语（确定性校验兜底、失败回退模板、独立每日上限）；板块级独立降级，任一来源失败自动省略该板块 |
+| 手动早晚报 | `/早报`、`/晚报` | 在当前群主动触发一次生活早报/晚报（与定时任务同一组装管线），便于即时查看 |
 | 命名提及 | `NAMED_MENTION_REPLACEMENTS` | 定时消息与 AI 回复中的 `@昵称` 替换为真正的 @提及（账号仅从配置读取，不写死在源码） |
 | 配额与预算（阶段 4） | `QUOTA_ENABLED` 等 | 按群滑动窗口限流与每日费用上限（`actual` 强制、`estimated/unknown` 只记录）；`/配额`、`/最近故障` 管理员命令（按 `ADMIN_USER_IDS` 鉴权） |
 
