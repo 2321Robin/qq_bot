@@ -29,7 +29,6 @@ from qq_bot.services.onebot_send import finish_with_send_errors_logged
 from qq_bot.services.prompt import extract_ai_prompt
 from qq_bot.services.quota import quota_scope
 from qq_bot.services.reliability import classify_exception
-from qq_bot.services.roco_knowledge import build_roco_context
 from qq_bot.services.search import (
     SearchError,
     format_search_context,
@@ -201,17 +200,21 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                 record_error("memory", classify_exception(exc).category.value)
                 logger.exception("Chat memory write failed; continuing without storing message")
 
-        knowledge_span = tracer.start_span("knowledge.lookup", trace_id=trace_id)
-        try:
-            roco_context = build_roco_context(prompt)
-        except Exception as exc:
-            category = classify_exception(exc).category.value
-            tracer.end_span(knowledge_span, status="error", category=category)
-            record_error("knowledge", category)
-            logger.exception("Roco knowledge lookup failed; continuing without Roco context")
-            roco_context = ""
-        else:
-            tracer.end_span(knowledge_span)
+        roco_context = ""
+        if settings.roco_enabled:
+            knowledge_span = tracer.start_span("knowledge.lookup", trace_id=trace_id)
+            try:
+                from qq_bot.services.roco_knowledge import build_roco_context
+
+                roco_context = build_roco_context(prompt)
+            except Exception as exc:
+                category = classify_exception(exc).category.value
+                tracer.end_span(knowledge_span, status="error", category=category)
+                record_error("knowledge", category)
+                logger.exception("Roco knowledge lookup failed; continuing without Roco context")
+                roco_context = ""
+            else:
+                tracer.end_span(knowledge_span)
 
         search_context = ""
         needs_search = prompt_needs_search(prompt)

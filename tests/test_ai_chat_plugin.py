@@ -7,6 +7,7 @@ from nonebot.adapters.onebot.v11 import Message
 from qq_bot.config import BotSettings
 from qq_bot.plugins import ai_chat as ai_chat_plugin
 from qq_bot.runtime import RuntimeStateError
+from qq_bot.services import roco_knowledge
 from qq_bot.services.chat_memory import ChatMemoryRow
 
 
@@ -565,12 +566,68 @@ async def test_ai_chat_passes_roco_context_for_roco_question(
         "get_chat_repository",
         lambda: EmptyMemoryStore(),
     )
-    monkeypatch.setattr(ai_chat_plugin, "build_roco_context", fake_build_roco_context)
+    monkeypatch.setattr(roco_knowledge, "build_roco_context", fake_build_roco_context)
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
     monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
 
     with pytest.raises(FinishCalled):
         await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 画精灵怎么进化？"))  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_legacy_path_skips_roco_context_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started_spans: list[str] = []
+
+    class RecordingTracer:
+        def start_span(self, name: str, *, trace_id: str, **attributes: str) -> object:
+            started_spans.append(name)
+            return object()
+
+        def end_span(self, span: object, *, status: str = "ok", **attributes: str) -> None:
+            return None
+
+    async def fake_request_ai_reply(
+        prompt: str,
+        *,
+        settings: BotSettings,
+        client: object | None = None,
+        search_context: str = "",
+        chat_context: str = "",
+        roco_context: str = "",
+    ) -> str:
+        assert prompt == "画精灵怎么进化？"
+        assert roco_context == ""
+        return "直答"
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(
+            allowed_group_ids="1001",
+            ai_api_key="secret",
+            roco_enabled=False,
+        ),
+    )
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_chat_repository",
+        lambda: EmptyMemoryStore(),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_tracer", lambda: RecordingTracer())
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 画精灵怎么进化？"))  # type: ignore[arg-type]
+
+    assert "knowledge.lookup" not in started_spans
+    # 对照：同一请求其余阶段的 span 照常记录，证明 tracer 已接线。
+    assert "memory.retrieve" in started_spans
 
 
 @pytest.mark.asyncio
