@@ -199,10 +199,10 @@ def build_date_lines(today: Any, *, kind: str = "早报") -> tuple[str, ...]:
 # 失败/超时/异常一律回退纯模板渲染，LLM 永不阻塞报告发送。
 _POLISH_SYSTEM = (
     "你是群聊新闻编辑。下面给你若干条新闻标题。规则："
-    "1) 输出以 · 开头的条目列表，条数必须与输入一致，顺序可以调整；"
+    "1) 输出条目列表，每条以 - 或 · 开头，条数必须与输入一致，顺序可以调整；"
     "2) 每条必须完整保留原标题原文，标题后可以追加一句不超过 15 字的说明；"
     "3) 不得新增、删除或改写任何标题，不得编造事实；"
-    "4) 必须以一行【寄语】开头的话作为最后一行（这是硬性要求，绝不能省略）。"
+    "4) 【寄语】一行（以【寄语】开头的一句话）位置不限，但绝不能省略。"
 )
 
 
@@ -227,22 +227,27 @@ def _normalize(text: str) -> str:
     return re.sub(r"[\s，。：:、,.\-—|｜·！!？?【】（）()\"'“”]+", "", text)
 
 
-def _split_jiyu(text: str) -> str:
-    """Strip the trailing 寄语 section; it is generation, not curated facts."""
-    if "【寄语】" in text:
-        return text.partition("【寄语】")[0]
-    return text
+def _strip_jiyu(text: str) -> str:
+    """Remove the 寄语 line wherever it appears; it is generation, not
+    curated facts (models may put it first or last)."""
+    return "\n".join(line for line in text.splitlines() if "【寄语】" not in line)
 
 
 def verify_polished(titles: tuple[str, ...], text: str) -> bool:
-    """Deterministic grounding check: every input title must survive into the
-    body (normalized containment; annotations after a title are allowed) and
-    the body must not gain extra bullet entries."""
-    body = _normalize(_split_jiyu(text))
-    if any(_normalize(title) not in body for title in titles):
+    """Deterministic grounding check (2026-09-17 revision, format-robust):
+    every input title must survive into the body, and every non-empty body
+    line must carry at least one original title (nothing fabricated in
+    between). Bullet style and jiyu position are free."""
+    body_lines = [line for line in _strip_jiyu(text).splitlines() if line.strip()]
+    body_norm = _normalize("\n".join(body_lines))
+    title_norms = [_normalize(title) for title in titles]
+    if any(norm not in body_norm for norm in title_norms):
         return False
-    bullets = len(re.findall(r"^\s*[·•]\s*", _split_jiyu(text), flags=re.MULTILINE))
-    return bullets <= len(titles)
+    for line in body_lines:
+        line_norm = _normalize(line)
+        if not any(norm in line_norm for norm in title_norms):
+            return False
+    return True
 
 
 def format_news_template(items: tuple[NewsItem, ...]) -> str:
