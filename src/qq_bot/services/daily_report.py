@@ -250,6 +250,31 @@ def verify_polished(titles: tuple[str, ...], text: str) -> bool:
     return True
 
 
+def _repair_polished(titles: tuple[str, ...], text: str) -> str | None:
+    """Deterministic repair for truncated-but-honest polish output: keep the
+    model's annotated lines, append missing titles as plain template lines,
+    re-attach the jiyu line at the end. Returns None when the output contains
+    a line carrying no original title (fabrication) — fall back to template."""
+    jiyu_lines = [line for line in text.splitlines() if "【寄语】" in line]
+    lines = [line for line in _strip_jiyu(text).splitlines() if line.strip()]
+    title_norms = [_normalize(title) for title in titles]
+    valid: list[str] = []
+    for line in lines:
+        line_norm = _normalize(line)
+        if not any(norm in line_norm for norm in title_norms):
+            return None
+        valid.append(line)
+    body_norm = _normalize("\n".join(valid))
+    missing = [t for t, n in zip(titles, title_norms) if n not in body_norm]
+    if not missing:
+        return None
+    out = "\n".join(valid)
+    out += "\n" + "\n".join(f"· {title}" for title in missing)
+    if jiyu_lines:
+        out += "\n" + jiyu_lines[0].strip()
+    return out
+
+
 def format_news_template(items: tuple[NewsItem, ...]) -> str:
     return "\n".join(["📰 新闻", *(f"· {item.title}" for item in items)])
 
@@ -296,11 +321,17 @@ async def polish_news(
     finally:
         await timeout_client.aclose()
     if not verify_polished(titles, reply):
-        return PolishOutcome(ok=False, text=template, reason="check_failed")
+        repaired = _repair_polished(titles, reply)
+        if repaired is None:
+            return PolishOutcome(ok=False, text=template, reason="check_failed")
+        reply = repaired
     if quota is not None:
         # 订阅套餐无按量账单：tokens/cost 如实记 0/None，requests 计数由表自增
         await quota.record_usage(scope_type="report", scope_id=0, tokens=0, cost=None)
-    return PolishOutcome(ok=True, text=reply, reason="ok")
+    reason = "ok"
+    if "【寄语】" not in reply:
+        pass  # 寄语缺失不阻塞，只影响展示
+    return PolishOutcome(ok=True, text=reply, reason=reason)
 
 
 # ---- 早/晚报组装器（S6-REPORT-05）----

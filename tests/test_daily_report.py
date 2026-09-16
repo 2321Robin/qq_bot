@@ -606,3 +606,23 @@ async def test_polish_uses_dedicated_timeout(monkeypatch: pytest.MonkeyPatch) ->
     await dr.polish_news((NewsItem(title="标题甲"),), settings, client=object())
     timeout = captured["client"].timeout
     assert timeout.connect == 90.0 and timeout.read == 90.0
+
+
+def test_repair_appends_truncated_tail_titles() -> None:
+    from qq_bot.services.daily_report import _repair_polished
+
+    titles = ("标题甲", "标题乙", "标题丙")
+    reply = "- 标题甲【甲短评】\n- 标题乙【乙短评】\n\n【寄语】好"
+    repaired = _repair_polished(titles, reply)
+    assert repaired is not None
+    assert "· 标题丙" in repaired
+    assert "【寄语】好" in repaired
+    assert "标题甲" in repaired
+
+
+def test_repair_rejects_fabricated_lines() -> None:
+    from qq_bot.services.daily_report import _repair_polished
+
+    titles = ("标题甲",)
+    reply = "- 标题甲\n- 凭空编造的标题\n【寄语】好"
+    assert _repair_polished(titles, reply) is None
