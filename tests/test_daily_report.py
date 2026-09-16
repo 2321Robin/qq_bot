@@ -430,3 +430,88 @@ async def test_polish_failure_keeps_template_news(monkeypatch: pytest.MonkeyPatc
     )
     assert "· 新闻甲" in text
     assert "【寄语】" not in text
+
+
+# ---- 2026-09-16 修订：新闻条数/屏蔽/晚报换源 ----
+
+
+def _news_client() -> _FakeGetClient:
+    return _FakeGetClient(
+        {
+            "news": {
+                "items": [
+                    {"title": "新闻甲"},
+                    {"title": "新闻乙"},
+                    {"title": "新闻丙"},
+                    {"title": "新闻丁"},
+                ]
+            },
+            "toutiao": {
+                "items": [{"title": f"头条{i}"} for i in range(1, 9)],
+            },
+        }
+    )
+
+
+async def test_news_truncated_to_max_items() -> None:
+    from datetime import date
+
+    from qq_bot.services.daily_report import build_life_morning_message
+
+    settings = _settings(report_news_max_items=2)
+    text = await build_life_morning_message(
+        settings, client=_news_client(), today=date(2026, 9, 16)
+    )
+    assert "· 新闻甲" in text and "· 新闻乙" in text
+    assert "· 新闻丙" not in text and "· 新闻丁" not in text
+
+
+async def test_news_blocklist_filters_titles() -> None:
+    from datetime import date
+
+    from qq_bot.services.daily_report import build_life_morning_message
+
+    settings = _settings(report_news_blocklist="乙,丁")
+    text = await build_life_morning_message(
+        settings, client=_news_client(), today=date(2026, 9, 16)
+    )
+    assert "· 新闻甲" in text and "· 新闻丙" in text
+    assert "新闻乙" not in text and "新闻丁" not in text
+
+
+async def test_evening_news_uses_toutiao_by_default() -> None:
+    from datetime import date
+
+    from qq_bot.services.daily_report import build_life_evening_message
+
+    text = await build_life_evening_message(
+        _settings(), client=_news_client(), today=date(2026, 9, 16)
+    )
+    assert "📰 头条热榜" in text
+    assert "· 头条1" in text
+    assert "📰 新闻" not in text
+
+
+async def test_morning_news_keeps_60s_source() -> None:
+    from datetime import date
+
+    from qq_bot.services.daily_report import build_life_morning_message
+
+    text = await build_life_morning_message(
+        _settings(), client=_news_client(), today=date(2026, 9, 16)
+    )
+    assert "📰 新闻" in text
+    assert "· 新闻甲" in text
+
+
+async def test_evening_endpoint_configurable_back_to_news() -> None:
+    from datetime import date
+
+    from qq_bot.services.daily_report import build_life_evening_message
+
+    settings = _settings(report_evening_news_endpoint="news")
+    text = await build_life_evening_message(
+        settings, client=_news_client(), today=date(2026, 9, 16)
+    )
+    assert "📰 新闻" in text
+    assert "· 新闻甲" in text

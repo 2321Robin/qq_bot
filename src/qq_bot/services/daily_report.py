@@ -33,7 +33,14 @@ from qq_bot.services.reliability import (
 )
 
 _REPORT_MAX_ATTEMPTS = 3
-_REPORT_BREAKER_NAMES = {"news": "report_news", "hot": "report_hot", "heh": "report_heh"}
+_REPORT_BREAKER_NAMES = {
+    "news": "report_news",
+    "hot": "report_hot",
+    "heh": "report_heh",
+    "toutiao": "report_toutiao",
+}
+# 新闻板块标题按端点区分：晚报默认换头条热榜源，避免与早报 60s 新闻重复
+_NEWS_SECTION_TITLES = {"news": "📰 新闻", "toutiao": "📰 头条热榜"}
 
 
 class SourceError(RuntimeError):
@@ -289,17 +296,34 @@ _HOT_TITLE = "🔥 热搜"
 _HEH_TITLE = "🎮 小黑盒热帖"
 
 
-async def _news_section(settings: BotSettings, client: AsyncGetClient | None) -> str:
+async def _news_section(
+    settings: BotSettings,
+    client: AsyncGetClient | None,
+    *,
+    kind: str,
+) -> str:
+    endpoint = "news" if kind == "早报" else settings.report_evening_news_endpoint
+    title = _NEWS_SECTION_TITLES.get(endpoint, "📰 新闻")
     try:
-        items = await fetch_section_items("news", settings, client)
+        items = await fetch_section_items(endpoint, settings, client)
     except SourceError:
-        metrics.REPORT_SECTIONS_TOTAL.labels("news", "unavailable").inc()
+        metrics.REPORT_SECTIONS_TOTAL.labels(endpoint, "unavailable").inc()
         return ""
+    # 关键词屏蔽（2026-09-16 用户需求）：标题含任一屏蔽词的条目直接剔除
+    blocklist = settings.report_news_blocklist_list
+    if blocklist:
+        lowered = [word.casefold() for word in blocklist]
+        items = tuple(
+            item for item in items if not any(word in item.title.casefold() for word in lowered)
+        )
+    if not items:
+        return ""
+    items = truncate_items(items, settings.report_news_max_items)
     outcome = await polish_news(items, settings, client=client)
     metrics.REPORT_LLM_TOTAL.labels(outcome.reason).inc()
     if outcome.ok:
         return outcome.text
-    return format_news_template(items)
+    return "\n".join([title, *(f"· {item.title}" for item in items)])
 
 
 async def _list_section(
@@ -333,7 +357,7 @@ async def _build_life_message(
     span = tracer.start_span("report.build", trace_id=trace_id)
     try:
         news_text, hot_text, heh_text = await asyncio.gather(
-            _news_section(settings, client),
+            _news_section(settings, client, kind=kind),
             _list_section("hot", _HOT_TITLE, settings, client),
             _list_section("heh", _HEH_TITLE, settings, client),
         )

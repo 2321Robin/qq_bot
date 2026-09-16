@@ -694,3 +694,32 @@ def test_negative_words_merge_builtin_with_extra() -> None:
 def test_auto_chat_ignored_user_id_list_parses() -> None:
     settings = BotSettings(auto_chat_ignored_user_ids="111, 222")
     assert settings.auto_chat_ignored_user_id_list == [111, 222]
+
+
+def test_report_news_max_items_default_and_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("REPORT_NEWS_MAX_ITEMS", raising=False)
+    assert BotSettings().report_news_max_items == 15
+    monkeypatch.setenv("REPORT_NEWS_MAX_ITEMS", "0")
+    with pytest.raises(ValidationError, match="report_news_max_items"):
+        BotSettings()
+    monkeypatch.setenv("REPORT_NEWS_MAX_ITEMS", "25")
+    with pytest.raises(ValidationError, match="report_news_max_items"):
+        BotSettings()
+
+
+def test_report_news_blocklist_parsing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REPORT_NEWS_BLOCKLIST", "楼市, 股市,房价")
+    settings = BotSettings()
+    assert settings.report_news_blocklist_list == ["楼市", "股市", "房价"]
+    monkeypatch.delenv("REPORT_NEWS_BLOCKLIST", raising=False)
+    assert BotSettings().report_news_blocklist_list == []
+
+
+def test_report_evening_news_endpoint_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("REPORT_EVENING_NEWS_ENDPOINT", raising=False)
+    assert BotSettings().report_evening_news_endpoint == "toutiao"
+    monkeypatch.setenv("REPORT_EVENING_NEWS_ENDPOINT", "weather")
+    with pytest.raises(ValidationError, match="report_evening_news_endpoint"):
+        BotSettings()
+    monkeypatch.setenv("REPORT_EVENING_NEWS_ENDPOINT", "news")
+    assert BotSettings().report_evening_news_endpoint == "news"

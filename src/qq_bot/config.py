@@ -305,6 +305,11 @@ class BotSettings(BaseSettings):
     report_ai_enabled: bool = False  # 新闻 LLM 润色 + 寄语
     report_ai_model: str = ""  # 空 = 复用 ai_model
     report_ai_daily_max: int = 20  # 定时任务 LLM 独立每日上限；0 = 关闭润色
+    report_news_max_items: int = 15  # 新闻板块显示条数（2026-09-16 部署建议 10）
+    report_news_blocklist: str = ""  # 新闻标题屏蔽词，逗号分隔，含任一词即剔除
+    report_evening_news_endpoint: str = (
+        "toutiao"  # 晚报新闻源：toutiao=头条热榜（避免与早报重复）| news=同源
+    )
 
     # ---- 自主群聊插话与人设（S7-AUTO）----
     auto_chat_enabled: bool = False
@@ -571,6 +576,20 @@ class BotSettings(BaseSettings):
             raise ValueError("report_ai_daily_max must be non-negative")
         return value
 
+    @field_validator("report_news_max_items")
+    @classmethod
+    def validate_report_news_max_items(cls, value: int) -> int:
+        if value < 1 or value > 20:
+            raise ValueError("report_news_max_items must be between 1 and 20")
+        return value
+
+    @field_validator("report_evening_news_endpoint")
+    @classmethod
+    def validate_report_evening_news_endpoint(cls, value: str) -> str:
+        if value not in {"news", "toutiao"}:
+            raise ValueError("report_evening_news_endpoint must be one of: news, toutiao")
+        return value
+
     @field_validator(
         "ai_context_window_tokens", "ai_output_reserve_tokens", "ai_token_safety_margin"
     )
@@ -629,9 +648,7 @@ class BotSettings(BaseSettings):
 
     @property
     def persona_alias_list(self) -> tuple[str, ...]:
-        return tuple(
-            alias.strip() for alias in self.persona_aliases.split(",") if alias.strip()
-        )
+        return tuple(alias.strip() for alias in self.persona_aliases.split(",") if alias.strip())
 
     @property
     def effective_persona_prompt(self) -> str:
@@ -714,6 +731,10 @@ class BotSettings(BaseSettings):
 
     def has_report_source_config(self) -> bool:
         return bool(self.normalized_report_60s_base_url)
+
+    @property
+    def report_news_blocklist_list(self) -> list[str]:
+        return [word.strip() for word in self.report_news_blocklist.split(",") if word.strip()]
 
 
 @lru_cache(maxsize=1)
