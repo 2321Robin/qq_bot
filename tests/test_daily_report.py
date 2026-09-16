@@ -527,6 +527,9 @@ async def test_polish_fallback_provider_swaps_credentials(monkeypatch: pytest.Mo
         async def summary(self, *, scope_type: str, scope_id: int):
             return {"requests": 0}
 
+        async def record_usage(self, **kwargs: Any) -> None:
+            return None
+
     async def _fake_request(prompt, *, settings, client=None, **kwargs):
         captured["base_url"] = settings.ai_base_url
         captured["api_key"] = settings.ai_api_key
