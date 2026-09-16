@@ -733,3 +733,11 @@ def test_report_ai_provider_default_and_validation(monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("REPORT_AI_PROVIDER", "openai")
     with pytest.raises(ValidationError, match="report_ai_provider"):
         BotSettings()
+
+
+def test_report_ai_timeout_default_and_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("REPORT_AI_TIMEOUT_SECONDS", raising=False)
+    assert BotSettings().report_ai_timeout_seconds == 60.0
+    monkeypatch.setenv("REPORT_AI_TIMEOUT_SECONDS", "0")
+    with pytest.raises(ValidationError, match="report_ai_timeout_seconds"):
+        BotSettings()

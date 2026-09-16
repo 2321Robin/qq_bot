@@ -202,7 +202,7 @@ _POLISH_SYSTEM = (
     "1) 输出以 · 开头的条目列表，条数必须与输入一致，顺序可以调整；"
     "2) 每条必须完整保留原标题原文，标题后可以追加一句不超过 15 字的说明；"
     "3) 不得新增、删除或改写任何标题，不得编造事实；"
-    "4) 条目之后空一行，输出一行以【寄语】开头的一句话寄语。"
+    "4) 必须以一行【寄语】开头的话作为最后一行（这是硬性要求，绝不能省略）。"
 )
 
 
@@ -268,7 +268,10 @@ async def polish_news(
             return PolishOutcome(ok=False, text=template, reason="capped")
     # REPORT_AI_MODEL 生效方式：换模型名。REPORT_AI_PROVIDER=fallback 时整个
     # 首选链路切到备用 Provider（模型与主链路不同源的场景，如主 DeepSeek + 备 GLM）
-    update = {"ai_model": settings.report_llm_model}
+    update = {
+        "ai_model": settings.report_llm_model,
+        "ai_timeout_seconds": settings.report_ai_timeout_seconds,
+    }
     if settings.report_ai_provider == "fallback":
         update["ai_base_url"] = settings.normalized_ai_fallback_base_url
         update["ai_api_key"] = settings.ai_fallback_api_key

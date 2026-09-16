@@ -307,6 +307,7 @@ class BotSettings(BaseSettings):
     report_ai_provider: str = (
         "primary"  # primary=主链路 | fallback=改用备用 Provider（模型与主链路不同源时用）
     )
+    report_ai_timeout_seconds: float = 60.0  # 免费档模型生成慢，独立于主链路超时
     report_ai_daily_max: int = 20  # 定时任务 LLM 独立每日上限；0 = 关闭润色
     report_news_max_items: int = 15  # 新闻板块显示条数（2026-09-16 部署建议 10）
     report_news_blocklist: str = ""  # 新闻标题屏蔽词，逗号分隔，含任一词即剔除
@@ -591,6 +592,13 @@ class BotSettings(BaseSettings):
     def validate_report_ai_provider(cls, value: str) -> str:
         if value not in {"primary", "fallback"}:
             raise ValueError("report_ai_provider must be one of: primary, fallback")
+        return value
+
+    @field_validator("report_ai_timeout_seconds")
+    @classmethod
+    def validate_report_ai_timeout_seconds(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("report_ai_timeout_seconds must be greater than 0")
         return value
 
     @field_validator("report_evening_news_endpoint")

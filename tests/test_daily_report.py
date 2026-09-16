@@ -581,3 +581,27 @@ async def test_polish_primary_provider_keeps_credentials(monkeypatch: pytest.Mon
     await dr.polish_news((NewsItem(title="标题甲"),), settings)
     assert captured["base_url"] == "https://api.deepseek.com"
     assert captured["api_key"] == "sk-primary"
+
+
+async def test_polish_uses_dedicated_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """润色调用应使用 REPORT_AI_TIMEOUT_SECONDS 而非主链路超时（免费档生成慢）。"""
+    from qq_bot.services import daily_report as dr
+
+    captured: dict = {}
+
+    class _Quota:
+        async def summary(self, *, scope_type: str, scope_id: int):
+            return {"requests": 0}
+
+        async def record_usage(self, **kwargs: Any) -> None:
+            return None
+
+    async def _fake_request(prompt, *, settings, client=None, **kwargs):
+        captured["timeout"] = settings.ai_timeout_seconds
+        return "· 标题甲\n\n【寄语】好"
+
+    monkeypatch.setattr(dr, "_quota_service", lambda: _Quota())
+    monkeypatch.setattr(dr, "request_ai_reply", _fake_request)
+    settings = _settings(report_ai_enabled=True, report_ai_timeout_seconds=90.0)
+    await dr.polish_news((NewsItem(title="标题甲"),), settings)
+    assert captured["timeout"] == 90.0
