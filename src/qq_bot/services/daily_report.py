@@ -268,26 +268,28 @@ async def polish_news(
             return PolishOutcome(ok=False, text=template, reason="capped")
     # REPORT_AI_MODEL 生效方式：换模型名。REPORT_AI_PROVIDER=fallback 时整个
     # 首选链路切到备用 Provider（模型与主链路不同源的场景，如主 DeepSeek + 备 GLM）
-    update = {
-        "ai_model": settings.report_llm_model,
-        "ai_timeout_seconds": settings.report_ai_timeout_seconds,
-    }
+    update = {"ai_model": settings.report_llm_model}
     if settings.report_ai_provider == "fallback":
         update["ai_base_url"] = settings.normalized_ai_fallback_base_url
         update["ai_api_key"] = settings.ai_fallback_api_key
     effective = settings.model_copy(update=update)
+    # 润色专用客户端：免费档生成约 30s+，共享客户端固化了主链路 30s 超时，
+    # 这里用独立超时（REPORT_AI_TIMEOUT_SECONDS）自建，每次调用即用即关
+    timeout_client = httpx.AsyncClient(timeout=httpx.Timeout(settings.report_ai_timeout_seconds))
     prompt = _POLISH_SYSTEM + "\n\n" + "\n".join(f"- {title}" for title in titles)
     try:
         reply = await request_ai_reply(
             prompt,
             settings=effective,
-            client=client,
+            client=timeout_client,
             search_context="",
             chat_context="",
             roco_context="",
         )
     except Exception:
         return PolishOutcome(ok=False, text=template, reason="error")
+    finally:
+        await timeout_client.aclose()
     if not verify_polished(titles, reply):
         return PolishOutcome(ok=False, text=template, reason="check_failed")
     if quota is not None:

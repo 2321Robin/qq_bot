@@ -596,12 +596,13 @@ async def test_polish_uses_dedicated_timeout(monkeypatch: pytest.MonkeyPatch) ->
         async def record_usage(self, **kwargs: Any) -> None:
             return None
 
-    async def _fake_request(prompt, *, settings, client=None, **kwargs):
-        captured["timeout"] = settings.ai_timeout_seconds
+    async def _fake_request(prompt, *, settings, client, **kwargs):
+        captured["client"] = client
         return "· 标题甲\n\n【寄语】好"
 
     monkeypatch.setattr(dr, "_quota_service", lambda: _Quota())
     monkeypatch.setattr(dr, "request_ai_reply", _fake_request)
     settings = _settings(report_ai_enabled=True, report_ai_timeout_seconds=90.0)
-    await dr.polish_news((NewsItem(title="标题甲"),), settings)
-    assert captured["timeout"] == 90.0
+    await dr.polish_news((NewsItem(title="标题甲"),), settings, client=object())
+    timeout = captured["client"].timeout
+    assert timeout.connect == 90.0 and timeout.read == 90.0
