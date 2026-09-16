@@ -723,3 +723,13 @@ def test_report_evening_news_endpoint_validation(monkeypatch: pytest.MonkeyPatch
         BotSettings()
     monkeypatch.setenv("REPORT_EVENING_NEWS_ENDPOINT", "news")
     assert BotSettings().report_evening_news_endpoint == "news"
+
+
+def test_report_ai_provider_default_and_validation(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("REPORT_AI_PROVIDER", raising=False)
+    assert BotSettings().report_ai_provider == "primary"
+    monkeypatch.setenv("REPORT_AI_PROVIDER", "fallback")
+    assert BotSettings().report_ai_provider == "fallback"
+    monkeypatch.setenv("REPORT_AI_PROVIDER", "openai")
+    with pytest.raises(ValidationError, match="report_ai_provider"):
+        BotSettings()

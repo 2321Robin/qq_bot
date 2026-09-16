@@ -266,8 +266,13 @@ async def polish_news(
         summary = await quota.summary(scope_type="report", scope_id=0)
         if int(summary.get("requests", 0)) >= settings.report_ai_daily_max:
             return PolishOutcome(ok=False, text=template, reason="capped")
-    # REPORT_AI_MODEL 生效方式：换模型名，复用主备链路与其余配置
-    effective = settings.model_copy(update={"ai_model": settings.report_llm_model})
+    # REPORT_AI_MODEL 生效方式：换模型名。REPORT_AI_PROVIDER=fallback 时整个
+    # 首选链路切到备用 Provider（模型与主链路不同源的场景，如主 DeepSeek + 备 GLM）
+    update = {"ai_model": settings.report_llm_model}
+    if settings.report_ai_provider == "fallback":
+        update["ai_base_url"] = settings.normalized_ai_fallback_base_url
+        update["ai_api_key"] = settings.ai_fallback_api_key
+    effective = settings.model_copy(update=update)
     prompt = _POLISH_SYSTEM + "\n\n" + "\n".join(f"- {title}" for title in titles)
     try:
         reply = await request_ai_reply(

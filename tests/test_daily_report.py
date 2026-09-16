@@ -515,3 +515,66 @@ async def test_evening_endpoint_configurable_back_to_news() -> None:
     )
     assert "📰 新闻" in text
     assert "· 新闻甲" in text
+
+
+async def test_polish_fallback_provider_swaps_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REPORT_AI_PROVIDER=fallback 时润色应使用备用链路的端点与密钥。"""
+    from qq_bot.services import daily_report as dr
+
+    captured: dict = {}
+
+    class _Quota:
+        async def summary(self, *, scope_type: str, scope_id: int):
+            return {"requests": 0}
+
+    async def _fake_request(prompt, *, settings, client=None, **kwargs):
+        captured["base_url"] = settings.ai_base_url
+        captured["api_key"] = settings.ai_api_key
+        captured["model"] = settings.ai_model
+        return "· 标题甲\n\n【寄语】好"
+
+    monkeypatch.setattr(dr, "_quota_service", lambda: _Quota())
+    monkeypatch.setattr(dr, "request_ai_reply", _fake_request)
+    settings = _settings(
+        report_ai_enabled=True,
+        report_ai_provider="fallback",
+        report_ai_model="glm-4-flash",
+        ai_base_url="https://api.deepseek.com",
+        ai_api_key="sk-primary",
+        ai_fallback_base_url="https://open.bigmodel.cn/api/paas/v4",
+        ai_fallback_api_key="sk-glm",
+    )
+    outcome = await dr.polish_news((NewsItem(title="标题甲"),), settings)
+    assert outcome.reason == "ok"
+    assert captured["base_url"] == "https://open.bigmodel.cn/api/paas/v4"
+    assert captured["api_key"] == "sk-glm"
+    assert captured["model"] == "glm-4-flash"
+
+
+async def test_polish_primary_provider_keeps_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    from qq_bot.services import daily_report as dr
+
+    captured: dict = {}
+
+    class _Quota:
+        async def summary(self, *, scope_type: str, scope_id: int):
+            return {"requests": 0}
+
+        async def record_usage(self, **kwargs: Any) -> None:
+            return None
+
+    async def _fake_request(prompt, *, settings, client=None, **kwargs):
+        captured["base_url"] = settings.ai_base_url
+        captured["api_key"] = settings.ai_api_key
+        return "· 标题甲\n\n【寄语】好"
+
+    monkeypatch.setattr(dr, "_quota_service", lambda: _Quota())
+    monkeypatch.setattr(dr, "request_ai_reply", _fake_request)
+    settings = _settings(
+        report_ai_enabled=True,
+        ai_base_url="https://api.deepseek.com",
+        ai_api_key="sk-primary",
+    )
+    await dr.polish_news((NewsItem(title="标题甲"),), settings)
+    assert captured["base_url"] == "https://api.deepseek.com"
+    assert captured["api_key"] == "sk-primary"

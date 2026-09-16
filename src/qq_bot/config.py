@@ -304,6 +304,9 @@ class BotSettings(BaseSettings):
     report_hotlist_max_items: int = 3  # 热搜/热帖榜截取条数
     report_ai_enabled: bool = False  # 新闻 LLM 润色 + 寄语
     report_ai_model: str = ""  # 空 = 复用 ai_model
+    report_ai_provider: str = (
+        "primary"  # primary=主链路 | fallback=改用备用 Provider（模型与主链路不同源时用）
+    )
     report_ai_daily_max: int = 20  # 定时任务 LLM 独立每日上限；0 = 关闭润色
     report_news_max_items: int = 15  # 新闻板块显示条数（2026-09-16 部署建议 10）
     report_news_blocklist: str = ""  # 新闻标题屏蔽词，逗号分隔，含任一词即剔除
@@ -581,6 +584,13 @@ class BotSettings(BaseSettings):
     def validate_report_news_max_items(cls, value: int) -> int:
         if value < 1 or value > 20:
             raise ValueError("report_news_max_items must be between 1 and 20")
+        return value
+
+    @field_validator("report_ai_provider")
+    @classmethod
+    def validate_report_ai_provider(cls, value: str) -> str:
+        if value not in {"primary", "fallback"}:
+            raise ValueError("report_ai_provider must be one of: primary, fallback")
         return value
 
     @field_validator("report_evening_news_endpoint")
