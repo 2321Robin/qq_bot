@@ -6,6 +6,7 @@ from qq_bot.config import BotSettings
 from qq_bot.observability import metrics
 from qq_bot.services.auto_chat import (
     AutoChatState,
+    GATE_SYSTEM_PROMPT,
     GateDecision,
     build_casual_user_prompt,
     build_gate_user_prompt,
@@ -122,15 +123,21 @@ def test_lock_is_per_group() -> None:
 # ---- 纯函数层：预筛 / 负反馈 / prompt 构建 / 决策门解析（S7-AUTO-05）----
 
 
-def _row(text: str, user_id: int = 2001, row_id: int = 1) -> ChatMemoryRow:
+def _row(
+    text: str,
+    user_id: int = 2001,
+    row_id: int = 1,
+    ai_reply: str = "",
+    created_at: str = "2026-09-16T00:00:00+00:00",
+) -> ChatMemoryRow:
     return ChatMemoryRow(
         id=row_id,
         group_id=1001,
         user_id=user_id,
         message_text=text,
-        created_at="2026-09-16T00:00:00+00:00",
+        created_at=created_at,
         is_ai_prompt=False,
-        ai_reply="",
+        ai_reply=ai_reply,
     )
 
 
@@ -638,3 +645,23 @@ async def test_note_reply_after_send_and_hot_exit_limit_metric() -> None:
     assert h.sent == ["哈哈冲"]
     # streak=1 达到 limit=1 → 发送前 note_reply 返回 hot_exit_limit 并退出热聊
     assert h.state.hot_active(1001, settings=h.settings) is False
+
+
+# ---- 二期：prompt 渲染增强（S7-AUTO-P2-04）----
+
+
+class TestPromptBotVisibility:
+    def test_bot_reply_rendered_as_robot_line(self) -> None:
+        rows = [_row("今天好累", user_id=2001, ai_reply="摸鱼一天真快乐")]
+        prompt = build_casual_user_prompt(rows)
+        assert "用户2001：今天好累" in prompt
+        assert "机器人：摸鱼一天真快乐" in prompt
+
+    def test_gate_prompt_lists_bot_replies_too(self) -> None:
+        rows = [_row("你好", user_id=2001, row_id=1, ai_reply="你好呀")]
+        prompt = build_gate_user_prompt(rows)
+        assert "机器人：你好呀" in prompt
+
+    def test_gate_system_prompt_has_you_rule(self) -> None:
+        assert "机器人" in GATE_SYSTEM_PROMPT
+        assert "你" in GATE_SYSTEM_PROMPT

@@ -176,6 +176,8 @@ GATE_SYSTEM_PROMPT = (
     "banter=闲聊接梗且机器人有实质可说；none=没有实质可说。"
     "只在有实质可说时才 should_reply=true；政治/色情/赌博/暴力/求医问药/投资建议等"
     "敏感或高风险话题必须 false；纯表情包、灌水、上下文接不上也必须 false。"
+    "消息列表中的“机器人：”行表示机器人参与过该话题；"
+    "若最新消息里的“你”可能指机器人（尤其紧跟机器人发言之后），视为 addressed，倾向回复。"
     "不要输出任何其他字段。"
 )
 
@@ -222,15 +224,24 @@ def detect_negative_feedback(
     )
 
 
+def _render_rows(rows: Sequence[ChatMemoryRow]) -> list[str]:
+    lines: list[str] = []
+    for row in rows:
+        lines.append(f"用户{row.user_id}：{row.message_text}")
+        if row.ai_reply:
+            lines.append(f"机器人：{row.ai_reply}")
+    return lines
+
+
 def build_gate_user_prompt(rows: Sequence[ChatMemoryRow]) -> str:
     lines = ["最近群消息（最后一条是最新消息）："]
-    lines.extend(f"用户{row.user_id}：{row.message_text}" for row in rows)
+    lines.extend(_render_rows(rows))
     return "\n".join(lines)
 
 
 def build_casual_user_prompt(rows: Sequence[ChatMemoryRow]) -> str:
     lines = ["最近群消息（最后一条是最新消息）："]
-    lines.extend(f"用户{row.user_id}：{row.message_text}" for row in rows)
+    lines.extend(_render_rows(rows))
     lines.append("请以群友身份对最新消息自然地接一句话。")
     return "\n".join(lines)
 
