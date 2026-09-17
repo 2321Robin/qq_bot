@@ -51,6 +51,9 @@ class AutoChatState:
         self._daily: dict[tuple[int, str], int] = {}
         self._backoff_until: dict[int, float] = {}
         self._locks: dict[int, asyncio.Lock] = {}
+        self._hot_until: dict[int, float] = {}
+        self._hot_streak: dict[int, int] = {}
+        self._cold_daily: dict[tuple[int, str], int] = {}
 
     def lock(self, group_id: int) -> asyncio.Lock:
         return self._locks.setdefault(group_id, asyncio.Lock())
@@ -61,30 +64,61 @@ class AutoChatState:
 
     def set_backoff(self, group_id: int, seconds: float) -> None:
         self._backoff_until[group_id] = self._clock() + seconds
+        # 负反馈强制退出热聊（spec 第四节）
+        self._hot_until.pop(group_id, None)
+        self._hot_streak[group_id] = 0
 
     def recently_spoke(self, group_id: int, window_seconds: float) -> bool:
         last = self._last_sent.get(group_id)
         return last is not None and self._clock() - last < window_seconds
 
-    def limit_reason(self, group_id: int, *, settings: BotSettings) -> str:
-        """`""` when within limits, else `cooldown`|`hourly_limit`|`daily_limit`."""
+    def limit_reason(
+        self,
+        group_id: int,
+        *,
+        settings: BotSettings,
+        cooldown_seconds: float | None = None,
+        skip_hourly: bool = False,
+    ) -> str:
+        """`""` when within limits, else `cooldown`|`hourly_limit`|`daily_limit`.
+
+        `cooldown_seconds` overrides `settings.auto_chat_cooldown_seconds`
+        (hot mode passes 30s); `skip_hourly=True` exempts the hourly cap
+        (hot mode only)."""
+        cooldown = (
+            cooldown_seconds
+            if cooldown_seconds is not None
+            else settings.auto_chat_cooldown_seconds
+        )
         now = self._clock()
         last = self._last_sent.get(group_id)
-        if last is not None and now - last < settings.auto_chat_cooldown_seconds:
+        if last is not None and now - last < cooldown:
             return "cooldown"
         bucket = self._bucket_clock()
         hour_key = bucket.strftime("%Y-%m-%dT%H")
         day_key = bucket.strftime("%Y-%m-%d")
-        if self._hourly.get((group_id, hour_key), 0) >= settings.auto_chat_hourly_limit:
+        if not skip_hourly and self._hourly.get((group_id, hour_key), 0) >= settings.auto_chat_hourly_limit:
             return "hourly_limit"
         if self._daily.get((group_id, day_key), 0) >= settings.auto_chat_daily_limit:
             return "daily_limit"
         return ""
 
-    def acquire(self, group_id: int, *, settings: BotSettings) -> str:
+    def acquire(
+        self,
+        group_id: int,
+        *,
+        settings: BotSettings,
+        cooldown_seconds: float | None = None,
+        skip_hourly: bool = False,
+    ) -> str:
         """Re-check limits and occupy the slot atomically (call under the
         group lock in the orchestration path). Returns `""` on success."""
-        reason = self.limit_reason(group_id, settings=settings)
+        reason = self.limit_reason(
+            group_id,
+            settings=settings,
+            cooldown_seconds=cooldown_seconds,
+            skip_hourly=skip_hourly,
+        )
         if reason:
             return reason
         bucket = self._bucket_clock()
@@ -102,6 +136,33 @@ class AutoChatState:
             del self._hourly[key]
         for key in [k for k in self._daily if k[1] != current_day]:
             del self._daily[key]
+
+    def hot_active(self, group_id: int, *, settings: BotSettings) -> bool:
+        until = self._hot_until.get(group_id)
+        return (
+            until is not None
+            and self._clock() < until
+            and self._hot_streak.get(group_id, 0) < settings.auto_chat_hot_streak_limit
+        )
+
+    def note_reply(self, group_id: int, *, settings: BotSettings) -> str:
+        """登记一次机器人发言：刷新热聊窗口并累计 streak。返回 `""` 或
+        `"hot_exit_limit"`（streak 触及兜底上限并退出热聊）。"""
+        self._hot_until[group_id] = self._clock() + settings.auto_chat_hot_window_seconds
+        self._hot_streak[group_id] = self._hot_streak.get(group_id, 0) + 1
+        if self._hot_streak[group_id] >= settings.auto_chat_hot_streak_limit:
+            self._hot_until.pop(group_id, None)
+            self._hot_streak[group_id] = 0
+            return "hot_exit_limit"
+        return ""
+
+    def cold_limit_reached(self, group_id: int, *, settings: BotSettings) -> bool:
+        day_key = self._bucket_clock().strftime("%Y-%m-%d")
+        return self._cold_daily.get((group_id, day_key), 0) >= settings.auto_chat_cold_daily_limit
+
+    def note_cold_reply(self, group_id: int, *, settings: BotSettings) -> None:
+        day_key = self._bucket_clock().strftime("%Y-%m-%d")
+        self._cold_daily[(group_id, day_key)] = self._cold_daily.get((group_id, day_key), 0) + 1
 
 
 # ---- 纯函数层：预筛 / 负反馈 / prompt 构建 / 决策门解析（S7-AUTO-05）----

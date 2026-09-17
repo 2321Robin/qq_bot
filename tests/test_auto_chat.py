@@ -470,3 +470,89 @@ async def test_send_failure_propagates_after_state_occupied() -> None:
             _request_completion=h.completion(),
         )
     assert h.state.recently_spoke(1001, 300.0) is True
+
+
+# ---- 二期：热聊状态与冷场计数（S7-AUTO-P2-02）----
+
+
+def _hot_settings(**overrides) -> BotSettings:
+    base = {
+        "auto_chat_hot_window_seconds": 480.0,
+        "auto_chat_hot_streak_limit": 3,
+        "auto_chat_cold_daily_limit": 3,
+    }
+    base.update(overrides)
+    return _settings(**base)
+
+
+def test_note_reply_activates_and_refreshes_hot_window() -> None:
+    clock = FakeClock()
+    state = AutoChatState(clock=clock)
+    settings = _hot_settings()
+    assert state.hot_active(1, settings=settings) is False
+    assert state.note_reply(1, settings=settings) == ""
+    assert state.hot_active(1, settings=settings) is True
+    clock.advance(479)
+    assert state.note_reply(1, settings=settings) == ""  # 续期
+    clock.advance(479)
+    assert state.hot_active(1, settings=settings) is True  # 窗口被刷新过
+    clock.advance(481)
+    assert state.hot_active(1, settings=settings) is False  # 自然过期
+
+
+def test_note_reply_streak_limit_exits_hot() -> None:
+    clock = FakeClock()
+    state = AutoChatState(clock=clock)
+    settings = _hot_settings()  # streak limit = 3
+    assert state.note_reply(1, settings=settings) == ""
+    assert state.note_reply(1, settings=settings) == ""
+    assert state.note_reply(1, settings=settings) == "hot_exit_limit"
+    assert state.hot_active(1, settings=settings) is False
+
+
+def test_set_backoff_forces_hot_exit() -> None:
+    clock = FakeClock()
+    state = AutoChatState(clock=clock)
+    settings = _hot_settings()
+    state.note_reply(1, settings=settings)
+    assert state.hot_active(1, settings=settings) is True
+    state.set_backoff(1, 1800.0)
+    assert state.hot_active(1, settings=settings) is False
+
+
+def test_limit_reason_cooldown_override_and_skip_hourly() -> None:
+    from datetime import UTC, datetime
+
+    clock = FakeClock()
+
+    def fixed_bucket():
+        return datetime(2026, 9, 17, tzinfo=UTC)
+
+    state = AutoChatState(clock=clock, bucket_clock=fixed_bucket)
+    settings = _settings(auto_chat_hourly_limit=1, auto_chat_daily_limit=99)
+    assert state.acquire(1, settings=settings) == ""
+    # 普通：300s 冷却内
+    assert state.limit_reason(1, settings=settings) == "cooldown"
+    # 热聊：覆盖为 30s 冷却并跳过小时上限
+    clock.advance(31)
+    assert (
+        state.limit_reason(1, settings=settings, cooldown_seconds=30.0, skip_hourly=True)
+        == ""
+    )
+    # 不跳过小时上限时，第 2 条触发 hourly_limit
+    assert state.acquire(1, settings=settings, cooldown_seconds=30.0) == "hourly_limit"
+
+
+def test_cold_daily_counter() -> None:
+    from datetime import UTC, datetime
+
+    def fixed_bucket():
+        return datetime(2026, 9, 17, tzinfo=UTC)
+
+    state = AutoChatState(bucket_clock=fixed_bucket)
+    settings = _hot_settings()  # cold daily limit = 3
+    assert state.cold_limit_reached(1, settings=settings) is False
+    state.note_cold_reply(1, settings=settings)
+    state.note_cold_reply(1, settings=settings)
+    state.note_cold_reply(1, settings=settings)
+    assert state.cold_limit_reached(1, settings=settings) is True
