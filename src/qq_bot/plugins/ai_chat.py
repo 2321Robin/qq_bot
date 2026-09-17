@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 import random
+from typing import Awaitable, Callable
 
 from nonebot import logger, on_message
 from nonebot.adapters.onebot.v11 import GroupMessageEvent
@@ -18,7 +19,7 @@ from qq_bot.runtime import (
     get_runtime,
 )
 from qq_bot.services.ai_client import AIReplyError, request_ai_reply
-from qq_bot.services.auto_chat import run_auto_chat
+from qq_bot.services.auto_chat import run_auto_chat, schedule_cold_check, shared_state
 from qq_bot.services.chat_memory import ChatMemoryRepository
 from qq_bot.services.persona import load_persona
 from qq_bot.services.memory_prompt import (
@@ -298,6 +299,22 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
             except Exception:
                 logger.exception("Chat memory reply update failed")
 
+        quota_check, send = _build_auto_chat_hooks(event, settings)
+        exit_flag = shared_state().note_reply(event.group_id, settings=settings)
+        if exit_flag:
+            metrics.AUTO_CHAT.labels("prefilter", "hot_exit_limit").inc()
+        if memory_store is not None:
+            schedule_cold_check(
+                group_id=event.group_id,
+                bot_reply_text=reply,
+                bot_reply_time=datetime.now(UTC),
+                settings=settings,
+                memory_store=memory_store,
+                send=send,
+                quota_check=quota_check,
+                client=http_client,
+            )
+
         await finish_with_send_errors_logged(
             ai_chat, replace_named_mentions(reply, settings.named_mention_replacement_map)
         )
@@ -368,17 +385,10 @@ async def _handle_agent_chat(
     return render_answer(outcome, store)
 
 
-async def _maybe_auto_reply(
-    event: GroupMessageEvent,
-    *,
-    raw_text: str,
-    settings: BotSettings,
-    memory_store: ChatMemoryRepository,
-    http_client: object | None,
-) -> None:
-    """Bridge from the plugin into the auto-chat pipeline (S7-AUTO-07).
-    Send/quota are injected so the service stays matcher- and runtime-free."""
-    load_persona(settings)  # 前置校验：人设配置可解析（坏配置早失败）
+def _build_auto_chat_hooks(
+    event: GroupMessageEvent, settings: BotSettings
+) -> tuple[Callable[[], Awaitable[bool]], Callable[[str], Awaitable[None]]]:
+    """quota 准入与发送闭包（自主插话与被 @ 路径共用）。"""
 
     async def quota_check() -> bool:
         try:
@@ -396,6 +406,23 @@ async def _maybe_auto_reply(
         await finish_with_send_errors_logged(
             ai_chat, replace_named_mentions(text, settings.named_mention_replacement_map)
         )
+
+    return quota_check, send
+
+
+async def _maybe_auto_reply(
+    event: GroupMessageEvent,
+    *,
+    raw_text: str,
+    settings: BotSettings,
+    memory_store: ChatMemoryRepository,
+    http_client: object | None,
+) -> None:
+    """Bridge from the plugin into the auto-chat pipeline (S7-AUTO-07).
+    Send/quota are injected so the service stays matcher- and runtime-free."""
+    load_persona(settings)  # 前置校验：人设配置可解析（坏配置早失败）
+
+    quota_check, send = _build_auto_chat_hooks(event, settings)
 
     await run_auto_chat(
         event=event,

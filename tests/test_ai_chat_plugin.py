@@ -87,6 +87,17 @@ def _patch_http_client(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ai_chat_plugin, "get_http_client", lambda: FakeHttpClient())
 
 
+@pytest.fixture(autouse=True)
+async def _cancel_leftover_tasks():
+    """被 @ 路径会调度真实的冷场检查 task（默认沉睡 180s）；测试结束时取消
+    仍未完成的 task，避免事件循环关闭时出现 "Task was destroyed" 告警。"""
+    yield
+    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    for t in pending:
+        t.cancel()
+    await asyncio.gather(*pending, return_exceptions=True)
+
+
 def memory_row(
     *,
     message_text: str,
@@ -1970,3 +1981,47 @@ def test_pick_variants_stays_within_pool(monkeypatch: pytest.MonkeyPatch) -> Non
     pool = ("a", "b", "c")
     monkeypatch.setattr(ai_chat_plugin.random, "choice", lambda seq: seq[0])
     assert ai_chat_plugin._pick_variants(pool) == "a"
+
+
+# ---- 二期：被 @ 路径登记与冷场调度（S7-AUTO-P2-05）----
+
+
+@pytest.mark.asyncio
+async def test_addressed_reply_registers_note_and_cold_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = {"note": 0, "cold": 0}
+
+    class FakeAutoChatState:
+        def note_reply(self, group_id, *, settings):
+            calls["note"] += 1
+            return ""
+
+    async def fake_request_ai_reply(prompt, *, settings, client=None, search_context="", chat_context="", roco_context=""):
+        return "你好呀"
+
+    async def fake_finish(message):
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+    monkeypatch.setattr(
+        ai_chat_plugin, "shared_state", lambda: FakeAutoChatState()
+    )
+
+    def fake_schedule_cold_check(**kwargs):
+        calls["cold"] += 1
+
+    monkeypatch.setattr(ai_chat_plugin, "schedule_cold_check", fake_schedule_cold_check)
+
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 你好"))  # type: ignore[arg-type]
+
+    assert calls["note"] == 1
+    assert calls["cold"] == 1

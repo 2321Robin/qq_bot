@@ -279,10 +279,116 @@ def parse_gate_output(content: str | None) -> GateDecision | None:
 
 _SHARED_STATE = AutoChatState()
 
+COLD_FALLBACK_MESSAGES = (
+    "怎么没人理我…鱼都晒干了",
+    "就当我说的是空气吧",
+    "冷场了？行吧，我躺回去了",
+)
 
-def schedule_cold_check(**kwargs: Any) -> None:
-    """冷场反应调度桩（Task 5 完整实现）。"""
-    return None
+
+def shared_state() -> AutoChatState:
+    """公开的模块级状态入口（插件被 @ 路径使用）。"""
+    return _SHARED_STATE
+
+
+def build_cold_user_prompt(rows: Sequence[ChatMemoryRow], bot_reply_text: str) -> str:
+    lines = ["最近群消息（最后一条是最新消息）："]
+    lines.extend(_render_rows(rows))
+    lines.append(f"你刚才说了「{bot_reply_text}」，但没有人回应。")
+    lines.append("用一句话自嘲或吐槽冷场，可以呼应你刚才说的内容。")
+    return "\n".join(lines)
+
+
+def schedule_cold_check(
+    *,
+    group_id: int,
+    bot_reply_text: str,
+    bot_reply_time: datetime,
+    settings: BotSettings,
+    memory_store: Any,
+    send: Callable[[str], Awaitable[None]],
+    quota_check: Callable[[], Awaitable[bool]] | None = None,
+    client: Any | None = None,
+    state: AutoChatState | None = None,
+    rng: Callable[[], float] = random.random,
+    _request_completion: Any = None,
+    _sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> None:
+    """发言后调度一次冷场检查（spec 第五节）。进程内 task，重启丢失可接受。"""
+
+    async def _check() -> None:
+        tracer = get_tracer()
+        live_state = state or _SHARED_STATE
+
+        def _cold(result: str) -> None:
+            metrics.AUTO_CHAT.labels("cold", result).inc()
+
+        try:
+            await _sleep(settings.auto_chat_cold_followup_seconds)
+            if live_state.in_backoff(group_id):
+                _cold("skip")
+                return
+            if live_state.cold_limit_reached(group_id, settings=settings):
+                _cold("skip")
+                return
+            try:
+                rows = await memory_store.recent_group_messages(
+                    group_id=group_id, limit=settings.auto_chat_context_messages
+                )
+            except Exception:
+                _cold("error")
+                return
+            latest = rows[-1] if rows else None
+            if latest is not None:
+                try:
+                    latest_at = datetime.fromisoformat(latest.created_at)
+                except (TypeError, ValueError):
+                    latest_at = None
+                if latest_at is not None and latest_at.tzinfo is None:
+                    latest_at = latest_at.replace(tzinfo=UTC)
+                if latest_at is not None and latest_at >= bot_reply_time:
+                    _cold("skip")
+                    return
+            persona = load_persona(settings)
+            from qq_bot.services.ai_client import (
+                request_completion as _real_completion,
+            )
+
+            complete = _request_completion or _real_completion
+            span = tracer.start_span("auto.generate", trace_id=current_request_id())
+            try:
+                reply = (
+                    await complete(
+                        system_prompt=casual_system_prompt(persona),
+                        user_prompt=build_cold_user_prompt(rows, bot_reply_text),
+                        settings=settings,
+                        client=client,
+                        model=settings.ai_model,
+                        max_tokens=100,
+                    )
+                ).strip()
+            except Exception as exc:
+                tracer.end_span(
+                    span, status="error", category=classify_exception(exc).category.value
+                )
+                reply = ""
+            else:
+                tracer.end_span(span)
+            if not reply:
+                reply = random.choice(COLD_FALLBACK_MESSAGES)
+            if any(word in reply for word in settings.auto_chat_sensitive_word_list):
+                _cold("filtered")
+                return
+            if quota_check is not None and not await quota_check():
+                _cold("quota_denied")
+                return
+            live_state.note_cold_reply(group_id, settings=settings)
+            await send(reply)
+            _cold("ok")
+        except Exception:
+            _cold("error")
+
+    asyncio.ensure_future(_check())
 
 
 async def run_auto_chat(

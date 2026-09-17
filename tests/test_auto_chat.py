@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -6,17 +7,32 @@ from qq_bot.config import BotSettings
 from qq_bot.observability import metrics
 from qq_bot.services.auto_chat import (
     AutoChatState,
+    COLD_FALLBACK_MESSAGES,
     GATE_SYSTEM_PROMPT,
     GateDecision,
     build_casual_user_prompt,
+    build_cold_user_prompt,
     build_gate_user_prompt,
     detect_negative_feedback,
     parse_gate_output,
     run_auto_chat,
+    schedule_cold_check,
     static_prefilter,
 )
 from qq_bot.services.chat_memory import ChatMemoryRow
 from qq_bot.services.persona import Persona
+
+
+@pytest.fixture(autouse=True)
+async def _cancel_leftover_tasks():
+    """schedule_cold_check spawns in-process follow-up tasks; cancel whatever
+    is still pending when a test ends so loops close without
+    "Task was destroyed but it is pending" noise."""
+    yield
+    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    for t in pending:
+        t.cancel()
+    await asyncio.gather(*pending, return_exceptions=True)
 
 
 class FakeClock:
@@ -249,7 +265,11 @@ class FakeMemory:
 
     async def recent_group_messages(self, *, group_id: int, limit: int):
         self.calls.append({"group_id": group_id, "limit": limit})
-        return [_row(t, user_id=2001 + i, row_id=i + 1) for i, t in enumerate(self.texts)]
+        rows = [_row(t, user_id=2001 + i, row_id=i + 1) for i, t in enumerate(self.texts)]
+        late = getattr(self, "late_row", None)
+        if late is not None:
+            rows.append(late)
+        return rows
 
 
 class FakeAutoChatSettings(BotSettings):
@@ -286,6 +306,7 @@ class Harness:
         self.slept: list[float] = []
         self.gate_content = '{"should_reply": true, "reason": "banter", "confidence": 0.9}'
         self.casual_content = "哈哈冲"
+        self.cold_content = "鱼都晒干了都没人理"
         self.quota_allowed = True
         self.completions: list[dict] = []
 
@@ -304,11 +325,21 @@ class Harness:
     async def instant_cold_sleep(self, seconds: float) -> None:
         return None
 
+    async def drain_cold(self) -> None:
+        import asyncio as _aio
+
+        pending = [t for t in _aio.all_tasks() if t is not _aio.current_task()]
+        for t in pending:
+            await t
+
     def completion(self):
         async def fake_request_completion(**kwargs) -> str:
             self.completions.append(kwargs)
-            if "决策器" in kwargs["system_prompt"]:
+            system = kwargs["system_prompt"]
+            if "决策器" in system:
                 return self.gate_content
+            if "没有人回应" in system or "没有人回应" in kwargs.get("user_prompt", ""):
+                return self.cold_content
             return self.casual_content
 
         return fake_request_completion
@@ -665,3 +696,85 @@ class TestPromptBotVisibility:
     def test_gate_system_prompt_has_you_rule(self) -> None:
         assert "机器人" in GATE_SYSTEM_PROMPT
         assert "你" in GATE_SYSTEM_PROMPT
+
+
+# ---- 二期：冷场反应（S7-AUTO-P2-05）----
+
+
+class TestColdFollowup:
+    @pytest.mark.asyncio
+    async def test_cold_reply_when_nobody_talked(self) -> None:
+        # 上限取 1：一次补话后 cold_limit_reached 即为 True（计数生效）
+        h = Harness(["聊会"], _run_settings(auto_chat_cold_daily_limit=1))
+        # rows created_at=2026-09-16 早于 bot_reply_time（now）→ 冷场成立
+        await _run(h)
+        await h.drain_cold()  # 冷场补话在后台 task 中，需等它跑完
+        assert h.sent[0] == "哈哈冲"
+        assert len(h.sent) == 2  # 原回复 + 冷场补话
+        assert h.state.cold_limit_reached(1001, settings=h.settings) is True
+
+    @pytest.mark.asyncio
+    async def test_cold_skipped_when_someone_talked_after(self) -> None:
+        h = Harness(["聊会"], _run_settings(auto_chat_cold_daily_limit=3))
+        # 注入一条晚于 bot_reply_time 的新消息由 FakeMemory 返回：
+        h.memory.late_row = _row(
+            "我来接话",
+            user_id=2002,
+            row_id=99,
+            created_at=(datetime.now(UTC) + timedelta(seconds=1)).isoformat(),
+        )
+        await _run(h)
+        assert len(h.sent) == 1  # 只有原回复，无补话
+
+    @pytest.mark.asyncio
+    async def test_cold_generation_failure_uses_fallback_pool(self) -> None:
+        h = Harness(["聊会"], _run_settings(auto_chat_cold_daily_limit=3))
+        h.cold_content = ""
+        await _run(h)
+        await h.drain_cold()  # 冷场补话在后台 task 中，需等它跑完
+        assert len(h.sent) == 2
+        assert h.sent[1] in COLD_FALLBACK_MESSAGES
+
+    @pytest.mark.asyncio
+    async def test_cold_sensitive_filtered(self) -> None:
+        h = Harness(["聊会"], _run_settings(auto_chat_cold_daily_limit=3))
+        h.cold_content = "来玩博彩吗"
+        await _run(h)
+        assert len(h.sent) == 1
+        assert h.state.cold_limit_reached(1001, settings=h.settings) is False
+
+    @pytest.mark.asyncio
+    async def test_cold_no_cascade(self) -> None:
+        """补话本身不再调度新检查：sent 只有两条（原回复+补话）。"""
+        h = Harness(["聊会"], _run_settings(auto_chat_cold_daily_limit=3))
+        await _run(h)
+        await h.drain_cold()  # 等待可能的后台任务完成
+        assert len(h.sent) == 2
+
+    def test_cold_user_prompt_renders_rows_and_instruction(self) -> None:
+        rows = [_row("早", user_id=2001)]
+        prompt = build_cold_user_prompt(rows, "早呀")
+        assert "用户2001：早" in prompt
+        assert "「早呀」" in prompt
+        # 冷场指令标识：Harness.completion 三分路由依赖该词
+        assert "没有人回应" in prompt
+
+    @pytest.mark.asyncio
+    async def test_schedule_cold_check_skips_at_zero_limit(self) -> None:
+        h = Harness(["聊会"], _run_settings(auto_chat_cold_daily_limit=0))
+        schedule_cold_check(
+            group_id=1001,
+            bot_reply_text="哈哈冲",
+            bot_reply_time=datetime.now(UTC),
+            settings=h.settings,
+            memory_store=h.memory,
+            send=h.send,
+            quota_check=h.quota_check,
+            client=None,
+            state=h.state,
+            rng=h.rng,
+            _sleep=h.instant_cold_sleep,
+        )
+        await h.drain_cold()
+        assert h.sent == []  # cold_daily_limit=0 → 立即 skip
+        assert h.completions == []  # 未触达模型
