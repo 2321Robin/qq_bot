@@ -261,6 +261,7 @@ def _run_settings(**overrides) -> BotSettings:
         "auto_chat_cooldown_seconds": 0.0,
         "auto_chat_hourly_limit": 10,
         "auto_chat_daily_limit": 10,
+        "auto_chat_cold_daily_limit": 0,
     }
     base.update(overrides)
     return FakeAutoChatSettings(**base)
@@ -291,6 +292,9 @@ class Harness:
     def rng(self) -> float:
         return self.rng_value
 
+    async def instant_cold_sleep(self, seconds: float) -> None:
+        return None
+
     def completion(self):
         async def fake_request_completion(**kwargs) -> str:
             self.completions.append(kwargs)
@@ -312,6 +316,7 @@ async def _run(h: Harness, raw_text: str = "一起去打新活动吗") -> None:
         state=h.state,
         rng=h.rng,
         sleeper=h.sleeper,
+        _cold_sleep=h.instant_cold_sleep,
         _request_completion=h.completion(),
     )
 
@@ -364,6 +369,7 @@ async def test_gate_error_is_fail_closed() -> None:
         state=h.state,
         rng=h.rng,
         sleeper=h.sleeper,
+        _cold_sleep=h.instant_cold_sleep,
         _request_completion=boom,
     )
     assert h.sent == []
@@ -467,6 +473,7 @@ async def test_send_failure_propagates_after_state_occupied() -> None:
             state=h.state,
             rng=h.rng,
             sleeper=h.sleeper,
+            _cold_sleep=h.instant_cold_sleep,
             _request_completion=h.completion(),
         )
     assert h.state.recently_spoke(1001, 300.0) is True
@@ -556,3 +563,56 @@ def test_cold_daily_counter() -> None:
     state.note_cold_reply(1, settings=settings)
     state.note_cold_reply(1, settings=settings)
     assert state.cold_limit_reached(1, settings=settings) is True
+
+
+# ---- 二期：触发分类（S7-AUTO-P2-03）----
+
+
+@pytest.mark.asyncio
+async def test_you_plural_replies_without_gate() -> None:
+    h = Harness(["你们谁去吃饭"], _run_settings(auto_chat_sample_rate=0.0))
+    await _run(h, raw_text="你们谁去吃饭")
+    assert h.sent == ["哈哈冲"]
+    gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
+    assert gate_calls == []  # 跳过决策门
+
+
+@pytest.mark.asyncio
+async def test_you_plural_disabled_falls_back_to_you_gate() -> None:
+    """关闭准必回后，"你们"消息仍含"你"，回落到"你"判门路径而非采样。"""
+    h = Harness(
+        ["你们谁去吃饭"],
+        _run_settings(auto_chat_sample_rate=0.0, auto_chat_you_plural_reply=False),
+    )
+    await _run(h, raw_text="你们谁去吃饭")
+    gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
+    assert len(gate_calls) == 1  # 不再准必回，但含"你"仍必进门判断
+    assert h.sent == ["哈哈冲"]
+
+
+@pytest.mark.asyncio
+async def test_you_reference_goes_to_gate_even_with_zero_sample_rate() -> None:
+    h = Harness(["在吗", "你觉得呢"], _run_settings(auto_chat_sample_rate=0.0))
+    await _run(h, raw_text="你觉得呢")
+    gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
+    assert len(gate_calls) == 1  # 含"你"跳过采样必进门
+    assert h.sent == ["哈哈冲"]
+
+
+@pytest.mark.asyncio
+async def test_hot_mode_skips_gate_and_sampling() -> None:
+    h = Harness(["随便聊聊"], _run_settings(auto_chat_sample_rate=0.0))
+    h.state.note_reply(1001, settings=h.settings)  # 人为制造热聊态
+    await _run(h, raw_text="随便聊聊")
+    gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
+    assert gate_calls == []  # 不进门
+    assert h.sent == ["哈哈冲"]
+
+
+@pytest.mark.asyncio
+async def test_note_reply_after_send_and_hot_exit_limit_metric() -> None:
+    h = Harness(["聊"], _run_settings(auto_chat_hot_streak_limit=1))
+    await _run(h)
+    assert h.sent == ["哈哈冲"]
+    # streak=1 达到 limit=1 → 发送前 note_reply 返回 hot_exit_limit 并退出热聊
+    assert h.state.hot_active(1001, settings=h.settings) is False

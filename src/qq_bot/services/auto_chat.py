@@ -269,6 +269,11 @@ def parse_gate_output(content: str | None) -> GateDecision | None:
 _SHARED_STATE = AutoChatState()
 
 
+def schedule_cold_check(**kwargs: Any) -> None:
+    """冷场反应调度桩（Task 5 完整实现）。"""
+    return None
+
+
 async def run_auto_chat(
     *,
     event: Any,
@@ -281,6 +286,7 @@ async def run_auto_chat(
     state: AutoChatState | None = None,
     rng: Callable[[], float] = random.random,
     sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    _cold_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     _request_completion: Any = None,
 ) -> None:
     """Full pipeline for one non-addressed group message (spec 一/二/三/四节).
@@ -337,14 +343,24 @@ async def run_auto_chat(
         return
 
     named = mentions_persona(raw_text, persona)
+    you_plural = settings.auto_chat_you_plural_reply and "你们" in raw_text
+    hot = state.hot_active(group_id, settings=settings)
+    you_ref = "你" in raw_text
     tracer = get_tracer()
     if named:
         _metric("prefilter", "nicknamed")
+    elif you_plural:
+        _metric("prefilter", "you_plural")
+    elif hot:
+        _metric("prefilter", "hot_reply")
     else:
-        if rng() >= settings.auto_chat_sample_rate:
+        if not you_ref and rng() >= settings.auto_chat_sample_rate:
             _metric("prefilter", "sampled_out")
             return
-        _metric("prefilter", "passed")
+        if you_ref:
+            _metric("prefilter", "you_to_gate")
+        else:
+            _metric("prefilter", "passed")
         gate_span = tracer.start_span("auto.gate", trace_id=current_request_id())
         try:
             content = await complete(
@@ -383,7 +399,14 @@ async def run_auto_chat(
         _metric("gate", "quota_denied")
         return
     async with state.lock(group_id):
-        if state.acquire(group_id, settings=settings):
+        if state.acquire(
+            group_id,
+            settings=settings,
+            cooldown_seconds=(
+                settings.auto_chat_hot_cooldown_seconds if hot else None
+            ),
+            skip_hourly=hot,
+        ):
             _metric("prefilter", "limit")
             return
         generate_span = tracer.start_span("auto.generate", trace_id=current_request_id())
@@ -427,5 +450,22 @@ async def run_auto_chat(
     if state.in_backoff(group_id):
         _metric("send", "backoff")
         return
+    exit_flag = state.note_reply(group_id, settings=settings)
+    if exit_flag:
+        _metric("prefilter", "hot_exit_limit")
+    schedule_cold_check(
+        group_id=group_id,
+        bot_reply_text=reply,
+        bot_reply_time=datetime.now(UTC),
+        settings=settings,
+        memory_store=memory_store,
+        send=send,
+        quota_check=quota_check,
+        client=client,
+        state=state,
+        rng=rng,
+        _request_completion=_request_completion,
+        _sleep=_cold_sleep,
+    )
     await send(reply)
     _metric("send", "ok")  # 已移交发送器；发送失败由 onebot_send 的 SEND_RESULTS 计数
