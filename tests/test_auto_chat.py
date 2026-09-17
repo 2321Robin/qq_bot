@@ -724,6 +724,7 @@ class TestColdFollowup:
             created_at=(datetime.now(UTC) + timedelta(seconds=1)).isoformat(),
         )
         await _run(h)
+        await h.drain_cold()  # 让后台 _check 真正跑完：跳过逻辑被破坏时会多发出补话
         assert len(h.sent) == 1  # 只有原回复，无补话
 
     @pytest.mark.asyncio
@@ -740,6 +741,7 @@ class TestColdFollowup:
         h = Harness(["聊会"], _run_settings(auto_chat_cold_daily_limit=3))
         h.cold_content = "来玩博彩吗"
         await _run(h)
+        await h.drain_cold()  # 让后台 _check 真正跑完：敏感词过滤被破坏时会多发出补话
         assert len(h.sent) == 1
         assert h.state.cold_limit_reached(1001, settings=h.settings) is False
 
