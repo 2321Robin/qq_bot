@@ -117,6 +117,12 @@ flowchart LR
 - **护栏：** 每群冷却 `AUTO_CHAT_COOLDOWN_SECONDS`（默认 300s）、每小时/每日上限（6/30）、负反馈退避（"闭嘴/别说话"等指向机器人 → `AUTO_CHAT_NEGATIVE_BACKOFF_SECONDS` 默认 30 分钟内一切自主插话暂停，含点名通道；被 @ 问答不受影响）；生成前后各过一次 quota 准入。
 - **观测：** `qq_bot_auto_chat_total{stage,result}` 指标（prefilter/gate/generate/send 各阶段结果）+ `auto.gate`/`auto.generate` span；日志遵守隐私白名单，不落消息内容。
 - **状态：** 冷却/计数/退避为进程内存态，重启清零（只影响一轮冷却）。
+- **热聊模式（二期）：** 机器人发言后 8 分钟内进入高活跃——冷却 30 秒、跳过采样与决策门、
+  豁免小时上限（每日上限仍生效）；单次热聊 50 条兜底；负反馈强制退出并退避。
+- **触发分类（二期）：** 点名 > "你们"（准必回，`AUTO_CHAT_YOU_PLURAL_REPLY`）> 热聊 >
+  含"你"（必进决策门判断是否指机器人）> 普通采样。
+- **冷场反应（二期）：** 发言 180 秒无人接话则自嘲一句（每段 1 次、每群每日 3 次）。
+- **人设：** `PERSONA_NAME=咸鱼王`（别名 `鱼哥,咸鱼精`）已上线；默认人设为咸鱼风格。
 
 ### Agent 模式（阶段 2，`AGENT_ENABLED=true`）
 
