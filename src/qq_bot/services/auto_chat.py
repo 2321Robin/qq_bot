@@ -334,7 +334,15 @@ async def run_auto_chat(
     if state.in_backoff(group_id):
         _metric("prefilter", "backoff")
         return
-    limit = state.limit_reason(group_id, settings=settings)
+    hot = state.hot_active(group_id, settings=settings)
+    limit = state.limit_reason(
+        group_id,
+        settings=settings,
+        cooldown_seconds=(
+            settings.auto_chat_hot_cooldown_seconds if hot else None
+        ),
+        skip_hourly=hot,
+    )
     if limit == "cooldown":
         _metric("prefilter", "cooldown")
         return
@@ -344,7 +352,6 @@ async def run_auto_chat(
 
     named = mentions_persona(raw_text, persona)
     you_plural = settings.auto_chat_you_plural_reply and "你们" in raw_text
-    hot = state.hot_active(group_id, settings=settings)
     you_ref = "你" in raw_text
     tracer = get_tracer()
     if named:

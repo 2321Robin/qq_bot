@@ -268,10 +268,12 @@ def _run_settings(**overrides) -> BotSettings:
 
 
 class Harness:
-    def __init__(self, texts: list[str], settings: BotSettings):
+    def __init__(
+        self, texts: list[str], settings: BotSettings, state: AutoChatState | None = None
+    ):
         self.settings = settings
         self.memory = FakeMemory(texts)
-        self.state = AutoChatState()
+        self.state = state or AutoChatState()
         self.sent: list[str] = []
         self.rng_value = 0.0
         self.slept: list[float] = []
@@ -607,6 +609,26 @@ async def test_hot_mode_skips_gate_and_sampling() -> None:
     gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
     assert gate_calls == []  # 不进门
     assert h.sent == ["哈哈冲"]
+
+
+@pytest.mark.asyncio
+async def test_hot_mode_second_quick_message_not_blocked_by_normal_cooldown() -> None:
+    """热聊冷却须在前置 limit 守卫生效：距上次发言 60s（≥30s 热聊冷却、
+    <300s 普通冷却）的第二条消息不被普通冷却拒绝。"""
+    clock = FakeClock()
+    h = Harness(
+        ["第一条", "第二条"],
+        _run_settings(
+            auto_chat_cooldown_seconds=300.0,
+            auto_chat_cold_daily_limit=0,
+            auto_chat_hot_streak_limit=50,
+        ),
+        state=AutoChatState(clock=clock),
+    )
+    await _run(h, raw_text="第一条")
+    clock.advance(60.0)
+    await _run(h, raw_text="第二条")
+    assert h.sent == ["哈哈冲", "哈哈冲"]
 
 
 @pytest.mark.asyncio
