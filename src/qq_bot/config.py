@@ -152,7 +152,10 @@ def parse_named_mention_replacements(value: str | None) -> dict[str, str]:
 
 # ---- 自主群聊插话（S7-AUTO）内置词表与人设默认 ----
 # 放在 config 层避免 services -> config 的循环导入。
-DEFAULT_PERSONA_PROMPT = "说话简短随意，用口语和语气词，懂群聊梗，不端着；不要客服腔和书面腔。"
+DEFAULT_PERSONA_PROMPT = (
+    "说话简短随意爱玩梗，自嘲式幽默，能躺绝不站；被怼会嘴硬、有小情绪"
+    "（比如“我破防了”“典”）但不真正得罪人；接梗优先于答题。"
+)
 BUILTIN_SENSITIVE_WORDS = (
     "赌博",
     "博彩",
@@ -322,12 +325,20 @@ class BotSettings(BaseSettings):
     persona_prompt: str = ""  # 空 = DEFAULT_PERSONA_PROMPT
     auto_chat_sample_rate: float = 0.2
     auto_chat_cooldown_seconds: float = 300.0
-    auto_chat_hourly_limit: int = 6
-    auto_chat_daily_limit: int = 30
+    auto_chat_hourly_limit: int = 25  # 热聊期豁免小时上限
+    auto_chat_daily_limit: int = 100  # 激进档默认
     auto_chat_confidence_threshold: float = 0.7
     auto_chat_delay_min_seconds: float = 1.0
     auto_chat_delay_max_seconds: float = 3.0
     auto_chat_negative_backoff_seconds: float = 1800.0
+    # 热聊模式（S7-AUTO-P2）：机器人发言后短期高活跃；负反馈退避强制退出
+    auto_chat_hot_window_seconds: float = 480.0
+    auto_chat_hot_cooldown_seconds: float = 30.0
+    auto_chat_hot_streak_limit: int = 50  # 单次热聊兜底上限（实际达不到）
+    auto_chat_you_plural_reply: bool = True  # "你们"准必回开关
+    # 冷场反应（S7-AUTO-P2）：发言后无人接话时自嘲一句
+    auto_chat_cold_followup_seconds: float = 180.0
+    auto_chat_cold_daily_limit: int = 3
     auto_chat_sensitive_words: str = ""  # 追加词（逗号分隔），与内置表合并
     auto_chat_negative_words: str = ""  # 追加词（逗号分隔），与内置表合并
     auto_chat_ignored_user_ids: str = ""  # 自主插话忽略的发送者（可放其他机器人号）

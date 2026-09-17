@@ -655,13 +655,27 @@ def test_auto_chat_defaults_match_spec() -> None:
     assert settings.persona_name == ""
     assert settings.auto_chat_sample_rate == 0.2
     assert settings.auto_chat_cooldown_seconds == 300.0
-    assert settings.auto_chat_hourly_limit == 6
-    assert settings.auto_chat_daily_limit == 30
+    assert settings.auto_chat_hourly_limit == 25
+    assert settings.auto_chat_daily_limit == 100
     assert settings.auto_chat_confidence_threshold == 0.7
     assert settings.auto_chat_delay_min_seconds == 1.0
     assert settings.auto_chat_delay_max_seconds == 3.0
     assert settings.auto_chat_negative_backoff_seconds == 1800.0
     assert settings.auto_chat_context_messages == 10
+    assert settings.auto_chat_hot_window_seconds == 480.0
+    assert settings.auto_chat_hot_cooldown_seconds == 30.0
+    assert settings.auto_chat_hot_streak_limit == 50
+    assert settings.auto_chat_you_plural_reply is True
+    assert settings.auto_chat_cold_followup_seconds == 180.0
+    assert settings.auto_chat_cold_daily_limit == 3
+
+
+def test_default_persona_prompt_is_xianyu_style() -> None:
+    from qq_bot.config import DEFAULT_PERSONA_PROMPT
+
+    assert "玩梗" in DEFAULT_PERSONA_PROMPT
+    assert "自嘲" in DEFAULT_PERSONA_PROMPT
+    assert "嘴硬" in DEFAULT_PERSONA_PROMPT
 
 
 def test_persona_alias_list_parses_and_strips() -> None:
