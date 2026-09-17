@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 from nonebot.adapters.onebot.v11 import Message
+from nonebot.exception import FinishedException
 
 from qq_bot.config import BotSettings
 from qq_bot.plugins import ai_chat as ai_chat_plugin
@@ -2025,3 +2026,24 @@ async def test_addressed_reply_registers_note_and_cold_check(
 
     assert calls["note"] == 1
     assert calls["cold"] == 1
+
+
+# ---- 二期收尾：send 闭包吞掉 finish 控制流异常（S7-AUTO-P2-07）----
+
+
+@pytest.mark.asyncio
+async def test_auto_chat_send_hook_swallows_finished_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """matcher.finish 正常完成抛 FinishedException；send 闭包必须吞掉它，
+    否则调用方的后续逻辑（如 run_auto_chat 的 send/ok 指标）永远不会执行。"""
+    event = FakeEvent("随便聊聊")
+    settings = BotSettings(allowed_group_ids="1001", ai_api_key="secret")
+    _, send = ai_chat_plugin._build_auto_chat_hooks(event, settings)
+
+    async def fake_finish(matcher, message):
+        raise FinishedException()
+
+    monkeypatch.setattr(ai_chat_plugin, "finish_with_send_errors_logged", fake_finish)
+
+    await send("x")  # 不抛出 FinishedException 即通过

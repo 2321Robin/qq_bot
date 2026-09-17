@@ -715,6 +715,16 @@ class TestColdFollowup:
         assert h.state.cold_limit_reached(1001, settings=h.settings) is True
 
     @pytest.mark.asyncio
+    async def test_cold_ok_metric_recorded(self) -> None:
+        """冷场补话成功必须记 cold/ok（曾因 send 抛 finish 控制流异常被误记为 cold/error）。"""
+        h = Harness(["聊会"], _run_settings(auto_chat_cold_daily_limit=1))
+        before = metrics.AUTO_CHAT.labels("cold", "ok")._value.get()
+        await _run(h)
+        await h.drain_cold()
+        assert len(h.sent) == 2  # 确认补话真的发生了
+        assert metrics.AUTO_CHAT.labels("cold", "ok")._value.get() == before + 1
+
+    @pytest.mark.asyncio
     async def test_cold_skipped_when_someone_talked_after(self) -> None:
         h = Harness(["聊会"], _run_settings(auto_chat_cold_daily_limit=3))
         # 注入一条晚于 bot_reply_time 的新消息由 FakeMemory 返回：

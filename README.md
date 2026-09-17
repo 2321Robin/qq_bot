@@ -114,7 +114,7 @@ flowchart LR
 - **四段式管道：** 非 @ 消息先过零成本规则预筛（命令/过短/敏感词/冷却/上限/退避逐条短路），通过者按 `AUTO_CHAT_SAMPLE_RATE`（默认 0.2）采样进 LLM 决策门；决策门输出严格 JSON（`should_reply/reason/confidence`），低置信度、解析失败、模型故障一律**不回**（fail-closed）。
 - **群友模式生成：** 独立口语化 prompt（人设 + 近期消息上文 + 1~2 短句约束），不走问答链路的 JSON claims/证据格式；生成结果二次过敏感词表，失败静默放弃。
 - **人设配置：** `PERSONA_NAME`（同时用于"点名"匹配）、`PERSONA_ALIASES`、`PERSONA_PROMPT`（空 = 内置默认风格）；被 @ 的问答链路同样注入人设段，grounding 约束不变。
-- **护栏：** 每群冷却 `AUTO_CHAT_COOLDOWN_SECONDS`（默认 300s）、每小时/每日上限（6/30）、负反馈退避（"闭嘴/别说话"等指向机器人 → `AUTO_CHAT_NEGATIVE_BACKOFF_SECONDS` 默认 30 分钟内一切自主插话暂停，含点名通道；被 @ 问答不受影响）；生成前后各过一次 quota 准入。
+- **护栏：** 每群冷却 `AUTO_CHAT_COOLDOWN_SECONDS`（默认 300s）、每小时/每日上限（25/100）、负反馈退避（"闭嘴/别说话"等指向机器人 → `AUTO_CHAT_NEGATIVE_BACKOFF_SECONDS` 默认 30 分钟内一切自主插话暂停，含点名通道；被 @ 问答不受影响）；生成前后各过一次 quota 准入。
 - **观测：** `qq_bot_auto_chat_total{stage,result}` 指标（prefilter/gate/generate/send 各阶段结果）+ `auto.gate`/`auto.generate` span；日志遵守隐私白名单，不落消息内容。
 - **状态：** 冷却/计数/退避为进程内存态，重启清零（只影响一轮冷却）。
 - **热聊模式（二期）：** 机器人发言后 8 分钟内进入高活跃——冷却 30 秒、跳过采样与决策门、

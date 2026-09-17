@@ -285,6 +285,8 @@ COLD_FALLBACK_MESSAGES = (
     "冷场了？行吧，我躺回去了",
 )
 
+_COLD_TASKS: set[asyncio.Task] = set()
+
 
 def shared_state() -> AutoChatState:
     """公开的模块级状态入口（插件被 @ 路径使用）。"""
@@ -382,13 +384,16 @@ def schedule_cold_check(
             if quota_check is not None and not await quota_check():
                 _cold("quota_denied")
                 return
+            live_state.note_reply(group_id, settings=settings)  # 冷场补话也是机器人发言：刷新热聊窗口（spec 第四节）；不级联约束不受影响
             live_state.note_cold_reply(group_id, settings=settings)
             await send(reply)
             _cold("ok")
         except Exception:
             _cold("error")
 
-    asyncio.ensure_future(_check())
+    task = asyncio.ensure_future(_check())
+    _COLD_TASKS.add(task)
+    task.add_done_callback(_COLD_TASKS.discard)
 
 
 async def run_auto_chat(

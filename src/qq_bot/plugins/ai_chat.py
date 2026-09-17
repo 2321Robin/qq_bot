@@ -4,6 +4,7 @@ from typing import Awaitable, Callable
 
 from nonebot import logger, on_message
 from nonebot.adapters.onebot.v11 import GroupMessageEvent
+from nonebot.exception import FinishedException
 
 from qq_bot.agent.evidence import EvidenceStore, render_answer
 from qq_bot.agent.models import AgentRequest, AgentScope, SafeFailure
@@ -403,9 +404,12 @@ def _build_auto_chat_hooks(
         return decision.allowed
 
     async def send(text: str) -> None:
-        await finish_with_send_errors_logged(
-            ai_chat, replace_named_mentions(text, settings.named_mention_replacement_map)
-        )
+        try:
+            await finish_with_send_errors_logged(
+                ai_chat, replace_named_mentions(text, settings.named_mention_replacement_map)
+            )
+        except FinishedException:
+            pass  # matcher.finish 正常完成的控制流异常；吞掉让 send 后续逻辑（ok 指标等）可执行
 
     return quota_check, send
 
