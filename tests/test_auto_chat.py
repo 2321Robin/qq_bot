@@ -696,6 +696,7 @@ class TestPromptBotVisibility:
     def test_gate_system_prompt_has_you_rule(self) -> None:
         assert "机器人" in GATE_SYSTEM_PROMPT
         assert "你" in GATE_SYSTEM_PROMPT
+        assert "视为 addressed，倾向回复" in GATE_SYSTEM_PROMPT
 
 
 # ---- 二期：冷场反应（S7-AUTO-P2-05）----
