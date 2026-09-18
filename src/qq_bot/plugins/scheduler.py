@@ -1,3 +1,4 @@
+import asyncio
 import inspect
 import logging
 
@@ -30,6 +31,9 @@ require("nonebot_plugin_apscheduler")
 from nonebot_plugin_apscheduler import scheduler  # noqa: E402
 
 logger = get_logger("qq_bot.scheduler")
+
+# 发送失败后的延迟重投递任务保留引用，防止被垃圾回收中途丢弃
+_REDELIVER_TASKS: set[asyncio.Task] = set()
 
 
 async def send_daily_messages() -> None:
@@ -196,6 +200,66 @@ async def run_scheduled_job(
             message=f"Scheduled message failed for {len(failures)} group(s).",
             job=job.job_id,
         )
+        _schedule_redelivery(
+            job=job,
+            bot=bot,
+            group_ids=failures,
+            message=message,
+            settings=effective,
+        )
+
+
+def _schedule_redelivery(
+    *,
+    job: ScheduledJob,
+    bot: GroupMessageBot,
+    group_ids: list[int],
+    message: str,
+    settings: BotSettings,
+) -> None:
+    """失败群延迟重投递（S6-SCHED-04）。
+
+    模糊超时（NTQQ sendMsg 挂起）在 send 层有意不立即重试——消息可能已被
+    QQ 接受，立即重发有重复风险；但对日报类内容，丢失比延迟重复危害大，
+    故数分钟后用同一份内容对失败群补投。宁可重复，不可丢失。
+    """
+    max_rounds = settings.scheduled_redeliver_max
+    if max_rounds <= 0 or not group_ids:
+        return
+    delay = settings.scheduled_redeliver_delay_seconds
+
+    async def _redeliver() -> None:
+        remaining = list(group_ids)
+        for _round in range(1, max_rounds + 1):
+            await asyncio.sleep(delay)
+            remaining = await send_group_messages(
+                bot,
+                remaining,
+                message,
+                named_mention_replacements=settings.named_mention_replacement_map,
+            )
+            if not remaining:
+                metrics.SCHEDULED_REDELIVER.labels(job.job_type, "ok").inc()
+                record_event(
+                    logger,
+                    logging.INFO,
+                    "scheduled_redeliver_succeeded",
+                    message="Scheduled message redelivered to failed group(s).",
+                    job=job.job_id,
+                )
+                return
+        metrics.SCHEDULED_REDELIVER.labels(job.job_type, "failed").inc()
+        record_event(
+            logger,
+            logging.WARNING,
+            "scheduled_redeliver_exhausted",
+            message="Scheduled message redelivery exhausted; message not delivered.",
+            job=job.job_id,
+        )
+
+    task = asyncio.ensure_future(_redeliver())
+    _REDELIVER_TASKS.add(task)
+    task.add_done_callback(_REDELIVER_TASKS.discard)
 
 
 def _connected_onebot_bot() -> OneBotV11Bot | None:

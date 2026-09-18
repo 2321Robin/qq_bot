@@ -163,6 +163,13 @@ _define(
     ["result"],
 )
 _define(
+    "SCHEDULED_REDELIVER",
+    Counter,
+    "qq_bot_scheduled_redeliver_total",
+    "Scheduled send redeliveries",
+    ["job", "result"],
+)
+_define(
     "SCHEDULED_JOBS_TOTAL",
     Counter,
     "qq_bot_scheduled_jobs_total",

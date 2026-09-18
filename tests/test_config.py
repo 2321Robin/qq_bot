@@ -755,3 +755,9 @@ def test_report_ai_timeout_default_and_validation(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("REPORT_AI_TIMEOUT_SECONDS", "0")
     with pytest.raises(ValidationError, match="report_ai_timeout_seconds"):
         BotSettings()
+
+
+def test_scheduled_redeliver_defaults() -> None:
+    settings = BotSettings()
+    assert settings.scheduled_redeliver_max == 2
+    assert settings.scheduled_redeliver_delay_seconds == 300.0

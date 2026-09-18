@@ -197,6 +197,10 @@ class BotSettings(BaseSettings):
     named_mention_replacements: str = ""
     # 泛化定时任务表（type@HH:MM 逗号分隔）；非空时取代 scheduled_cron_* 旧路径
     scheduled_jobs: str = ""
+    # 发送失败后的延迟重投递（S6-SCHED-04）：模糊超时不立即重试（可能已送达），
+    # 数分钟后用同一份内容对失败群补投；宁可重复不可丢失
+    scheduled_redeliver_max: int = 2  # 补投轮数；0 = 关闭
+    scheduled_redeliver_delay_seconds: float = 300.0  # 每轮补投间隔
     # 倒计时事件（名称:YYYY-MM-DD 逗号分隔）；过期自动隐藏
     countdown_events: str = ""
     # 游戏日历文件（S6-GAME-01）；模板见 tests/fixtures/game_reports/ 目录

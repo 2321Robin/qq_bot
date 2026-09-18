@@ -6,12 +6,14 @@ caller) so the generalized path is testable without a live NoneBot driver.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 from datetime import date
 
 import bot  # noqa: F401  (initializes NoneBot before plugin imports)
 import pytest
+from nonebot.adapters.onebot.v11.exception import NetworkError
 from prometheus_client import REGISTRY
 
 from qq_bot.config import BotSettings
@@ -264,3 +266,102 @@ async def test_life_job_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "【早报】" in text
     assert "· 新闻甲" in text
     assert _job_metric("life_morning", "ok") == before + 1
+
+
+# ---- 定时发送失败后的延迟重投递（S6-SCHED-04）----
+
+
+# 后端适配器对 send_group_msg 调用超时抛出的 NetworkError 带 API 动作名，
+# is_send_timeout_error 依赖 "send_group_msg" + "timeout" 判定为模糊超时
+_TIMEOUT_MSG = "Error: Timeout: send_group_msg NTEvent serviceAndMethod:NodeIKernelMsgService/sendMsg"
+
+
+class TimeoutBot:
+    """始终以生产同款 NTQQ sendMsg 挂起超时失败（模糊超时，不立即重试）。"""
+
+    sent: list = []
+
+    async def send_group_msg(self, *, group_id: int, message: object) -> None:
+        raise NetworkError(_TIMEOUT_MSG)
+
+
+class FailThenRecoverBot:
+    """前 fail_times 次调用按生产同款超时失败，之后恢复。"""
+
+    def __init__(self, fail_times: int):
+        self.fail_times = fail_times
+        self.sent: list[tuple[int, object]] = []
+
+    async def send_group_msg(self, *, group_id: int, message: object) -> None:
+        if self.fail_times > 0:
+            self.fail_times -= 1
+            raise NetworkError(_TIMEOUT_MSG)
+        self.sent.append((group_id, message))
+
+
+def _redeliver_metric(job: str, result: str) -> float:
+    return (
+        REGISTRY.get_sample_value(
+            "qq_bot_scheduled_redeliver_total", {"job": job, "result": result}
+        )
+        or 0.0
+    )
+
+
+async def _drain_pending_tasks() -> None:
+    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    for task in pending:
+        await task
+
+
+async def test_send_failure_redelivered_after_delay() -> None:
+    fake_bot = FailThenRecoverBot(fail_times=1)
+    failed_before = _job_metric("static", "failed")
+    ok_before = _redeliver_metric("static", "ok")
+
+    await run_scheduled_job(
+        ScheduledJob(job_type="static", hour=9, minute=0),
+        fake_bot,
+        settings=_configured_settings(scheduled_redeliver_delay_seconds=0.0),
+    )
+    await _drain_pending_tasks()
+
+    # 首轮失败记 failed；延迟补投一轮后送达并记 redeliver ok
+    assert _job_metric("static", "failed") == failed_before + 1
+    assert _redeliver_metric("static", "ok") == ok_before + 1
+    assert [(gid, msg.extract_plain_text()) for gid, msg in fake_bot.sent] == [(111, "早上好")]
+
+
+async def test_redeliver_exhausted_records_failed() -> None:
+    fake_bot = TimeoutBot()
+    failed_before = _redeliver_metric("static", "failed")
+
+    await run_scheduled_job(
+        ScheduledJob(job_type="static", hour=9, minute=0),
+        fake_bot,
+        settings=_configured_settings(
+            scheduled_redeliver_max=1, scheduled_redeliver_delay_seconds=0.0
+        ),
+    )
+    await _drain_pending_tasks()
+
+    assert fake_bot.sent == []
+    assert _redeliver_metric("static", "failed") == failed_before + 1
+
+
+async def test_redeliver_disabled_when_max_zero() -> None:
+    fake_bot = TimeoutBot()
+    ok_before = _redeliver_metric("static", "ok")
+    failed_before = _redeliver_metric("static", "failed")
+
+    await run_scheduled_job(
+        ScheduledJob(job_type="static", hour=9, minute=0),
+        fake_bot,
+        settings=_configured_settings(scheduled_redeliver_max=0),
+    )
+    await _drain_pending_tasks()
+
+    # 计数器跨测试累加，断言“不增长”而非“为 0”
+    assert fake_bot.sent == []
+    assert _redeliver_metric("static", "ok") == ok_before
+    assert _redeliver_metric("static", "failed") == failed_before
