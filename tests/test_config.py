@@ -668,6 +668,7 @@ def test_auto_chat_defaults_match_spec() -> None:
     assert settings.auto_chat_you_plural_reply is True
     assert settings.auto_chat_cold_followup_seconds == 180.0
     assert settings.auto_chat_cold_daily_limit == 3
+    assert settings.auto_chat_context_max_age_minutes == 30.0
 
 
 def test_default_persona_prompt_is_xianyu_style() -> None:

@@ -347,6 +347,8 @@ class BotSettings(BaseSettings):
     auto_chat_negative_words: str = ""  # 追加词（逗号分隔），与内置表合并
     auto_chat_ignored_user_ids: str = ""  # 自主插话忽略的发送者（可放其他机器人号）
     auto_chat_context_messages: int = 10
+    # 上下文时效窗（分钟）：超过的旧消息不进入决策门/生成 prompt（0 = 不过滤）
+    auto_chat_context_max_age_minutes: float = 30.0
 
     model_config = SettingsConfigDict(
         env_file=".env",

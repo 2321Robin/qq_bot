@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [Unreleased]
 
 ### Added
+- Added auto-chat context max-age window (S7-AUTO-P2-08): `AUTO_CHAT_CONTEXT_MAX_AGE_MINUTES` (default 30) drops stale messages from gate/casual prompts — in quiet groups multi-day-old banter no longer derails replies — and the casual prompt now anchors the reply to the latest message (greet greetings, answer questions; no topic drift).
 - Added delayed redelivery for failed scheduled sends (S6-SCHED-04): when a cron job's group send fails (e.g. NTQQ sendMsg ambiguous timeout — deliberately not retried inline to avoid duplicates), the same content is redelivered to the failed groups after `SCHEDULED_REDELIVER_DELAY_SECONDS` (default 300s) for up to `SCHEDULED_REDELIVER_MAX` rounds (default 2); outcomes land in the new `qq_bot_scheduled_redeliver_total{job,result}` counter. Prefer duplicate-over-lost for daily reports.
 - Added auto-chat phase 2 (S7-AUTO-P2): four-level trigger classification (nickname > "你们" near-always > hot mode > "你" via gate), hot mode (480s window after any bot reply, 30s cooldown, gate/sampling bypass, hourly cap exempt, 50-reply fail-safe), cold-followup reaction (180s silence → self-deprecating one-liner, once per streak, 3/day/group, no cascade), bot replies rendered into gate/casual prompts with an explicit "你"→addressed gate rule, and xianyu-style default persona; `qq_bot_auto_chat_total` gains `you_plural|you_to_gate|hot_reply|hot_exit_limit` prefilter results and the `cold` stage.
 

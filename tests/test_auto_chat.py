@@ -22,6 +22,12 @@ from qq_bot.services.auto_chat import (
 from qq_bot.services.chat_memory import ChatMemoryRow
 from qq_bot.services.persona import Persona
 
+def _fresh_iso() -> str:
+    from datetime import UTC, datetime, timedelta
+
+    return (datetime.now(UTC) - timedelta(seconds=30)).isoformat()
+
+
 
 @pytest.fixture(autouse=True)
 async def _cancel_leftover_tasks():
@@ -265,10 +271,16 @@ class FakeMemory:
 
     async def recent_group_messages(self, *, group_id: int, limit: int):
         self.calls.append({"group_id": group_id, "limit": limit})
-        rows = [_row(t, user_id=2001 + i, row_id=i + 1) for i, t in enumerate(self.texts)]
+        rows = [
+            _row(t, user_id=2001 + i, row_id=i + 1, created_at=_fresh_iso())
+            for i, t in enumerate(self.texts)
+        ]
         late = getattr(self, "late_row", None)
         if late is not None:
             rows.append(late)
+        stale = getattr(self, "stale_row", None)
+        if stale is not None:
+            rows.append(stale)
         return rows
 
 
@@ -791,3 +803,46 @@ class TestColdFollowup:
         await h.drain_cold()
         assert h.sent == []  # cold_daily_limit=0 → 立即 skip
         assert h.completions == []  # 未触达模型
+
+
+# ---- 二期修复：上下文时效窗 + 生成锚定（S7-AUTO-P2-08）----
+
+
+class TestContextMaxAge:
+    @pytest.mark.asyncio
+    async def test_stale_context_excluded_from_prompts(self) -> None:
+        h = Harness(["这条是新鲜的"], _run_settings(auto_chat_context_max_age_minutes=1))
+        # 注入一条 10 分钟前的陈旧消息
+        from datetime import UTC, datetime, timedelta
+
+        h.memory.stale_row = _row(
+            "昨晚谁夺冠了",
+            user_id=2003,
+            row_id=98,
+            created_at=(
+                datetime.now(UTC) - timedelta(minutes=10)
+            ).isoformat(),
+        )
+        await _run(h, raw_text="这条是新鲜的")
+        gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
+        assert gate_calls and "昨晚谁夺冠了" not in gate_calls[0]["user_prompt"]
+        assert "这条是新鲜的" in gate_calls[0]["user_prompt"]
+        casual_calls = [c for c in h.completions if "决策器" not in c["system_prompt"]]
+        assert casual_calls and "昨晚谁夺冠了" not in casual_calls[0]["user_prompt"]
+
+    @pytest.mark.asyncio
+    async def test_max_age_zero_keeps_all_context(self) -> None:
+        h = Harness(["旧消息"], _run_settings(auto_chat_context_max_age_minutes=0))
+        h.memory.stale_row = _row(
+            "远古话题", user_id=2003, row_id=97, created_at="2026-09-16T00:00:00+00:00"
+        )
+        await _run(h, raw_text="旧消息")
+        gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
+        assert gate_calls and "远古话题" in gate_calls[0]["user_prompt"]
+
+
+def test_casual_prompt_anchors_to_latest_message() -> None:
+    rows = [_row("你好", user_id=2001, created_at=_fresh_iso())]
+    prompt = build_casual_user_prompt(rows)
+    assert "先回应最新消息" in prompt
+    assert "不要跑题" in prompt

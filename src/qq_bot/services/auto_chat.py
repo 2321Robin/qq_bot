@@ -13,7 +13,7 @@ import random
 import re
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Awaitable, Callable, Sequence
 
 from qq_bot.config import BotSettings
@@ -184,6 +184,17 @@ GATE_SYSTEM_PROMPT = (
 _GATE_REASONS = frozenset({"addressed", "question_answerable", "banter", "none"})
 
 
+def _row_created_at(row: ChatMemoryRow) -> datetime | None:
+    """行时间解析：ISO 字符串，naive 视为 UTC；解析失败返回 None。"""
+    try:
+        parsed = datetime.fromisoformat(row.created_at)
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
 @dataclass(frozen=True)
 class GateDecision:
     should_reply: bool
@@ -242,7 +253,10 @@ def build_gate_user_prompt(rows: Sequence[ChatMemoryRow]) -> str:
 def build_casual_user_prompt(rows: Sequence[ChatMemoryRow]) -> str:
     lines = ["最近群消息（最后一条是最新消息）："]
     lines.extend(_render_rows(rows))
-    lines.append("请以群友身份对最新消息自然地接一句话。")
+    lines.append(
+        "请以群友身份先回应最新消息本身：打招呼就回应问候，提问就回应问题，"
+        "可以顺势接梗；不要跑题到更早的话题。"
+    )
     return "\n".join(lines)
 
 
@@ -342,12 +356,7 @@ def schedule_cold_check(
                 return
             latest = rows[-1] if rows else None
             if latest is not None:
-                try:
-                    latest_at = datetime.fromisoformat(latest.created_at)
-                except (TypeError, ValueError):
-                    latest_at = None
-                if latest_at is not None and latest_at.tzinfo is None:
-                    latest_at = latest_at.replace(tzinfo=UTC)
+                latest_at = _row_created_at(latest)
                 if latest_at is not None and latest_at >= bot_reply_time:
                     _cold("skip")
                     return
@@ -442,6 +451,14 @@ async def run_auto_chat(
         _metric("prefilter", "error")
         record_error("auto_chat", classify_exception(exc).category.value)
         return
+    max_age_minutes = settings.auto_chat_context_max_age_minutes
+    if max_age_minutes > 0:
+        cutoff = datetime.now(UTC) - timedelta(minutes=max_age_minutes)
+        rows = [
+            row
+            for row in rows
+            if (parsed := _row_created_at(row)) is not None and parsed >= cutoff
+        ]
     if not rows:
         _metric("prefilter", "no_context")
         return
