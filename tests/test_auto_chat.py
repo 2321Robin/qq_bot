@@ -22,11 +22,11 @@ from qq_bot.services.auto_chat import (
 from qq_bot.services.chat_memory import ChatMemoryRow
 from qq_bot.services.persona import Persona
 
+
 def _fresh_iso() -> str:
     from datetime import UTC, datetime, timedelta
 
     return (datetime.now(UTC) - timedelta(seconds=30)).isoformat()
-
 
 
 @pytest.fixture(autouse=True)
@@ -247,9 +247,16 @@ class TestGateParsing:
         assert parse_gate_output(None) is None
         assert parse_gate_output("") is None
         assert parse_gate_output("不是json") is None
-        assert parse_gate_output('{"should_reply": 1, "reason": "banter", "confidence": 0.9}') is None
-        assert parse_gate_output('{"should_reply": true, "reason": "wat", "confidence": 0.9}') is None
-        assert parse_gate_output('{"should_reply": true, "reason": "banter", "confidence": 1.5}') is None
+        assert (
+            parse_gate_output('{"should_reply": 1, "reason": "banter", "confidence": 0.9}') is None
+        )
+        assert (
+            parse_gate_output('{"should_reply": true, "reason": "wat", "confidence": 0.9}') is None
+        )
+        assert (
+            parse_gate_output('{"should_reply": true, "reason": "banter", "confidence": 1.5}')
+            is None
+        )
 
 
 def test_auto_chat_counter_registered() -> None:
@@ -257,6 +264,7 @@ def test_auto_chat_counter_registered() -> None:
 
 
 # ---- 编排：run_auto_chat（S7-AUTO-06）----
+
 
 class FakeEvent:
     def __init__(self, group_id: int = 1001, user_id: int = 2001):
@@ -307,9 +315,7 @@ def _run_settings(**overrides) -> BotSettings:
 
 
 class Harness:
-    def __init__(
-        self, texts: list[str], settings: BotSettings, state: AutoChatState | None = None
-    ):
+    def __init__(self, texts: list[str], settings: BotSettings, state: AutoChatState | None = None):
         self.settings = settings
         self.memory = FakeMemory(texts)
         self.state = state or AutoChatState()
@@ -594,10 +600,7 @@ def test_limit_reason_cooldown_override_and_skip_hourly() -> None:
     assert state.limit_reason(1, settings=settings) == "cooldown"
     # 热聊：覆盖为 30s 冷却并跳过小时上限
     clock.advance(31)
-    assert (
-        state.limit_reason(1, settings=settings, cooldown_seconds=30.0, skip_hourly=True)
-        == ""
-    )
+    assert state.limit_reason(1, settings=settings, cooldown_seconds=30.0, skip_hourly=True) == ""
     # 不跳过小时上限时，第 2 条触发 hourly_limit
     assert state.acquire(1, settings=settings, cooldown_seconds=30.0) == "hourly_limit"
 
@@ -819,9 +822,7 @@ class TestContextMaxAge:
             "昨晚谁夺冠了",
             user_id=2003,
             row_id=98,
-            created_at=(
-                datetime.now(UTC) - timedelta(minutes=10)
-            ).isoformat(),
+            created_at=(datetime.now(UTC) - timedelta(minutes=10)).isoformat(),
         )
         await _run(h, raw_text="这条是新鲜的")
         gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]

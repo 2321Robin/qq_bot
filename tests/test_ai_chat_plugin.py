@@ -1515,8 +1515,9 @@ async def test_agent_path_clarification_replies_without_model(
         await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 那个什么"))  # type: ignore[arg-type]
 
     assert orchestrator.runs == []  # no model, no orchestrator
-    assert str(exc_info.value.message) in (
-        ai_chat_plugin._AGENT_CLARIFY_MESSAGES[ai_chat_plugin.ReasonCode.CLARIFY]
+    assert (
+        str(exc_info.value.message)
+        in (ai_chat_plugin._AGENT_CLARIFY_MESSAGES[ai_chat_plugin.ReasonCode.CLARIFY])
     )
 
 
@@ -1558,8 +1559,9 @@ async def test_agent_path_capability_error_uses_stable_message(
     with pytest.raises(FinishCalled) as exc_info:
         await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 删除我的记忆"))  # type: ignore[arg-type]
 
-    assert str(exc_info.value.message) in (
-        ai_chat_plugin._AGENT_CLARIFY_MESSAGES[ai_chat_plugin.ReasonCode.CAPABILITY_ERROR]
+    assert (
+        str(exc_info.value.message)
+        in (ai_chat_plugin._AGENT_CLARIFY_MESSAGES[ai_chat_plugin.ReasonCode.CAPABILITY_ERROR])
     )
 
 
@@ -1998,7 +2000,9 @@ async def test_addressed_reply_registers_note_and_cold_check(
             calls["note"] += 1
             return ""
 
-    async def fake_request_ai_reply(prompt, *, settings, client=None, search_context="", chat_context="", roco_context=""):
+    async def fake_request_ai_reply(
+        prompt, *, settings, client=None, search_context="", chat_context="", roco_context=""
+    ):
         return "你好呀"
 
     async def fake_finish(message):
@@ -2012,9 +2016,7 @@ async def test_addressed_reply_registers_note_and_cold_check(
     monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
     monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
     monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-    monkeypatch.setattr(
-        ai_chat_plugin, "shared_state", lambda: FakeAutoChatState()
-    )
+    monkeypatch.setattr(ai_chat_plugin, "shared_state", lambda: FakeAutoChatState())
 
     def fake_schedule_cold_check(**kwargs):
         calls["cold"] += 1

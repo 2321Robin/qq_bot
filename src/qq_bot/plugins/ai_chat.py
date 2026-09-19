@@ -396,9 +396,7 @@ def _build_auto_chat_hooks(
             quota_service = get_runtime().get_quota_service()
         except RuntimeStateError:
             return True
-        decision = await quota_service.check_admission(
-            scope_type="group", scope_id=event.group_id
-        )
+        decision = await quota_service.check_admission(scope_type="group", scope_id=event.group_id)
         if not decision.allowed:
             metrics.QUOTA_DENIED.labels("group", decision.reason).inc()
         return decision.allowed

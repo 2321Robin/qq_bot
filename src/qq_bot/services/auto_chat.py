@@ -97,7 +97,10 @@ class AutoChatState:
         bucket = self._bucket_clock()
         hour_key = bucket.strftime("%Y-%m-%dT%H")
         day_key = bucket.strftime("%Y-%m-%d")
-        if not skip_hourly and self._hourly.get((group_id, hour_key), 0) >= settings.auto_chat_hourly_limit:
+        if (
+            not skip_hourly
+            and self._hourly.get((group_id, hour_key), 0) >= settings.auto_chat_hourly_limit
+        ):
             return "hourly_limit"
         if self._daily.get((group_id, day_key), 0) >= settings.auto_chat_daily_limit:
             return "daily_limit"
@@ -230,9 +233,7 @@ def detect_negative_feedback(
     negative_words = settings.auto_chat_negative_word_list
     if bot_recently_spoke and any(any(w in t for w in negative_words) for t in texts):
         return True
-    return any(
-        any(w in t for w in negative_words) and mentions_persona(t, persona) for t in texts
-    )
+    return any(any(w in t for w in negative_words) and mentions_persona(t, persona) for t in texts)
 
 
 def _render_rows(rows: Sequence[ChatMemoryRow]) -> list[str]:
@@ -393,7 +394,9 @@ def schedule_cold_check(
             if quota_check is not None and not await quota_check():
                 _cold("quota_denied")
                 return
-            live_state.note_reply(group_id, settings=settings)  # 冷场补话也是机器人发言：刷新热聊窗口（spec 第四节）；不级联约束不受影响
+            live_state.note_reply(
+                group_id, settings=settings
+            )  # 冷场补话也是机器人发言：刷新热聊窗口（spec 第四节）；不级联约束不受影响
             live_state.note_cold_reply(group_id, settings=settings)
             await send(reply)
             _cold("ok")
@@ -455,9 +458,7 @@ async def run_auto_chat(
     if max_age_minutes > 0:
         cutoff = datetime.now(UTC) - timedelta(minutes=max_age_minutes)
         rows = [
-            row
-            for row in rows
-            if (parsed := _row_created_at(row)) is not None and parsed >= cutoff
+            row for row in rows if (parsed := _row_created_at(row)) is not None and parsed >= cutoff
         ]
     if not rows:
         _metric("prefilter", "no_context")
@@ -477,9 +478,7 @@ async def run_auto_chat(
     limit = state.limit_reason(
         group_id,
         settings=settings,
-        cooldown_seconds=(
-            settings.auto_chat_hot_cooldown_seconds if hot else None
-        ),
+        cooldown_seconds=(settings.auto_chat_hot_cooldown_seconds if hot else None),
         skip_hourly=hot,
     )
     if limit == "cooldown":
@@ -548,9 +547,7 @@ async def run_auto_chat(
         if state.acquire(
             group_id,
             settings=settings,
-            cooldown_seconds=(
-                settings.auto_chat_hot_cooldown_seconds if hot else None
-            ),
+            cooldown_seconds=(settings.auto_chat_hot_cooldown_seconds if hot else None),
             skip_hourly=hot,
         ):
             _metric("prefilter", "limit")

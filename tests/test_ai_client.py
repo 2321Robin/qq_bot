@@ -897,9 +897,10 @@ async def test_request_completion_requires_api_key() -> None:
     settings = BotSettings(ai_api_key="")
     with pytest.raises(AIReplyError):
         await ai_client.request_completion(
-            system_prompt="sys", user_prompt="usr", settings=settings, client=FakeClient(
-                FakeResponse(_completion_payload("x"))
-            )
+            system_prompt="sys",
+            user_prompt="usr",
+            settings=settings,
+            client=FakeClient(FakeResponse(_completion_payload("x"))),
         )
 
 
@@ -907,9 +908,7 @@ async def test_request_completion_requires_api_key() -> None:
 
 
 def test_build_chat_payload_injects_persona_when_configured() -> None:
-    settings = BotSettings(
-        ai_model="test-model", persona_name="小洛", persona_prompt="毒舌但心软"
-    )
+    settings = BotSettings(ai_model="test-model", persona_name="小洛", persona_prompt="毒舌但心软")
     payload = build_chat_payload("你好", settings)
     system = payload["messages"][0]["content"]
     assert "小洛" in system

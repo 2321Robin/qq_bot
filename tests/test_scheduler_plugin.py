@@ -273,7 +273,9 @@ async def test_life_job_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
 
 # 后端适配器对 send_group_msg 调用超时抛出的 NetworkError 带 API 动作名，
 # is_send_timeout_error 依赖 "send_group_msg" + "timeout" 判定为模糊超时
-_TIMEOUT_MSG = "Error: Timeout: send_group_msg NTEvent serviceAndMethod:NodeIKernelMsgService/sendMsg"
+_TIMEOUT_MSG = (
+    "Error: Timeout: send_group_msg NTEvent serviceAndMethod:NodeIKernelMsgService/sendMsg"
+)
 
 
 class TimeoutBot:
