@@ -33,7 +33,7 @@ def test_morning_message_format():
         )
     )
     text = build_game_morning_message(BotSettings(), today=date(2026, 12, 20))
-    assert text == "【游戏早报】12月20日 周日\n🔴 今日版本更新\n· 原神 6.1版本更新 今日开服"
+    assert text == "【游戏早报】12月20日 周日\n🔴 今日版本更新\n1. 原神 6.1版本更新 今日开服"
 
 
 def test_evening_message_cleanup_and_ending():

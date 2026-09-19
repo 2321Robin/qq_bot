@@ -611,7 +611,8 @@ def test_report_defaults_off(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = BotSettings()
     assert settings.report_60s_base_url == ""
     assert settings.report_60s_timeout_seconds == 10.0
-    assert settings.report_hotlist_max_items == 3
+    assert settings.report_hot_max_items == 10
+    assert settings.report_heh_max_items == 3
     assert settings.report_ai_enabled is False
     assert settings.report_ai_daily_max == 20
     assert settings.has_report_source_config() is False
@@ -629,9 +630,18 @@ def test_report_llm_model_falls_back_to_main_model(monkeypatch: pytest.MonkeyPat
     assert BotSettings(ai_model="m", report_ai_model="v").report_llm_model == "v"
 
 
-def test_report_hotlist_max_items_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("REPORT_HOTLIST_MAX_ITEMS", "0")
-    with pytest.raises(ValidationError, match="report_hotlist_max_items"):
+def test_report_hot_max_items_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REPORT_HOT_MAX_ITEMS", "0")
+    with pytest.raises(ValidationError, match="report_hot_max_items"):
+        BotSettings()
+    monkeypatch.setenv("REPORT_HOT_MAX_ITEMS", "16")
+    with pytest.raises(ValidationError, match="report_hot_max_items"):
+        BotSettings()
+
+
+def test_report_heh_max_items_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REPORT_HEH_MAX_ITEMS", "0")
+    with pytest.raises(ValidationError, match="report_heh_max_items"):
         BotSettings()
 
 

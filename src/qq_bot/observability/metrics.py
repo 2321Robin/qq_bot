@@ -188,7 +188,7 @@ _define(
     Counter,
     "qq_bot_report_llm_total",
     "Life report LLM polish outcomes",
-    ["result"],
+    ["section", "result"],
 )
 
 

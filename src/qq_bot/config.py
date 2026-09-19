@@ -308,8 +308,9 @@ class BotSettings(BaseSettings):
     # ---- 生活早晚报（S6-REPORT-01）----
     report_60s_base_url: str = ""  # 自部署 60s fork（含 /news /hot /heh 适配端点）
     report_60s_timeout_seconds: float = 10.0
-    report_hotlist_max_items: int = 3  # 热搜/热帖榜截取条数
-    report_ai_enabled: bool = False  # 新闻 LLM 润色 + 寄语
+    report_hot_max_items: int = 10  # 微博热搜截取条数（2026-09-19 用户裁决放宽到 10）
+    report_heh_max_items: int = 3  # 小黑盒热帖榜截取条数
+    report_ai_enabled: bool = False  # 新闻 LLM 润色 + 热搜逐条资料介绍（需联网搜索可用）
     report_ai_model: str = ""  # 空 = 复用 ai_model
     report_ai_provider: str = (
         "primary"  # primary=主链路 | fallback=改用备用 Provider（模型与主链路不同源时用）
@@ -583,11 +584,18 @@ class BotSettings(BaseSettings):
             raise ValueError("report_60s_timeout_seconds must be greater than 0")
         return value
 
-    @field_validator("report_hotlist_max_items")
+    @field_validator("report_hot_max_items")
     @classmethod
-    def validate_report_hotlist_max_items(cls, value: int) -> int:
-        if value < 1 or value > 10:
-            raise ValueError("report_hotlist_max_items must be between 1 and 10")
+    def validate_report_hot_max_items(cls, value: int) -> int:
+        if value < 1 or value > 15:
+            raise ValueError("report_hot_max_items must be between 1 and 15")
+        return value
+
+    @field_validator("report_heh_max_items")
+    @classmethod
+    def validate_report_heh_max_items(cls, value: int) -> int:
+        if value < 1 or value > 15:
+            raise ValueError("report_heh_max_items must be between 1 and 15")
         return value
 
     @field_validator("report_ai_daily_max")

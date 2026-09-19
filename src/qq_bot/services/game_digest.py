@@ -8,6 +8,7 @@ Empty days return ``None`` so the dispatch layer skips sending entirely
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date
 
 from qq_bot.config import BotSettings
@@ -42,6 +43,11 @@ def _header(kind: str, today: date) -> str:
     return f"【游戏{kind}】{today.month}月{today.day}日 {_WEEKDAY_CN[today.weekday()]}"
 
 
+def _numbered(items: Sequence[str]) -> list[str]:
+    # QQ 纯文本不渲染 -/· 列表符，统一数字编号（与早晚报一致）
+    return [f"{index}. {item}" for index, item in enumerate(items, start=1)]
+
+
 def build_game_morning_message(settings: BotSettings, *, today: date | None = None) -> str | None:
     effective_today = today or date.today()
     sections = morning_sections(_require_calendar(), effective_today)
@@ -49,9 +55,9 @@ def build_game_morning_message(settings: BotSettings, *, today: date | None = No
         return None
     lines = [_header("早报", effective_today)]
     if sections.versions:
-        lines += ["🔴 今日版本更新", *(f"· {item}" for item in sections.versions)]
+        lines += ["🔴 今日版本更新", *_numbered(sections.versions)]
     if sections.starting:
-        lines += ["📅 今日开启", *(f"· {item}" for item in sections.starting)]
+        lines += ["📅 今日开启", *_numbered(sections.starting)]
     return "\n".join(lines)
 
 
@@ -64,7 +70,7 @@ def build_game_evening_message(settings: BotSettings, *, today: date | None = No
     if sections.cleanup:
         lines += [sections.cleanup[0]]
     if sections.ending_today:
-        lines += ["⛔ 今日结束", *(f"· {item}" for item in sections.ending_today)]
+        lines += ["⛔ 今日结束", *_numbered(sections.ending_today)]
     if sections.ending_soon:
-        lines += ["⏳ 即将结束", *(f"· {item}" for item in sections.ending_soon)]
+        lines += ["⏳ 即将结束", *_numbered(sections.ending_soon)]
     return "\n".join(lines)

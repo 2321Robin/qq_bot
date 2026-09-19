@@ -264,7 +264,7 @@ async def test_life_job_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
     text = message.extract_plain_text()
     assert group_id == 111
     assert "【早报】" in text
-    assert "· 新闻甲" in text
+    assert "1. 新闻甲" in text
     assert _job_metric("life_morning", "ok") == before + 1
 
 

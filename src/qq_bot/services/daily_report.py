@@ -1,16 +1,18 @@
 """Life report content pipeline (S6-REPORT).
 
-Sections degrade independently: a single source failure renders '—' and never
-blocks the report (S6-REPORT-02). Fetched items are the only facts the polish
-step (S6-REPORT-04) may present; no message bodies or identifiers ever enter
-logs or metrics.
+Sections degrade independently: a single source failure omits that section
+and never blocks the report (2026-09-16 用户裁决). Fetched items are the only
+facts the polish step (S6-REPORT-04) may present; hot-list intros must quote
+fetched search snippets; no message bodies or identifiers ever enter logs or
+metrics. Lists render as ``1.`` numbering (QQ plain text does not style
+``-``/``·`` bullets).
 """
 
 from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Any, Protocol
@@ -44,7 +46,7 @@ _NEWS_SECTION_TITLES = {"news": "📰 新闻", "toutiao": "📰 头条热榜"}
 
 
 class SourceError(RuntimeError):
-    """A report data source is unavailable; its section degrades to '—'."""
+    """A report data source is unavailable; its section is omitted."""
 
 
 @dataclass(frozen=True)
@@ -105,7 +107,7 @@ async def fetch_section_items(
 ) -> tuple[NewsItem, ...]:
     """Fetch one report section: transient failures retry with backoff, the
     per-source breaker short-circuits, and every failure surfaces as
-    ``SourceError`` so the caller can degrade that section to '—'."""
+    ``SourceError`` so the caller can omit that section."""
     if endpoint not in _REPORT_BREAKER_NAMES:
         raise ValueError(f"unknown report endpoint: {endpoint}")
     if not settings.has_report_source_config():
@@ -197,13 +199,29 @@ def build_date_lines(today: Any, *, kind: str = "早报") -> tuple[str, ...]:
 # ---- LLM 润色（S6-REPORT-04）----
 # 角色边界：润色与排序，不是生产事实。输入标题是唯一事实来源；确定性校验
 # 失败/超时/异常一律回退纯模板渲染，LLM 永不阻塞报告发送。
+# 2026-09-19 修订（用户裁决）：QQ 纯文本不渲染 -/·，列表统一数字编号；
+# 润色模型看不到正文，无事实基础的【寄语】删除；热搜板块改为结合联网搜索
+# 资料逐条介绍，资料缺失时退回纯标题模板。
 _POLISH_SYSTEM = (
     "你是群聊新闻编辑。下面给你若干条新闻标题。规则："
-    "1) 输出条目列表，每条以 - 或 · 开头，条数必须与输入一致，顺序可以调整；"
+    "1) 输出条目列表，每条以输入序号加句点开头（如「1. 」），条数必须与输入一致，顺序可以调整；"
     "2) 每条必须完整保留原标题原文，标题后可以追加一句不超过 15 字的说明；"
     "3) 不得新增、删除或改写任何标题，不得编造事实；"
-    "4) 【寄语】一行（以【寄语】开头的一句话）位置不限，但绝不能省略。"
+    "4) 只输出条目列表本身，不要输出任何总结、寄语或其他附加行。"
 )
+
+_HOT_POLISH_SYSTEM = (
+    "你是群聊热搜编辑。下面给你若干条微博热搜标题，部分标题附有联网搜索到的资料。规则："
+    "1) 输出条目列表，每条以输入序号加句点开头（如「3. 」），条数与顺序必须与输入完全一致；"
+    "2) 每条必须完整保留原标题原文；"
+    "3) 标题后可以用一句不超过 30 字的话介绍该条热搜的具体内容，介绍只能依据该条给出的资料，"
+    "资料缺失或不足时只保留原标题，不要猜测编造；"
+    "4) 最后可以另起一行，以【今日小结】开头用一句话依据资料整体点评今天的热搜，此行可省略；"
+    "5) 不得编造事实；除条目列表和可选的小结行外，不要输出任何其他内容。"
+)
+
+# 模型自由发挥的"元行"（寄语/小结）：参与校验前一律剥离，是否保留由板块决定
+_META_MARKERS = ("【寄语】", "【今日小结】")
 
 
 @dataclass(frozen=True)
@@ -228,17 +246,51 @@ def _normalize(text: str) -> str:
 
 
 def _strip_jiyu(text: str) -> str:
-    """Remove the 寄语 line wherever it appears; it is generation, not
-    curated facts (models may put it first or last)."""
+    """Remove 寄语 lines from the final output (kept out of every section:
+    the polish model never sees article bodies, so it has no grounding)."""
     return "\n".join(line for line in text.splitlines() if "【寄语】" not in line)
 
 
+def _strip_meta_lines(text: str) -> str:
+    """Drop model-generated meta lines (寄语/小结) for grounding comparison;
+    they are generation, not curated facts."""
+    return "\n".join(
+        line for line in text.splitlines() if not any(marker in line for marker in _META_MARKERS)
+    )
+
+
+def _numbered(titles: Sequence[str]) -> list[str]:
+    return [f"{index}. {title}" for index, title in enumerate(titles, start=1)]
+
+
+def _render_list(title: str, titles: Sequence[str]) -> str:
+    return "\n".join([title, *_numbered(titles)])
+
+
+def _split_leading_number(line: str) -> str:
+    return re.sub(r"^\s*\d{1,2}\s*[.、)）]?\s*", "", line, count=1)
+
+
+def _dedupe_items(items: tuple[NewsItem, ...]) -> tuple[NewsItem, ...]:
+    """Drop repeated entries (热搜/热榜同题重复很常见), keeping the first
+    occurrence; comparison ignores whitespace, case and punctuation."""
+    seen: set[str] = set()
+    unique: list[NewsItem] = []
+    for item in items:
+        key = _normalize(item.title).casefold()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique.append(item)
+    return tuple(unique)
+
+
 def verify_polished(titles: tuple[str, ...], text: str) -> bool:
-    """Deterministic grounding check (2026-09-17 revision, format-robust):
+    """Deterministic grounding check (2026-09-19 revision, format-robust):
     every input title must survive into the body, and every non-empty body
     line must carry at least one original title (nothing fabricated in
-    between). Bullet style and jiyu position are free."""
-    body_lines = [line for line in _strip_jiyu(text).splitlines() if line.strip()]
+    between). Bullet style, numbering and meta lines (寄语/小结) are free."""
+    body_lines = [line for line in _strip_meta_lines(text).splitlines() if line.strip()]
     body_norm = _normalize("\n".join(body_lines))
     title_norms = [_normalize(title) for title in titles]
     if any(norm not in body_norm for norm in title_norms):
@@ -252,11 +304,10 @@ def verify_polished(titles: tuple[str, ...], text: str) -> bool:
 
 def _repair_polished(titles: tuple[str, ...], text: str) -> str | None:
     """Deterministic repair for truncated-but-honest polish output: keep the
-    model's annotated lines, append missing titles as plain template lines,
-    re-attach the jiyu line at the end. Returns None when the output contains
-    a line carrying no original title (fabrication) — fall back to template."""
-    jiyu_lines = [line for line in text.splitlines() if "【寄语】" in line]
-    lines = [line for line in _strip_jiyu(text).splitlines() if line.strip()]
+    model's annotated lines, append missing titles as plain template lines.
+    Returns None when the output contains a line carrying no original title
+    (fabrication) — fall back to template."""
+    lines = [line for line in _strip_meta_lines(text).splitlines() if line.strip()]
     title_norms = [_normalize(title) for title in titles]
     valid: list[str] = []
     for line in lines:
@@ -269,28 +320,80 @@ def _repair_polished(titles: tuple[str, ...], text: str) -> str | None:
     if not missing:
         return None
     out = "\n".join(valid)
-    out += "\n" + "\n".join(f"· {title}" for title in missing)
-    if jiyu_lines:
-        out += "\n" + jiyu_lines[0].strip()
+    out += "\n" + "\n".join(_numbered_tail(valid, missing))
     return out
 
 
+def _numbered_tail(valid: Sequence[str], missing: Sequence[str]) -> list[str]:
+    """Number repair-appended lines continuing after the kept body lines."""
+    start = len(valid) + 1
+    return [f"{start + offset}. {title}" for offset, title in enumerate(missing)]
+
+
+def verify_hot_polished(titles: tuple[str, ...], text: str) -> bool:
+    """Positional grounding check for the hot list: exactly one body line per
+    input title, same order (rank order is meaningful), each line carrying
+    its own title; per-line intros and the 小结 line are free."""
+    body_lines = [line for line in _strip_meta_lines(text).splitlines() if line.strip()]
+    if len(body_lines) != len(titles):
+        return False
+    for title, line in zip(titles, body_lines):
+        if _normalize(title) not in _normalize(line):
+            return False
+    return True
+
+
+def _repair_hot_polished(titles: tuple[str, ...], text: str) -> str | None:
+    """Repair honest-but-misaligned hot output: every kept line must carry an
+    original title (else None → template); lines are reassigned to their
+    titles and re-emitted in input rank order with fresh numbers; missing
+    titles appended as plain numbered lines."""
+    lines = [line for line in _strip_meta_lines(text).splitlines() if line.strip()]
+    title_norms = [_normalize(title) for title in titles]
+    kept: list[str] = []
+    for line in lines:
+        line_norm = _normalize(line)
+        if not any(norm in line_norm for norm in title_norms):
+            return None
+        kept.append(line)
+    used: set[int] = set()
+    out_lines: list[str] = []
+    for index, (title, norm) in enumerate(zip(titles, title_norms)):
+        match = next(
+            (
+                position
+                for position, line in enumerate(kept)
+                if position not in used and norm in _normalize(line)
+            ),
+            None,
+        )
+        if match is None:
+            out_lines.append(f"{index + 1}. {title}")
+            continue
+        used.add(match)
+        # 模型可能编错序号：剥掉行首数字后再按正确排名重编号；剥坏标题则原样保留
+        candidate = _split_leading_number(kept[match]).strip()
+        body = candidate if norm in _normalize(candidate) else kept[match].strip()
+        out_lines.append(f"{index + 1}. {body}")
+    return "\n".join(out_lines)
+
+
 def format_news_template(items: tuple[NewsItem, ...]) -> str:
-    return "\n".join(["📰 新闻", *(f"· {item.title}" for item in items)])
+    return _render_list("📰 新闻", [item.title for item in items])
 
 
-async def polish_news(
-    items: tuple[NewsItem, ...],
+async def _polish_via_ai(
+    prompt: str,
+    *,
+    titles: tuple[str, ...],
+    template: str,
+    verify: Callable[[tuple[str, ...], str], bool],
+    repair: Callable[[tuple[str, ...], str], str | None],
     settings: BotSettings,
-    client: Any | None = None,
 ) -> PolishOutcome:
-    """Rewrite the news section through the main/fallback AI chain, verified
-    against the fetched titles. Every failure path returns the plain template
-    so the report still goes out on time."""
-    titles = tuple(item.title for item in items)
-    template = format_news_template(items)
-    if not settings.report_ai_enabled or settings.report_ai_daily_max == 0 or not items:
-        return PolishOutcome(ok=False, text=template, reason="disabled")
+    """Shared polish pipeline: quota gate → main/fallback AI chain →
+    deterministic grounding check with repair. Every failure path returns the
+    plain template so the report still goes out on time."""
     quota = _quota_service()
     if quota is not None:
         summary = await quota.summary(scope_type="report", scope_id=0)
@@ -306,7 +409,6 @@ async def polish_news(
     # 润色专用客户端：免费档生成约 30s+，共享客户端固化了主链路 30s 超时，
     # 这里用独立超时（REPORT_AI_TIMEOUT_SECONDS）自建，每次调用即用即关
     timeout_client = httpx.AsyncClient(timeout=httpx.Timeout(settings.report_ai_timeout_seconds))
-    prompt = _POLISH_SYSTEM + "\n\n" + "\n".join(f"- {title}" for title in titles)
     try:
         reply = await request_ai_reply(
             prompt,
@@ -320,18 +422,111 @@ async def polish_news(
         return PolishOutcome(ok=False, text=template, reason="error")
     finally:
         await timeout_client.aclose()
-    if not verify_polished(titles, reply):
-        repaired = _repair_polished(titles, reply)
+    reply = _strip_jiyu(reply)
+    if not verify(titles, reply):
+        repaired = repair(titles, reply)
         if repaired is None:
             return PolishOutcome(ok=False, text=template, reason="check_failed")
         reply = repaired
     if quota is not None:
         # 订阅套餐无按量账单：tokens/cost 如实记 0/None，requests 计数由表自增
         await quota.record_usage(scope_type="report", scope_id=0, tokens=0, cost=None)
-    reason = "ok"
-    if "【寄语】" not in reply:
-        pass  # 寄语缺失不阻塞，只影响展示
-    return PolishOutcome(ok=True, text=reply, reason=reason)
+    return PolishOutcome(ok=True, text=reply, reason="ok")
+
+
+def _polish_allowed(settings: BotSettings) -> bool:
+    return settings.report_ai_enabled and settings.report_ai_daily_max != 0
+
+
+async def polish_news(
+    items: tuple[NewsItem, ...],
+    settings: BotSettings,
+    client: Any | None = None,
+) -> PolishOutcome:
+    """Rewrite the news section through the main/fallback AI chain, verified
+    against the fetched titles. Every failure path returns the plain template
+    so the report still goes out on time."""
+    titles = tuple(item.title for item in items)
+    template = format_news_template(items)
+    if not _polish_allowed(settings) or not items:
+        return PolishOutcome(ok=False, text=template, reason="disabled")
+    prompt = _POLISH_SYSTEM + "\n\n" + "\n".join(_numbered(titles))
+    outcome = await _polish_via_ai(
+        prompt,
+        titles=titles,
+        template=template,
+        verify=verify_polished,
+        repair=_repair_polished,
+        settings=settings,
+    )
+    if not outcome.ok:
+        return outcome
+    # 新闻模型只看得到标题：小结/寄语一律不出现在成品里
+    return PolishOutcome(ok=True, text=_strip_meta_lines(outcome.text), reason="ok")
+
+
+def _hot_prompt_block(index: int, title: str, note: str) -> str:
+    block = f"{index}. {title}"
+    if note:
+        block += f"\n资料：{note}"
+    return block
+
+
+async def _gather_hot_material(titles: tuple[str, ...], settings: BotSettings) -> tuple[str, ...]:
+    """Fetch search snippets per hot title (concurrency-capped). Search is
+    optional context: any failure degrades that item's intro to title-only,
+    never the section."""
+    empty = tuple("" for _ in titles)
+    if not titles:
+        return empty
+    try:
+        from qq_bot.services.search import search_web
+    except Exception:
+        return empty
+    if not settings.has_search_config():
+        return empty
+    semaphore = asyncio.Semaphore(4)
+
+    async def _snippets(title: str) -> str:
+        try:
+            async with semaphore:
+                results = await search_web(title, settings=settings)
+        except Exception:
+            return ""
+        blocks = [f"{result.title}：{result.content[:160]}" for result in results[:2]]
+        return " ".join(blocks).strip()
+
+    return tuple(await asyncio.gather(*(_snippets(title) for title in titles)))
+
+
+async def polish_hot(
+    items: tuple[NewsItem, ...],
+    settings: BotSettings,
+    *,
+    material: Sequence[str] = (),
+) -> PolishOutcome:
+    """Render the weibo hot list with per-item intros grounded in fetched
+    search snippets; same failure contract as ``polish_news``."""
+    titles = tuple(item.title for item in items)
+    template = _render_list(_HOT_TITLE, titles)
+    if not _polish_allowed(settings) or not items:
+        return PolishOutcome(ok=False, text=template, reason="disabled")
+    prompt = (
+        _HOT_POLISH_SYSTEM
+        + "\n\n"
+        + "\n".join(
+            _hot_prompt_block(index, title, note)
+            for index, (title, note) in enumerate(zip(titles, material), start=1)
+        )
+    )
+    return await _polish_via_ai(
+        prompt,
+        titles=titles,
+        template=template,
+        verify=verify_hot_polished,
+        repair=_repair_hot_polished,
+        settings=settings,
+    )
 
 
 # ---- 早/晚报组装器（S6-REPORT-05）----
@@ -362,14 +557,15 @@ async def _news_section(
         items = tuple(
             item for item in items if not any(word in item.title.casefold() for word in lowered)
         )
+    items = truncate_items(_dedupe_items(items), settings.report_news_max_items)
     if not items:
         return ""
-    items = truncate_items(items, settings.report_news_max_items)
     outcome = await polish_news(items, settings, client=client)
-    metrics.REPORT_LLM_TOTAL.labels(outcome.reason).inc()
+    metrics.REPORT_LLM_TOTAL.labels("news", outcome.reason).inc()
     if outcome.ok:
-        return outcome.text
-    return "\n".join([title, *(f"· {item.title}" for item in items)])
+        # 润色输出只有条目行，板块标题行由这里统一补上
+        return f"{title}\n{outcome.text}"
+    return _render_list(title, [item.title for item in items])
 
 
 async def _list_section(
@@ -380,14 +576,41 @@ async def _list_section(
 ) -> str:
     try:
         items = truncate_items(
-            await fetch_section_items(endpoint, settings, client),
-            settings.report_hotlist_max_items,
+            _dedupe_items(await fetch_section_items(endpoint, settings, client)),
+            settings.report_heh_max_items,
         )
     except SourceError:
         metrics.REPORT_SECTIONS_TOTAL.labels(endpoint, "unavailable").inc()
         return ""
     metrics.REPORT_SECTIONS_TOTAL.labels(endpoint, "ok").inc()
-    return "\n".join([title, *(f"· {item.title}" for item in items)])
+    return _render_list(title, [item.title for item in items])
+
+
+async def _hot_section(settings: BotSettings, client: AsyncGetClient | None) -> str:
+    """微博热搜：默认 10 条、同题去重；润色开启且搜到资料时由 LLM 结合
+    资料逐条介绍，无资料或任何失败都退回纯标题模板。"""
+    try:
+        items = await fetch_section_items("hot", settings, client)
+    except SourceError:
+        metrics.REPORT_SECTIONS_TOTAL.labels("hot", "unavailable").inc()
+        return ""
+    metrics.REPORT_SECTIONS_TOTAL.labels("hot", "ok").inc()
+    items = truncate_items(_dedupe_items(items), settings.report_hot_max_items)
+    if not items:
+        return ""
+    titles = tuple(item.title for item in items)
+    template = _render_list(_HOT_TITLE, titles)
+    if not _polish_allowed(settings):
+        return template
+    material = await _gather_hot_material(titles, settings)
+    if not any(material):
+        # 无资料可依据：不做无事实基础的介绍，直接用标题模板
+        return template
+    outcome = await polish_hot(items, settings, material=material)
+    metrics.REPORT_LLM_TOTAL.labels("hot", outcome.reason).inc()
+    if outcome.ok:
+        return f"{_HOT_TITLE}\n{outcome.text}"
+    return template
 
 
 async def _build_life_message(
@@ -404,7 +627,7 @@ async def _build_life_message(
     try:
         news_text, hot_text, heh_text = await asyncio.gather(
             _news_section(settings, client, kind=kind),
-            _list_section("hot", _HOT_TITLE, settings, client),
+            _hot_section(settings, client),
             _list_section("heh", _HEH_TITLE, settings, client),
         )
     finally:

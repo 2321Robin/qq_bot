@@ -97,7 +97,7 @@ flowchart LR
 | 定时消息 | 环境变量配置 | 按 Cron 时间向指定群发送消息；`SCHEDULED_JOBS` 非空时按 `类型@HH:MM` 任务表泛化调度（生成器可注册扩展），为空时行为与旧配置完全一致；发送失败后延迟补投（默认 5 分钟 × 2 轮，`SCHEDULED_REDELIVER_*`） |
 | 倒计时 | `COUNTDOWN_EVENTS` | `名称:日期` 倒计时事件，过期自动隐藏，作为板块出现在生活早/晚报（阶段 D 挂载） |
 | 游戏日历提醒 | `SCHEDULED_JOBS` 的 `game_morning`/`game_evening` + `GAME_CALENDAR_PATH` | 手工维护的游戏活动日历（模板：`tests/fixtures/game_reports/game_calendar.template.json`）驱动确定性规则引擎：版本更新仅早报、活动开启/结束窗口 2 天、周常周日、月常月末、过期自动隐藏；空内容不发消息，非法文件拒绝启动 |
-| 生活早晚报 | `SCHEDULED_JOBS` 的 `life_morning`/`life_evening` | 自部署 60s fork 提供"每天60秒读懂世界"新闻、热搜与小黑盒热帖；离线日期/农历/节日与倒计时板块；可选 LLM 润色与寄语（确定性校验兜底、失败回退模板、独立每日上限）；板块级独立降级，任一来源失败自动省略该板块 |
+| 生活早晚报 | `SCHEDULED_JOBS` 的 `life_morning`/`life_evening` | 自部署 60s fork 提供"每天60秒读懂世界"新闻、热搜与小黑盒热帖；离线日期/农历/节日与倒计时板块；可选 LLM 润色：新闻润色排序（确定性校验兜底、失败回退模板、独立每日上限）；热搜默认 10 条、同题去重，LLM 结合联网搜索资料逐条介绍（无资料回退纯标题）；板块级独立降级，任一来源失败自动省略该板块 |
 | 手动早晚报 | `/早报`、`/晚报` | 在当前群主动触发一次生活早报/晚报（与定时任务同一组装管线），便于即时查看 |
 | 命名提及 | `NAMED_MENTION_REPLACEMENTS` | 定时消息与 AI 回复中的 `@昵称` 替换为真正的 @提及（账号仅从配置读取，不写死在源码） |
 | 配额与预算（阶段 4） | `QUOTA_ENABLED` 等 | 按群滑动窗口限流与每日费用上限（`actual` 强制、`estimated/unknown` 只记录）；`/配额`、`/最近故障` 管理员命令（按 `ADMIN_USER_IDS` 鉴权） |
@@ -340,7 +340,7 @@ docker compose up -d --build
 
 ### 指标
 
-`GET /metrics` 暴露 Prometheus 文本指标（同端口，见 Docker 一节）：消息量 `qq_bot_messages_total{kind}`、命令量 `qq_bot_commands_total{command}`、错误率 `qq_bot_errors_total{component,category}`、AI/搜索延迟直方图、主备切换 `qq_bot_provider_fallback_total`、重试 `qq_bot_retry_total{dependency}`、Token 与估算成本（诚实标记 `actual/estimated/unknown`）、breaker 状态与转换、发送/Agent/路由结果、配额拒绝 `qq_bot_quota_denied_total{scope_type,reason}`、定时任务结果 `qq_bot_scheduled_jobs_total{job,result}`、报告板块结果 `qq_bot_report_sections_total{section,result}`、报告润色结果 `qq_bot_report_llm_total{result}`、六阶段 span 耗时。`METRICS_ENABLED=false` 时端点 404 且埋点零开销。
+`GET /metrics` 暴露 Prometheus 文本指标（同端口，见 Docker 一节）：消息量 `qq_bot_messages_total{kind}`、命令量 `qq_bot_commands_total{command}`、错误率 `qq_bot_errors_total{component,category}`、AI/搜索延迟直方图、主备切换 `qq_bot_provider_fallback_total`、重试 `qq_bot_retry_total{dependency}`、Token 与估算成本（诚实标记 `actual/estimated/unknown`）、breaker 状态与转换、发送/Agent/路由结果、配额拒绝 `qq_bot_quota_denied_total{scope_type,reason}`、定时任务结果 `qq_bot_scheduled_jobs_total{job,result}`、报告板块结果 `qq_bot_report_sections_total{section,result}`、报告润色结果 `qq_bot_report_llm_total{section,result}`、六阶段 span 耗时。`METRICS_ENABLED=false` 时端点 404 且埋点零开销。
 
 ### 追踪
 
