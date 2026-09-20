@@ -18,6 +18,7 @@ from qq_bot.services.auto_chat import (
     run_auto_chat,
     schedule_cold_check,
     static_prefilter,
+    style_directive,
 )
 from qq_bot.services.chat_memory import ChatMemoryRow
 from qq_bot.services.persona import Persona
@@ -847,3 +848,41 @@ def test_casual_prompt_anchors_to_latest_message() -> None:
     prompt = build_casual_user_prompt(rows)
     assert "先回应最新消息" in prompt
     assert "不要跑题" in prompt
+
+
+# ---- 二期修复：回复多样性（风格轮盘 + 最近发言）（S7-AUTO-P2-09）----
+
+
+class TestStyleRoulette:
+    def test_directive_varies_with_rng(self) -> None:
+        seen = {style_directive(lambda: 0.0), style_directive(lambda: 0.99)}
+        assert len(seen) >= 2  # 不同 rng 产出不同风格指令
+
+    def test_directive_is_nonempty_text(self) -> None:
+        directive = style_directive(lambda: 0.5)
+        assert isinstance(directive, str) and directive
+
+
+class TestRecentReplies:
+    @pytest.mark.asyncio
+    async def test_recent_replies_recorded(self) -> None:
+        import qq_bot.services.auto_chat as m
+
+        m._RECENT_REPLIES.clear()
+        h = Harness(["聊会"], _run_settings(auto_chat_sample_rate=0.0))
+        h.state.note_reply(1001, settings=h.settings)  # 制造热聊直答
+        await _run(h, raw_text="聊会")
+        assert m._RECENT_REPLIES[1001], "自主回复应进入 ring buffer"
+
+    @pytest.mark.asyncio
+    async def test_casual_prompt_contains_recent_replies_block(self) -> None:
+        rows = [_row("在吗", user_id=2001, created_at=_fresh_iso())]
+        prompt = build_casual_user_prompt(rows, recent_replies=["我破防了😂", "哈哈玩啊"])
+        assert "换着花样" in prompt
+        assert "我破防了😂" in prompt
+
+
+def test_build_casual_prompt_without_recent_replies_has_no_block() -> None:
+    rows = [_row("在吗", user_id=2001, created_at=_fresh_iso())]
+    prompt = build_casual_user_prompt(rows)
+    assert "换着花样" not in prompt

@@ -40,6 +40,13 @@ def test_casual_system_prompt_contains_persona_and_constraints() -> None:
     assert "不要编造" in prompt
 
 
+def test_casual_system_prompt_anti_formula_rules() -> None:
+    prompt = casual_system_prompt(_persona())
+    assert "句末不加句号" in prompt  # 群聊没有句末标点
+    assert "表情" in prompt  # 表情稀缺化
+    assert "语气词" in prompt  # 语气词不得连用
+
+
 def test_casual_system_prompt_works_without_name() -> None:
     prompt = casual_system_prompt(_persona(name="", aliases=()))
     assert "说话简短随意" in prompt

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+from collections import deque
 import re
 import time
 from dataclasses import dataclass
@@ -251,9 +252,14 @@ def build_gate_user_prompt(rows: Sequence[ChatMemoryRow]) -> str:
     return "\n".join(lines)
 
 
-def build_casual_user_prompt(rows: Sequence[ChatMemoryRow]) -> str:
+def build_casual_user_prompt(
+    rows: Sequence[ChatMemoryRow], recent_replies: Sequence[str] = ()
+) -> str:
     lines = ["最近群消息（最后一条是最新消息）："]
     lines.extend(_render_rows(rows))
+    if recent_replies:
+        lines.append("你最近发过的消息（换着花样说，禁止重复这些句式和用词）：")
+        lines.extend(f"- {text}" for text in recent_replies)
     lines.append(
         "请以群友身份先回应最新消息本身：打招呼就回应问候，提问就回应问题，"
         "可以顺势接梗；不要跑题到更早的话题。"
@@ -293,6 +299,34 @@ def parse_gate_output(content: str | None) -> GateDecision | None:
 # ---- 编排：run_auto_chat（S7-AUTO-06）----
 
 _SHARED_STATE = AutoChatState()
+
+# 回复多样性（S7-AUTO-P2-09）：每次回复随机注入一条风格指令，机械打散
+# 小模型的模式坍缩（语气词开头+😂收尾那种模板腔）
+_STYLE_DIRECTIVES: tuple[str, ...] = (
+    "这条回复不要使用任何表情",
+    "这条回复不要使用任何标点符号",
+    "这条回复控制在 12 个字以内",
+    "这条回复不要用任何语气词开头",
+    "这条回复用一个平铺直叙的短句收尾，别反问",
+    "这条回复只发一个 3 到 8 个字的短语",
+)
+
+# 每群最近自主发言（不含被 @ 问答），注入 prompt 让模型避开自己的旧句式
+_RECENT_REPLIES: dict[int, deque[str]] = {}
+_RECENT_REPLIES_MAX = 8
+
+
+def _recent_replies(group_id: int) -> tuple[str, ...]:
+    return tuple(_RECENT_REPLIES.get(group_id, ()))
+
+
+def _remember_reply(group_id: int, text: str) -> None:
+    if text:
+        _RECENT_REPLIES.setdefault(group_id, deque(maxlen=_RECENT_REPLIES_MAX)).append(text)
+
+
+def style_directive(rng: Callable[[], float]) -> str:
+    return _STYLE_DIRECTIVES[int(rng() * len(_STYLE_DIRECTIVES)) % len(_STYLE_DIRECTIVES)]
 
 COLD_FALLBACK_MESSAGES = (
     "怎么没人理我…鱼都晒干了",
@@ -372,11 +406,15 @@ def schedule_cold_check(
                 reply = (
                     await complete(
                         system_prompt=casual_system_prompt(persona),
-                        user_prompt=build_cold_user_prompt(rows, bot_reply_text),
+                        user_prompt=(
+                            build_cold_user_prompt(rows, bot_reply_text)
+                            + f"\n风格要求：{style_directive(random.random)}"
+                        ),
                         settings=settings,
                         client=client,
                         model=settings.ai_model,
                         max_tokens=100,
+                        temperature=settings.auto_chat_reply_temperature,
                     )
                 ).strip()
             except Exception as exc:
@@ -398,6 +436,7 @@ def schedule_cold_check(
                 group_id, settings=settings
             )  # 冷场补话也是机器人发言：刷新热聊窗口（spec 第四节）；不级联约束不受影响
             live_state.note_cold_reply(group_id, settings=settings)
+            _remember_reply(group_id, reply)
             await send(reply)
             _cold("ok")
         except Exception:
@@ -557,11 +596,15 @@ async def run_auto_chat(
         async def _generate() -> str:
             return await complete(
                 system_prompt=casual_system_prompt(persona),
-                user_prompt=build_casual_user_prompt(rows),
+                user_prompt=(
+                    build_casual_user_prompt(rows, recent_replies=_recent_replies(group_id))
+                    + f"\n风格要求：{style_directive(rng)}"
+                ),
                 settings=settings,
                 client=client,
                 model=settings.ai_model,
                 max_tokens=100,
+                temperature=settings.auto_chat_reply_temperature,
             )
 
         gen = asyncio.ensure_future(_generate())
@@ -596,6 +639,7 @@ async def run_auto_chat(
     exit_flag = state.note_reply(group_id, settings=settings)
     if exit_flag:
         _metric("prefilter", "hot_exit_limit")
+    _remember_reply(group_id, reply)
     schedule_cold_check(
         group_id=group_id,
         bot_reply_text=reply,

@@ -152,9 +152,9 @@ def parse_named_mention_replacements(value: str | None) -> dict[str, str]:
 
 # ---- 自主群聊插话（S7-AUTO）内置词表与人设默认 ----
 # 放在 config 层避免 services -> config 的循环导入。
+# 人设不得内嵌具体台词示例——小模型会把示例当成模板复读（S7-AUTO-P2-09 教训）
 DEFAULT_PERSONA_PROMPT = (
-    "说话简短随意爱玩梗，自嘲式幽默，能躺绝不站；被怼会嘴硬、有小情绪"
-    "（比如“我破防了”“典”）但不真正得罪人；接梗优先于答题。"
+    "说话简短随意爱玩梗，偶尔自嘲；被怼会嘴硬但不真正得罪人；接梗优先于答题。"
 )
 BUILTIN_SENSITIVE_WORDS = (
     "赌博",
@@ -350,6 +350,7 @@ class BotSettings(BaseSettings):
     auto_chat_context_messages: int = 10
     # 上下文时效窗（分钟）：超过的旧消息不进入决策门/生成 prompt（0 = 不过滤）
     auto_chat_context_max_age_minutes: float = 30.0
+    auto_chat_reply_temperature: float = 0.85  # 群友模式生成温度，偏高换多样性
 
     model_config = SettingsConfigDict(
         env_file=".env",

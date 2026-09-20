@@ -679,6 +679,7 @@ def test_auto_chat_defaults_match_spec() -> None:
     assert settings.auto_chat_cold_followup_seconds == 180.0
     assert settings.auto_chat_cold_daily_limit == 3
     assert settings.auto_chat_context_max_age_minutes == 30.0
+    assert settings.auto_chat_reply_temperature == 0.85
 
 
 def test_default_persona_prompt_is_xianyu_style() -> None:
@@ -686,7 +687,9 @@ def test_default_persona_prompt_is_xianyu_style() -> None:
 
     assert "玩梗" in DEFAULT_PERSONA_PROMPT
     assert "自嘲" in DEFAULT_PERSONA_PROMPT
-    assert "嘴硬" in DEFAULT_PERSONA_PROMPT
+    # 人设不得内嵌可被复读的示例台词（曾是"破防/典"刷屏的根因）
+    assert "破防" not in DEFAULT_PERSONA_PROMPT
+    assert "典" not in DEFAULT_PERSONA_PROMPT
 
 
 def test_persona_alias_list_parses_and_strips() -> None:
