@@ -307,8 +307,10 @@ _STYLE_DIRECTIVES: tuple[str, ...] = (
     "这条回复不要使用任何标点符号",
     "这条回复控制在 12 个字以内",
     "这条回复不要用任何语气词开头",
-    "这条回复用一个平铺直叙的短句收尾，别反问",
     "这条回复只发一个 3 到 8 个字的短语",
+    "这条回复控制在 12 个字以内，并且不要任何标点",
+    "这条回复就像随口嘟囔的一句碎碎念",
+    "这条回复只回两个字到五个字",
 )
 
 # 每群最近自主发言（不含被 @ 问答），注入 prompt 让模型避开自己的旧句式
@@ -328,10 +330,22 @@ def _remember_reply(group_id: int, text: str) -> None:
 def style_directive(rng: Callable[[], float]) -> str:
     return _STYLE_DIRECTIVES[int(rng() * len(_STYLE_DIRECTIVES)) % len(_STYLE_DIRECTIVES)]
 
+
+def split_casual_reply(text: str, *, max_parts: int = 3) -> list[str]:
+    """逗号长句 → 多条短消息（S7-AUTO-P2-10）：真人群聊连发几条短句，
+    而不是挤一句逗号长句。生成端约束对经济型模型不可靠，因此确定性拆分；
+    超出条数的尾段用逗号并回最后一条（用户接受逗号，反对的是长逗号链）。"""
+    parts = [part.strip() for part in re.split(r"[，,、；;。]+", text.strip()) if part.strip()]
+    if len(parts) <= max_parts:
+        return parts
+    merged = parts[: max_parts - 1]
+    merged.append("，".join(parts[max_parts - 1 :]))
+    return merged
+
 COLD_FALLBACK_MESSAGES = (
     "怎么没人理我…鱼都晒干了",
     "就当我说的是空气吧",
-    "冷场了？行吧，我躺回去了",
+    "冷场了？行吧 我躺回去了",
 )
 
 _COLD_TASKS: set[asyncio.Task] = set()
@@ -357,7 +371,7 @@ def schedule_cold_check(
     bot_reply_time: datetime,
     settings: BotSettings,
     memory_store: Any,
-    send: Callable[[str], Awaitable[None]],
+    send: Callable[[Sequence[str]], Awaitable[None]],
     quota_check: Callable[[], Awaitable[bool]] | None = None,
     client: Any | None = None,
     state: AutoChatState | None = None,
@@ -437,7 +451,7 @@ def schedule_cold_check(
             )  # 冷场补话也是机器人发言：刷新热聊窗口（spec 第四节）；不级联约束不受影响
             live_state.note_cold_reply(group_id, settings=settings)
             _remember_reply(group_id, reply)
-            await send(reply)
+            await send([reply])
             _cold("ok")
         except Exception:
             _cold("error")
@@ -453,7 +467,7 @@ async def run_auto_chat(
     raw_text: str,
     settings: BotSettings,
     memory_store: Any,
-    send: Callable[[str], Awaitable[None]],
+    send: Callable[[Sequence[str]], Awaitable[None]],
     quota_check: Callable[[], Awaitable[bool]] | None = None,
     client: Any | None = None,
     state: AutoChatState | None = None,
@@ -654,5 +668,5 @@ async def run_auto_chat(
         _request_completion=_request_completion,
         _sleep=_cold_sleep,
     )
-    await send(reply)
+    await send(split_casual_reply(reply))
     _metric("send", "ok")  # 已移交发送器；发送失败由 onebot_send 的 SEND_RESULTS 计数

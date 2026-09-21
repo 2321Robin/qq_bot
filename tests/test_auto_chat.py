@@ -18,6 +18,7 @@ from qq_bot.services.auto_chat import (
     run_auto_chat,
     schedule_cold_check,
     static_prefilter,
+    split_casual_reply,
     style_directive,
 )
 from qq_bot.services.chat_memory import ChatMemoryRow
@@ -329,8 +330,8 @@ class Harness:
         self.quota_allowed = True
         self.completions: list[dict] = []
 
-    async def send(self, text: str) -> None:
-        self.sent.append(text)
+    async def send(self, text) -> None:
+        self.sent.extend(list(text))
 
     async def quota_check(self) -> bool:
         return self.quota_allowed
@@ -886,3 +887,36 @@ def test_build_casual_prompt_without_recent_replies_has_no_block() -> None:
     rows = [_row("在吗", user_id=2001, created_at=_fresh_iso())]
     prompt = build_casual_user_prompt(rows)
     assert "换着花样" not in prompt
+
+
+# ---- 二期修复：逗号长句拆分为多条短消息（S7-AUTO-P2-10）----
+
+
+class TestSplitCasualReply:
+    def test_commas_split_into_parts(self) -> None:
+        assert split_casual_reply("哈哈，玩啊，不然来群里干嘛😂？") == [
+            "哈哈",
+            "玩啊",
+            "不然来群里干嘛😂？",
+        ]
+
+    def test_max_parts_merges_tail_with_comma(self) -> None:
+        assert split_casual_reply("一，二，三，四，五") == ["一", "二", "三，四，五"]
+
+    def test_no_separator_single_part(self) -> None:
+        assert split_casual_reply("玩吗") == ["玩吗"]
+
+    def test_empty_fragments_dropped(self) -> None:
+        assert split_casual_reply("，哈哈，") == ["哈哈"]
+
+    def test_period_and_semicolon_also_split(self) -> None:
+        assert split_casual_reply("冲。好；走") == ["冲", "好", "走"]
+
+
+@pytest.mark.asyncio
+async def test_run_auto_chat_splits_comma_reply_into_messages() -> None:
+    h = Harness(["聊会"], _run_settings(auto_chat_sample_rate=0.0))
+    h.state.note_reply(1001, settings=h.settings)
+    h.casual_content = "哈哈，玩啊，不然来群里干嘛😂？"
+    await _run(h, raw_text="聊会")
+    assert h.sent == ["哈哈", "玩啊", "不然来群里干嘛😂？"]

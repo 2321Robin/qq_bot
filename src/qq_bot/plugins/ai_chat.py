@@ -1,8 +1,10 @@
 from datetime import UTC, datetime, timedelta
+import asyncio
 import random
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Sequence
 
-from nonebot import logger, on_message
+from nonebot import get_bots, logger, on_message
+from nonebot.adapters.onebot.v11 import Bot as OneBotV11Bot
 from nonebot.adapters.onebot.v11 import GroupMessageEvent
 from nonebot.exception import FinishedException
 
@@ -386,6 +388,13 @@ async def _handle_agent_chat(
     return render_answer(outcome, store)
 
 
+def _connected_onebot_bot() -> OneBotV11Bot | None:
+    return next(
+        (bot for bot in get_bots().values() if isinstance(bot, OneBotV11Bot)),
+        None,
+    )
+
+
 def _build_auto_chat_hooks(
     event: GroupMessageEvent, settings: BotSettings
 ) -> tuple[Callable[[], Awaitable[bool]], Callable[[str], Awaitable[None]]]:
@@ -401,13 +410,42 @@ def _build_auto_chat_hooks(
             metrics.QUOTA_DENIED.labels("group", decision.reason).inc()
         return decision.allowed
 
-    async def send(text: str) -> None:
+    async def send(text: str | Sequence[str]) -> None:
+        """多段发送（S7-AUTO-P2-10）：前面的碎片走裸 API 连发（带打字节奏
+        的间隔，失败静默——碎片是装饰性的），最后一段走 finish 的完整
+        重试/熔断链路。"""
+        parts = (
+            [text] if isinstance(text, str) else [p for p in (p.strip() for p in text) if p]
+        )
+        if not parts:
+            return
         try:
+            bot = _connected_onebot_bot()
+            if bot is None:
+                await finish_with_send_errors_logged(
+                    ai_chat,
+                    replace_named_mentions(
+                        "，".join(parts), settings.named_mention_replacement_map
+                    ),
+                )
+                return
+            for part in parts[:-1]:
+                try:
+                    await bot.send_group_msg(
+                        group_id=event.group_id,
+                        message=replace_named_mentions(
+                            part, settings.named_mention_replacement_map
+                        ),
+                    )
+                except Exception:
+                    pass  # 插话碎片丢失可接受；也不把消息内容写进日志（隐私白名单）
+                await asyncio.sleep(random.uniform(0.6, 1.4))
             await finish_with_send_errors_logged(
-                ai_chat, replace_named_mentions(text, settings.named_mention_replacement_map)
+                ai_chat,
+                replace_named_mentions(parts[-1], settings.named_mention_replacement_map),
             )
         except FinishedException:
-            pass  # matcher.finish 正常完成的控制流异常；吞掉让 send 后续逻辑（ok 指标等）可执行
+            pass  # matcher.finish 正常完成的控制流异常；吞掉让 ok 指标可执行
 
     return quota_check, send
 

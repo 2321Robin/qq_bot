@@ -1966,6 +1966,8 @@ async def test_auto_chat_quota_and_send_closures(
 
     await ai_chat_plugin.handle_ai_chat(FakeEvent("来玩"))  # type: ignore[arg-type]
 
+    monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: None)
+
     with pytest.raises(FinishCalled):
         await captured["send"]("你好，@小洛")
 
@@ -2047,5 +2049,46 @@ async def test_auto_chat_send_hook_swallows_finished_exception(
         raise FinishedException()
 
     monkeypatch.setattr(ai_chat_plugin, "finish_with_send_errors_logged", fake_finish)
+    monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: None)
 
     await send("x")  # 不抛出 FinishedException 即通过
+
+
+# ---- 二期修复：多段连发（S7-AUTO-P2-10）----
+
+
+@pytest.mark.asyncio
+async def test_send_multi_parts_bursts_then_finishes_last(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeOneBot:
+        def __init__(self):
+            self.sent: list[tuple[int, str]] = []
+
+        async def send_group_msg(self, *, group_id, message):
+            self.sent.append((group_id, str(message)))
+
+    fake_bot = FakeOneBot()
+
+    async def fake_finish(matcher, message):
+        raise FinishCalled(message)
+
+    event = FakeEvent("随便聊聊")
+    settings = BotSettings(
+        allowed_group_ids="1001",
+        ai_api_key="secret",
+        named_mention_replacements="@小洛=2880000001",
+    )
+    _, send = ai_chat_plugin._build_auto_chat_hooks(event, settings)
+
+    monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: fake_bot)
+    monkeypatch.setattr(ai_chat_plugin, "finish_with_send_errors_logged", fake_finish)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+    monkeypatch.setattr(ai_chat_plugin.random, "uniform", lambda a, b: 0.0)
+
+    with pytest.raises(FinishCalled) as exc_info:
+        await send(["哈哈", "玩啊", "你好，@小洛"])
+
+    # 前面的碎片走裸 API 连发；最后一段走 finish
+    assert fake_bot.sent == [(1001, "哈哈"), (1001, "玩啊")]
+    assert "你好，" in str(exc_info.value.message)

@@ -36,7 +36,7 @@ def test_casual_system_prompt_contains_persona_and_constraints() -> None:
     prompt = casual_system_prompt(_persona())
     assert "小洛" in prompt
     assert "说话简短随意" in prompt
-    assert "30" in prompt  # 短句长度约束
+    assert "20" in prompt  # 短句长度约束
     assert "不要编造" in prompt
 
 
