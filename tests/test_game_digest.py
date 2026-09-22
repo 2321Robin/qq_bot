@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import json
+import os
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 from qq_bot.config import BotSettings
-from qq_bot.services.game_calendar import load_game_calendar, parse_game_calendar
+from qq_bot.services.game_calendar import (
+    GameCalendarError,
+    load_game_calendar,
+    parse_game_calendar,
+)
 from qq_bot.services.game_digest import (
     build_game_evening_message,
     build_game_morning_message,
@@ -54,3 +62,61 @@ def test_empty_day_returns_none():
     set_calendar(parse_game_calendar({"schema_version": 1, "events": []}))
     assert build_game_morning_message(BotSettings(), today=date(2026, 9, 16)) is None
     assert build_game_evening_message(BotSettings(), today=date(2026, 9, 16)) is None
+
+
+def _write_calendar(path, payload: dict) -> None:
+    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+
+def test_hot_reload_picks_up_file_change(tmp_path):
+    """S9-GAMECAL-SYNC:本地同步工具改写日历文件后,构建消息时自动用新数据。"""
+    calendar_path = tmp_path / "game_calendar.json"
+    _write_calendar(
+        calendar_path,
+        {
+            "schema_version": 1,
+            "events": [
+                {"game": "原神", "kind": "version", "title": "7.0版本", "start": "2026-08-01"}
+            ],
+        },
+    )
+    set_calendar(load_game_calendar(calendar_path), path=calendar_path)
+    assert build_game_morning_message(BotSettings(), today=date(2026, 8, 1)) is not None
+
+    _write_calendar(
+        calendar_path,
+        {
+            "schema_version": 1,
+            "events": [
+                {"game": "原神", "kind": "version", "title": "7.1版本", "start": "2026-09-23"}
+            ],
+        },
+    )
+    os.utime(calendar_path, (2000000000, 2000000000))  # 确保跨过 mtime 判定
+    text = build_game_morning_message(BotSettings(), today=date(2026, 9, 23))
+    assert "7.1版本" in text
+    assert "7.0版本" not in text
+
+
+def test_hot_reload_fails_loudly_on_broken_file(tmp_path):
+    calendar_path = tmp_path / "game_calendar.json"
+    _write_calendar(
+        calendar_path,
+        {
+            "schema_version": 1,
+            "events": [
+                {"game": "原神", "kind": "version", "title": "7.1版本", "start": "2026-09-23"}
+            ],
+        },
+    )
+    set_calendar(load_game_calendar(calendar_path), path=calendar_path)
+    calendar_path.write_text("{not json", encoding="utf-8")
+    os.utime(calendar_path, (2000000000, 2000000000))
+    with pytest.raises(GameCalendarError):
+        build_game_morning_message(BotSettings(), today=date(2026, 9, 23))
+
+
+def test_no_path_skips_reload_check():
+    set_calendar(parse_game_calendar({"schema_version": 1, "events": []}))
+    # 无 path 时热重载是 no-op,不抛错
+    assert build_game_morning_message(BotSettings(), today=date(2026, 9, 16)) is None

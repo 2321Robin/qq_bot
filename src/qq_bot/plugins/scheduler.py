@@ -288,7 +288,10 @@ def _register_game_builders(settings: BotSettings) -> None:
     jobs = jobs_from_settings(settings)
     if not any(job.job_type in ("game_morning", "game_evening") for job in jobs):
         return
-    game_digest.set_calendar(load_game_calendar(Path(settings.game_calendar_path)))
+    game_digest.set_calendar(
+        load_game_calendar(Path(settings.game_calendar_path)),
+        path=Path(settings.game_calendar_path),
+    )
     register_builder("game_morning", game_digest.build_game_morning_message)
     register_builder("game_evening", game_digest.build_game_evening_message)
 

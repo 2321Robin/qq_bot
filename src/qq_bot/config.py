@@ -205,6 +205,13 @@ class BotSettings(BaseSettings):
     # 游戏日历文件（S6-GAME-01）；模板见 tests/fixtures/game_reports/ 目录
     game_calendar_path: str = "data/game_calendar.json"
 
+    # 游戏日历本地同步（S9-GAMECAL-SYNC）：手动触发的本地工具，服务器部署无需配置。
+    # 视觉提取走 DeepSeek 兼容端点；model 留空时同步工具直接拒绝运行而不是猜模型名。
+    ai_vision_api_key: str = Field(default="", repr=False)
+    ai_vision_base_url: str = "https://api.deepseek.com/v1"
+    ai_vision_model: str = ""
+    ai_vision_timeout_seconds: float = 90.0
+
     ai_api_key: str = Field(default="", repr=False)
     ai_base_url: str = "https://api.openai.com/v1"
     ai_model: str = "gpt-4o-mini"
@@ -368,7 +375,9 @@ class BotSettings(BaseSettings):
     # 上下文时效窗（分钟）：超过的旧消息不进入决策门/生成 prompt（0 = 不过滤）
     auto_chat_context_max_age_minutes: float = 30.0
     auto_chat_reply_temperature: float = 0.85  # 群友模式生成温度，偏高换多样性
-    auto_chat_tune_log_enabled: bool = True  # 记录自主回复上文+回复到 data/auto_chat_tune.jsonl 供复盘
+    auto_chat_tune_log_enabled: bool = (
+        True  # 记录自主回复上文+回复到 data/auto_chat_tune.jsonl 供复盘
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",

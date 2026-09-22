@@ -10,23 +10,52 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import date
+from pathlib import Path
 
 from qq_bot.config import BotSettings
 from qq_bot.services.game_calendar import (
     GameCalendar,
     GameCalendarError,
     evening_sections,
+    load_game_calendar,
     morning_sections,
 )
 
 _WEEKDAY_CN = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 
 _CALENDAR: GameCalendar | None = None
+_CALENDAR_PATH: Path | None = None
+_CALENDAR_MTIME: float | None = None
 
 
-def set_calendar(calendar: GameCalendar) -> None:
-    global _CALENDAR
+def set_calendar(calendar: GameCalendar, *, path: Path | None = None) -> None:
+    global _CALENDAR, _CALENDAR_PATH, _CALENDAR_MTIME
     _CALENDAR = calendar
+    _CALENDAR_PATH = path
+    _CALENDAR_MTIME = _current_mtime(path)
+
+
+def _current_mtime(path: Path | None) -> float | None:
+    if path is None:
+        return None
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
+def _refresh_if_changed() -> None:
+    """本地日历同步工具改写文件后，下一条消息自动使用新数据（S9-GAMECAL-SYNC）。
+
+    与启动语义一致：换到的文件非法就抛 GameCalendarError 响亮失败，
+    绝不带着旧快照静默发送过期提醒。
+    """
+    if _CALENDAR_PATH is None:
+        return
+    mtime = _current_mtime(_CALENDAR_PATH)
+    if mtime is None or mtime == _CALENDAR_MTIME:
+        return
+    set_calendar(load_game_calendar(_CALENDAR_PATH), path=_CALENDAR_PATH)
 
 
 def _require_calendar() -> GameCalendar:
@@ -50,6 +79,7 @@ def _numbered(items: Sequence[str]) -> list[str]:
 
 def build_game_morning_message(settings: BotSettings, *, today: date | None = None) -> str | None:
     effective_today = today or date.today()
+    _refresh_if_changed()
     sections = morning_sections(_require_calendar(), effective_today)
     if sections.is_empty():
         return None
@@ -63,6 +93,7 @@ def build_game_morning_message(settings: BotSettings, *, today: date | None = No
 
 def build_game_evening_message(settings: BotSettings, *, today: date | None = None) -> str | None:
     effective_today = today or date.today()
+    _refresh_if_changed()
     sections = evening_sections(_require_calendar(), effective_today)
     if sections.is_empty():
         return None

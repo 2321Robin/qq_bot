@@ -775,3 +775,22 @@ def test_scheduled_redeliver_defaults() -> None:
     settings = BotSettings()
     assert settings.scheduled_redeliver_max == 2
     assert settings.scheduled_redeliver_delay_seconds == 300.0
+
+
+def test_ai_vision_defaults(monkeypatch):
+    monkeypatch.delenv("AI_VISION_API_KEY", raising=False)
+    monkeypatch.delenv("AI_VISION_BASE_URL", raising=False)
+    monkeypatch.delenv("AI_VISION_MODEL", raising=False)
+    settings = BotSettings()
+    assert settings.ai_vision_api_key == ""
+    assert settings.ai_vision_base_url == "https://api.deepseek.com/v1"
+    assert settings.ai_vision_model == ""  # 留空:同步工具拒绝运行而不是猜模型名
+    assert settings.ai_vision_timeout_seconds == 90.0
+
+
+def test_ai_vision_env_override(monkeypatch):
+    monkeypatch.setenv("AI_VISION_MODEL", "deepseek-v4.1")
+    monkeypatch.setenv("AI_VISION_API_KEY", "sk-abc")
+    settings = BotSettings()
+    assert settings.ai_vision_model == "deepseek-v4.1"
+    assert settings.ai_vision_api_key == "sk-abc"
