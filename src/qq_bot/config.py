@@ -368,6 +368,7 @@ class BotSettings(BaseSettings):
     # 上下文时效窗（分钟）：超过的旧消息不进入决策门/生成 prompt（0 = 不过滤）
     auto_chat_context_max_age_minutes: float = 30.0
     auto_chat_reply_temperature: float = 0.85  # 群友模式生成温度，偏高换多样性
+    auto_chat_tune_log_enabled: bool = True  # 记录自主回复上文+回复到 data/auto_chat_tune.jsonl 供复盘
 
     model_config = SettingsConfigDict(
         env_file=".env",

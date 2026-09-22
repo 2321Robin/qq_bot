@@ -11,6 +11,7 @@ import asyncio
 import json
 import random
 from collections import deque
+from pathlib import Path
 import re
 import time
 from dataclasses import dataclass
@@ -238,9 +239,14 @@ def detect_negative_feedback(
 
 
 def _render_rows(rows: Sequence[ChatMemoryRow]) -> list[str]:
+    """上下文渲染用匿名别名（用户A/B/C…），防止模型把原始 QQ 号当内容
+    复读出来（实测泄露问题）。"""
+    alias: dict[int, str] = {}
     lines: list[str] = []
     for row in rows:
-        lines.append(f"用户{row.user_id}：{row.message_text}")
+        if row.user_id not in alias:
+            alias[row.user_id] = f"用户{chr(ord('A') + len(alias) % 26)}"
+        lines.append(f"{alias[row.user_id]}：{row.message_text}")
         if row.ai_reply:
             lines.append(f"机器人：{row.ai_reply}")
     return lines
@@ -317,6 +323,9 @@ _STYLE_DIRECTIVES: tuple[str, ...] = (
 _RECENT_REPLIES: dict[int, deque[str]] = {}
 _RECENT_REPLIES_MAX = 8
 
+# 调优记录（S7-AUTO-P2-11）：自主回复的上文与回复内容落 JSONL 供部署者复盘
+_TUNE_LOG_PATH = "data/auto_chat_tune.jsonl"
+
 
 def _recent_replies(group_id: int) -> tuple[str, ...]:
     return tuple(_RECENT_REPLIES.get(group_id, ()))
@@ -343,6 +352,83 @@ def split_casual_reply(text: str, *, max_parts: int = 3) -> list[str]:
     return merged
 
 
+_ARTIFACT_RE = re.compile(r"用户\d{4,}|(?<!\d)\d{5,11}(?!\d)")
+_EMOJI_RE = "[🀀-🫿☀-➿⬀-⯿️]"
+
+
+def _has_id_artifact(text: str) -> bool:
+    """回复里出现"用户+数字"或裸长数字串 = 把 prompt 上下文格式当内容
+    抄出来了（实测问题），整条放弃。"""
+    return bool(_ARTIFACT_RE.search(text))
+
+
+def _strip_excl_and_emoji_punct(text: str) -> str:
+    """自主回复禁感叹号（拆分语义由句号承担）；表情与文字之间不夹标点。"""
+    cleaned = text.replace("！", "。").replace("!", "。")
+    cleaned = re.sub(r"[\s，,、；。：]*(" + _EMOJI_RE + r")", r"\1", cleaned)
+    cleaned = re.sub(r"(" + _EMOJI_RE + r")\s*[，,、；。：]", r"\1", cleaned)
+    return cleaned
+
+
+def _is_questionish(text: str) -> bool:
+    stripped = text.strip()
+    if re.search(r"[?？]", stripped):
+        return True
+    return bool(stripped) and stripped[-1] in "吗呢吧嘛"
+
+
+def plusone_triggered(
+    rows: Sequence[ChatMemoryRow], raw_text: str, *, sender_user_id: int
+) -> bool:
+    """≥2 人发过一模一样的消息（含当前发送者）→ 跟发一条一样的（+1 文化）。"""
+    text = raw_text.strip()
+    if not text:
+        return False
+    others = {
+        row.user_id
+        for row in rows
+        if row.message_text.strip() == text and row.user_id != sender_user_id
+    }
+    return bool(others)
+
+
+def _record_tune_entry(
+    settings: BotSettings,
+    *,
+    path: str,
+    trigger: str,
+    context_rows: Sequence[ChatMemoryRow],
+    reply_parts: Sequence[str],
+    group_id: int,
+) -> None:
+    """调优记录：上文与回复内容落 JSONL（仅本地 data/，不进日志/指标），
+    供部署者复盘哪些回复好、哪些差。失败绝不影响主流程。"""
+    if not settings.auto_chat_tune_log_enabled:
+        return
+    try:
+        entry = {
+            "ts": datetime.now(UTC).isoformat(),
+            "group_id": group_id,
+            "path": path,
+            "trigger": trigger,
+            "context": [
+                {
+                    "user": row.user_id,
+                    "text": row.message_text,
+                    "bot_reply": row.ai_reply or None,
+                }
+                for row in context_rows
+            ],
+            "reply": list(reply_parts),
+        }
+        log_path = Path(_TUNE_LOG_PATH)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
 COLD_FALLBACK_MESSAGES = (
     "怎么没人理我…鱼都晒干了",
     "就当我说的是空气吧",
@@ -357,9 +443,14 @@ def shared_state() -> AutoChatState:
     return _SHARED_STATE
 
 
-def build_cold_user_prompt(rows: Sequence[ChatMemoryRow], bot_reply_text: str) -> str:
+def build_cold_user_prompt(
+    rows: Sequence[ChatMemoryRow], bot_reply_text: str, recent_replies: Sequence[str] = ()
+) -> str:
     lines = ["最近群消息（最后一条是最新消息）："]
     lines.extend(_render_rows(rows))
+    if recent_replies:
+        lines.append("你最近发过的消息（换着花样说，禁止重复这些句式和用词）：")
+        lines.extend(f"- {text}" for text in recent_replies)
     lines.append(f"你刚才说了「{bot_reply_text}」，但没有人回应。")
     lines.append("用一句话自嘲或吐槽冷场，可以呼应你刚才说的内容。")
     return "\n".join(lines)
@@ -380,7 +471,10 @@ def schedule_cold_check(
     _request_completion: Any = None,
     _sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> None:
-    """发言后调度一次冷场检查（spec 第五节）。进程内 task，重启丢失可接受。"""
+    """发言后调度一次冷场检查（spec 第五节）。进程内 task，重启丢失可接受。
+    仅当上一条机器人发言具有提问性质时才视为冷场——陈述句没人接话是常态。"""
+    if not _is_questionish(bot_reply_text):
+        return
 
     async def _check() -> None:
         tracer = get_tracer()
@@ -422,7 +516,11 @@ def schedule_cold_check(
                     await complete(
                         system_prompt=casual_system_prompt(persona),
                         user_prompt=(
-                            build_cold_user_prompt(rows, bot_reply_text)
+                            build_cold_user_prompt(
+                                rows,
+                                bot_reply_text,
+                                recent_replies=_recent_replies(group_id),
+                            )
                             + f"\n风格要求：{style_directive(random.random)}"
                         ),
                         settings=settings,
@@ -441,6 +539,9 @@ def schedule_cold_check(
                 tracer.end_span(span)
             if not reply:
                 reply = random.choice(COLD_FALLBACK_MESSAGES)
+            reply = _strip_excl_and_emoji_punct(reply).rstrip("。 ")
+            if _has_id_artifact(reply):
+                reply = random.choice(COLD_FALLBACK_MESSAGES)
             if any(word in reply for word in settings.auto_chat_sensitive_word_list):
                 _cold("filtered")
                 return
@@ -452,6 +553,14 @@ def schedule_cold_check(
             )  # 冷场补话也是机器人发言：刷新热聊窗口（spec 第四节）；不级联约束不受影响
             live_state.note_cold_reply(group_id, settings=settings)
             _remember_reply(group_id, reply)
+            _record_tune_entry(
+                settings,
+                path="cold",
+                trigger=bot_reply_text,
+                context_rows=rows,
+                reply_parts=[reply],
+                group_id=group_id,
+            )
             await send([reply])
             _cold("ok")
         except Exception:
@@ -496,7 +605,7 @@ async def run_auto_chat(
         _metric("prefilter", "ignored")
         return
     static = static_prefilter(raw_text, settings=settings)
-    if static != "pass":
+    if static in ("command", "sensitive"):
         _metric("prefilter", static)
         return
 
@@ -516,6 +625,12 @@ async def run_auto_chat(
         ]
     if not rows:
         _metric("prefilter", "no_context")
+        return
+    plusone = plusone_triggered(rows, raw_text, sender_user_id=event.user_id) and (
+        raw_text not in _recent_replies(group_id)
+    )
+    if static == "too_short" and not plusone:
+        _metric("prefilter", "too_short")
         return
 
     bot_recently = state.recently_spoke(group_id, settings.auto_chat_cooldown_seconds)
@@ -546,10 +661,14 @@ async def run_auto_chat(
     you_plural = settings.auto_chat_you_plural_reply and "你们" in raw_text
     you_ref = "你" in raw_text
     tracer = get_tracer()
+    reply = None  # plusone 分支直接采用原文；其余路径由生成产出
     if named:
         _metric("prefilter", "nicknamed")
     elif you_plural:
         _metric("prefilter", "you_plural")
+    elif plusone:
+        reply = raw_text
+        _metric("prefilter", "plusone")
     elif hot:
         _metric("prefilter", "hot_reply")
     else:
@@ -606,42 +725,52 @@ async def run_auto_chat(
         ):
             _metric("prefilter", "limit")
             return
-        generate_span = tracer.start_span("auto.generate", trace_id=current_request_id())
+        if reply is None:
+            generate_span = tracer.start_span("auto.generate", trace_id=current_request_id())
 
-        async def _generate() -> str:
-            return await complete(
-                system_prompt=casual_system_prompt(persona),
-                user_prompt=(
-                    build_casual_user_prompt(rows, recent_replies=_recent_replies(group_id))
-                    + f"\n风格要求：{style_directive(rng)}"
-                ),
-                settings=settings,
-                client=client,
-                model=settings.ai_model,
-                max_tokens=100,
-                temperature=settings.auto_chat_reply_temperature,
-            )
+            async def _generate() -> str:
+                return await complete(
+                    system_prompt=casual_system_prompt(persona),
+                    user_prompt=(
+                        build_casual_user_prompt(
+                            rows, recent_replies=_recent_replies(group_id)
+                        )
+                        + f"\n风格要求：{style_directive(rng)}"
+                    ),
+                    settings=settings,
+                    client=client,
+                    model=settings.ai_model,
+                    max_tokens=100,
+                    temperature=settings.auto_chat_reply_temperature,
+                )
 
-        gen = asyncio.ensure_future(_generate())
-        try:
-            delay_min = settings.auto_chat_delay_min_seconds
-            delay_max = settings.auto_chat_delay_max_seconds
-            await sleeper(delay_min + (delay_max - delay_min) * rng())
-            reply = (await gen).strip()
-        except Exception as exc:
-            gen.cancel()
-            tracer.end_span(
-                generate_span, status="error", category=classify_exception(exc).category.value
-            )
-            record_error("auto_chat", classify_exception(exc).category.value)
-            _metric("generate", "error")
-            return  # 冷却已被占用：有意的保守行为
-        tracer.end_span(generate_span)
+            gen = asyncio.ensure_future(_generate())
+            try:
+                delay_min = settings.auto_chat_delay_min_seconds
+                delay_max = settings.auto_chat_delay_max_seconds
+                await sleeper(delay_min + (delay_max - delay_min) * rng())
+                reply = (await gen).strip()
+            except Exception as exc:
+                gen.cancel()
+                tracer.end_span(
+                    generate_span,
+                    status="error",
+                    category=classify_exception(exc).category.value,
+                )
+                record_error("auto_chat", classify_exception(exc).category.value)
+                _metric("generate", "error")
+                return  # 冷却已被占用：有意的保守行为
+            tracer.end_span(generate_span)
 
     if not reply:
         _metric("generate", "error")
         return
-    _metric("generate", "ok")
+    if not plusone:
+        _metric("generate", "ok")
+        reply = _strip_excl_and_emoji_punct(reply)
+        if _has_id_artifact(reply):
+            _metric("generate", "artifact")
+            return
     if any(word in reply for word in settings.auto_chat_sensitive_word_list):
         _metric("generate", "filtered")
         return
@@ -669,5 +798,25 @@ async def run_auto_chat(
         _request_completion=_request_completion,
         _sleep=_cold_sleep,
     )
-    await send(split_casual_reply(reply))
+    parts = [reply] if plusone else split_casual_reply(reply)
+    path_label = (
+        "nicknamed"
+        if named
+        else "you_plural"
+        if you_plural
+        else "plusone"
+        if plusone
+        else "hot_reply"
+        if hot
+        else "gate_reply"
+    )
+    _record_tune_entry(
+        settings,
+        path=path_label,
+        trigger=raw_text,
+        context_rows=rows,
+        reply_parts=parts,
+        group_id=group_id,
+    )
+    await send(parts)
     _metric("send", "ok")  # 已移交发送器；发送失败由 onebot_send 的 SEND_RESULTS 计数

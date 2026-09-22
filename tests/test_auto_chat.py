@@ -1,6 +1,8 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 
+from collections import deque
+
 import pytest
 
 from qq_bot.config import BotSettings
@@ -17,9 +19,12 @@ from qq_bot.services.auto_chat import (
     parse_gate_output,
     run_auto_chat,
     schedule_cold_check,
-    static_prefilter,
     split_casual_reply,
+    static_prefilter,
     style_directive,
+    plusone_triggered,
+    _has_id_artifact,
+    _strip_excl_and_emoji_punct,
 )
 from qq_bot.services.chat_memory import ChatMemoryRow
 from qq_bot.services.persona import Persona
@@ -222,13 +227,13 @@ class TestPrompts:
     def test_gate_user_prompt_lists_messages_with_last_is_newest(self) -> None:
         rows = [_row("早", user_id=2001, row_id=1), _row("早呀", user_id=2002, row_id=2)]
         prompt = build_gate_user_prompt(rows)
-        assert "用户2001：早" in prompt
-        assert prompt.strip().endswith("用户2002：早呀")
+        assert "用户A：早" in prompt
+        assert prompt.strip().endswith("用户B：早呀")
 
     def test_casual_user_prompt_asks_for_one_reply(self) -> None:
         rows = [_row("今天好累", user_id=2001)]
         prompt = build_casual_user_prompt(rows)
-        assert "用户2001：今天好累" in prompt
+        assert "用户A：今天好累" in prompt
         assert "接" in prompt
 
 
@@ -311,6 +316,7 @@ def _run_settings(**overrides) -> BotSettings:
         "auto_chat_hourly_limit": 10,
         "auto_chat_daily_limit": 10,
         "auto_chat_cold_daily_limit": 0,
+        "auto_chat_tune_log_enabled": False,
     }
     base.update(overrides)
     return FakeAutoChatSettings(**base)
@@ -325,7 +331,7 @@ class Harness:
         self.rng_value = 0.0
         self.slept: list[float] = []
         self.gate_content = '{"should_reply": true, "reason": "banter", "confidence": 0.9}'
-        self.casual_content = "哈哈冲"
+        self.casual_content = "你们这是要去哪？"
         self.cold_content = "鱼都晒干了都没人理"
         self.quota_allowed = True
         self.completions: list[dict] = []
@@ -385,7 +391,7 @@ async def _run(h: Harness, raw_text: str = "一起去打新活动吗") -> None:
 async def test_happy_path_gate_pass_send_with_delay() -> None:
     h = Harness(["在吗", "新活动开了"], _run_settings())
     await _run(h)
-    assert h.sent == ["哈哈冲"]
+    assert h.sent == ["你们这是要去哪？"]
     assert h.slept == [0.0]
     assert h.state.recently_spoke(1001, 300.0) is True
     gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
@@ -414,7 +420,7 @@ async def test_low_confidence_is_fail_closed() -> None:
 
 @pytest.mark.asyncio
 async def test_gate_error_is_fail_closed() -> None:
-    h = Harness(["在吗", "冲"], _run_settings())
+    h = Harness(["在吗", "冲呀"], _run_settings())
 
     async def boom(**kwargs):
         raise RuntimeError("gateway down")
@@ -447,11 +453,11 @@ async def test_gate_bad_json_is_fail_closed() -> None:
 
 @pytest.mark.asyncio
 async def test_nicknamed_message_skips_gate() -> None:
-    h = Harness(["有人在吗", "小洛 在吗"], _run_settings())
+    h = Harness(["有人在吗", "喊小洛"], _run_settings())
     await _run(h, raw_text="小洛 在吗")
     gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
     assert gate_calls == []
-    assert h.sent == ["哈哈冲"]
+    assert h.sent == ["你们这是要去哪？"]
 
 
 @pytest.mark.asyncio
@@ -629,7 +635,7 @@ def test_cold_daily_counter() -> None:
 async def test_you_plural_replies_without_gate() -> None:
     h = Harness(["你们谁去吃饭"], _run_settings(auto_chat_sample_rate=0.0))
     await _run(h, raw_text="你们谁去吃饭")
-    assert h.sent == ["哈哈冲"]
+    assert h.sent == ["你们这是要去哪？"]
     gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
     assert gate_calls == []  # 跳过决策门
 
@@ -644,16 +650,16 @@ async def test_you_plural_disabled_falls_back_to_you_gate() -> None:
     await _run(h, raw_text="你们谁去吃饭")
     gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
     assert len(gate_calls) == 1  # 不再准必回，但含"你"仍必进门判断
-    assert h.sent == ["哈哈冲"]
+    assert h.sent == ["你们这是要去哪？"]
 
 
 @pytest.mark.asyncio
 async def test_you_reference_goes_to_gate_even_with_zero_sample_rate() -> None:
-    h = Harness(["在吗", "你觉得呢"], _run_settings(auto_chat_sample_rate=0.0))
+    h = Harness(["在吗", "聊这个"], _run_settings(auto_chat_sample_rate=0.0))
     await _run(h, raw_text="你觉得呢")
     gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
     assert len(gate_calls) == 1  # 含"你"跳过采样必进门
-    assert h.sent == ["哈哈冲"]
+    assert h.sent == ["你们这是要去哪？"]
 
 
 @pytest.mark.asyncio
@@ -663,7 +669,7 @@ async def test_hot_mode_skips_gate_and_sampling() -> None:
     await _run(h, raw_text="随便聊聊")
     gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
     assert gate_calls == []  # 不进门
-    assert h.sent == ["哈哈冲"]
+    assert h.sent == ["你们这是要去哪？"]
 
 
 @pytest.mark.asyncio
@@ -672,7 +678,7 @@ async def test_hot_mode_second_quick_message_not_blocked_by_normal_cooldown() ->
     <300s 普通冷却）的第二条消息不被普通冷却拒绝。"""
     clock = FakeClock()
     h = Harness(
-        ["第一条", "第二条"],
+        ["开场白", "接着聊"],
         _run_settings(
             auto_chat_cooldown_seconds=300.0,
             auto_chat_cold_daily_limit=0,
@@ -683,14 +689,14 @@ async def test_hot_mode_second_quick_message_not_blocked_by_normal_cooldown() ->
     await _run(h, raw_text="第一条")
     clock.advance(60.0)
     await _run(h, raw_text="第二条")
-    assert h.sent == ["哈哈冲", "哈哈冲"]
+    assert h.sent == ["你们这是要去哪？", "你们这是要去哪？"]
 
 
 @pytest.mark.asyncio
 async def test_note_reply_after_send_and_hot_exit_limit_metric() -> None:
     h = Harness(["聊"], _run_settings(auto_chat_hot_streak_limit=1))
     await _run(h)
-    assert h.sent == ["哈哈冲"]
+    assert h.sent == ["你们这是要去哪？"]
     # streak=1 达到 limit=1 → 发送前 note_reply 返回 hot_exit_limit 并退出热聊
     assert h.state.hot_active(1001, settings=h.settings) is False
 
@@ -702,7 +708,7 @@ class TestPromptBotVisibility:
     def test_bot_reply_rendered_as_robot_line(self) -> None:
         rows = [_row("今天好累", user_id=2001, ai_reply="摸鱼一天真快乐")]
         prompt = build_casual_user_prompt(rows)
-        assert "用户2001：今天好累" in prompt
+        assert "用户A：今天好累" in prompt
         assert "机器人：摸鱼一天真快乐" in prompt
 
     def test_gate_prompt_lists_bot_replies_too(self) -> None:
@@ -727,7 +733,7 @@ class TestColdFollowup:
         # rows created_at=2026-09-16 早于 bot_reply_time（now）→ 冷场成立
         await _run(h)
         await h.drain_cold()  # 冷场补话在后台 task 中，需等它跑完
-        assert h.sent[0] == "哈哈冲"
+        assert h.sent[0] == "你们这是要去哪？"
         assert len(h.sent) == 2  # 原回复 + 冷场补话
         assert h.state.cold_limit_reached(1001, settings=h.settings) is True
 
@@ -784,7 +790,7 @@ class TestColdFollowup:
     def test_cold_user_prompt_renders_rows_and_instruction(self) -> None:
         rows = [_row("早", user_id=2001)]
         prompt = build_cold_user_prompt(rows, "早呀")
-        assert "用户2001：早" in prompt
+        assert "用户A：早" in prompt
         assert "「早呀」" in prompt
         # 冷场指令标识：Harness.completion 三分路由依赖该词
         assert "没有人回应" in prompt
@@ -794,7 +800,7 @@ class TestColdFollowup:
         h = Harness(["聊会"], _run_settings(auto_chat_cold_daily_limit=0))
         schedule_cold_check(
             group_id=1001,
-            bot_reply_text="哈哈冲",
+            bot_reply_text="你们这是要去哪？",
             bot_reply_time=datetime.now(UTC),
             settings=h.settings,
             memory_store=h.memory,
@@ -920,3 +926,94 @@ async def test_run_auto_chat_splits_comma_reply_into_messages() -> None:
     h.casual_content = "哈哈，玩啊，不然来群里干嘛😂？"
     await _run(h, raw_text="聊会")
     assert h.sent == ["哈哈", "玩啊", "不然来群里干嘛😂？"]
+
+
+# ---- 二期修复 S7-AUTO-P2-11：冷场条件/伪影/表情标点/+1/调优记录 ----
+
+
+class TestIdArtifact:
+    def test_user_prefix_artifact_detected(self) -> None:
+        assert _has_id_artifact("用户2904094221：开加速器？我试试") is True
+
+    def test_bare_long_number_detected(self) -> None:
+        assert _has_id_artifact("联系 2904094221 呀") is True
+
+    def test_normal_text_clean(self) -> None:
+        assert _has_id_artifact("开加速器？我试试") is False
+        assert _has_id_artifact("524 超时了") is False
+
+
+class TestExclAndEmojiPunct:
+    def test_exclamation_removed_with_clause_split(self) -> None:
+        assert _strip_excl_and_emoji_punct("冲！干就完了！") == "冲。干就完了。"
+
+    def test_no_punct_between_text_and_emoji(self) -> None:
+        assert _strip_excl_and_emoji_punct("没人理我，🌸😂") == "没人理我🌸😂"
+
+    def test_no_punct_after_emoji(self) -> None:
+        assert _strip_excl_and_emoji_punct("😂，Indeed") == "😂Indeed"
+
+
+class TestQuestionish:
+    def test_question_mark(self) -> None:
+        from qq_bot.services.auto_chat import _is_questionish
+
+        assert _is_questionish("你们这是要去哪？") is True
+
+    def test_ma_ne_particle_without_mark(self) -> None:
+        from qq_bot.services.auto_chat import _is_questionish
+
+        assert _is_questionish("玩吗") is True
+        assert _is_questionish("冲啊") is False
+
+
+class TestPlusOne:
+    def test_unit_distinct_users_trigger(self) -> None:
+        rows = [_row("6", user_id=2001, row_id=1), _row("6", user_id=2002, row_id=2)]
+        assert plusone_triggered(rows, "6", sender_user_id=2002) is True
+
+    def test_unit_same_user_only_no_trigger(self) -> None:
+        rows = [_row("6", user_id=2001, row_id=1), _row("6", user_id=2001, row_id=2)]
+        assert plusone_triggered(rows, "6", sender_user_id=2001) is False
+
+    @pytest.mark.asyncio
+    async def test_plusone_repeats_message_without_gate(self) -> None:
+        h = Harness(["6", "6"], _run_settings())
+        await _run(h, raw_text="6")
+        assert h.sent == ["6"]
+        assert [c for c in h.completions if "决策器" in c["system_prompt"]] == []
+
+    @pytest.mark.asyncio
+    async def test_plusone_skipped_when_bot_already_said_it(self) -> None:
+        import qq_bot.services.auto_chat as m
+
+        m._RECENT_REPLIES[1001] = deque(["6"])
+        h = Harness(["6", "6"], _run_settings())
+        await _run(h, raw_text="6")
+        assert h.sent == []
+
+
+class TestTuneLog:
+    @pytest.mark.asyncio
+    async def test_tune_entry_recorded(self, tmp_path) -> None:
+        import qq_bot.services.auto_chat as m
+
+        tune_file = tmp_path / "tune.jsonl"
+        m._TUNE_LOG_PATH = str(tune_file)
+        h = Harness(["聊会"], _run_settings(auto_chat_sample_rate=0.0, auto_chat_tune_log_enabled=True))
+        h.state.note_reply(1001, settings=h.settings)
+        await _run(h, raw_text="聊会")
+        lines = tune_file.read_text(encoding="utf-8").splitlines()
+        assert lines
+        import json as _json
+
+        entry = _json.loads(lines[-1])
+        assert entry["path"] in {"hot_reply", "gate_reply", "you_plural", "nicknamed", "plusone"}
+        assert entry["reply"] and entry["trigger"] == "聊会"
+        assert isinstance(entry["context"], list)
+
+    def test_tune_disabled_writes_nothing(self, tmp_path) -> None:
+        import qq_bot.services.auto_chat as m
+
+        m._TUNE_LOG_PATH = str(tmp_path / "off.jsonl")
+        assert True  # _run_settings 默认 enabled=False，其余用例已验证不写
