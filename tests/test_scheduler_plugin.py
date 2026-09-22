@@ -268,6 +268,39 @@ async def test_life_job_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _job_metric("life_morning", "ok") == before + 1
 
 
+async def test_ai_briefing_job_sends_briefing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AI 早报任务端到端（S8-BRIEF）：注册 builder → 组装 → 共享发送管线。"""
+
+    async def fake_build(settings, *, client=None, now=None):
+        assert settings.scheduled_job_list == [("ai_morning", 9, 30)]
+        return "【AI早报】9月22日 周二\n1. 测试新闻"
+
+    monkeypatch.setattr(scheduler_plugin, "build_ai_briefing_message", fake_build)
+    settings = _configured_settings(scheduled_jobs="ai_morning@09:30")
+    fake_bot = FakeBot()
+    before = _job_metric("ai_morning", "ok")
+    try:
+        scheduler_plugin._register_ai_briefing_builder(settings)
+        await run_scheduled_job(
+            ScheduledJob(job_type="ai_morning", hour=9, minute=30),
+            fake_bot,
+            settings=settings,
+        )
+    finally:
+        scheduler_jobs_module._CONTENT_BUILDERS.pop("ai_morning", None)
+
+    assert [(gid, msg.extract_plain_text()) for gid, msg in fake_bot.sent] == [
+        (111, "【AI早报】9月22日 周二\n1. 测试新闻")
+    ]
+    assert _job_metric("ai_morning", "ok") == before + 1
+
+
+def test_ai_briefing_builder_not_registered_without_job() -> None:
+    settings = _configured_settings(scheduled_jobs="life_morning@07:30")
+    scheduler_plugin._register_ai_briefing_builder(settings)
+    assert scheduler_jobs_module.get_builder("ai_morning") is None
+
+
 # ---- 定时发送失败后的延迟重投递（S6-SCHED-04）----
 
 

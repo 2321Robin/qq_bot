@@ -11,6 +11,7 @@ from qq_bot.config import BotSettings, get_settings
 from qq_bot.observability import metrics
 from qq_bot.observability.logging import LogContext, get_logger, new_request_id, record_event
 from qq_bot.services import game_digest
+from qq_bot.services.ai_briefing import build_ai_briefing_message
 from qq_bot.services.daily_report import build_life_evening_message, build_life_morning_message
 from qq_bot.services.game_calendar import load_game_calendar
 from qq_bot.services.scheduled_sender import (
@@ -309,11 +310,25 @@ def _register_life_builders(settings: BotSettings) -> None:
     register_builder("life_evening", _evening)
 
 
+def _register_ai_briefing_builder(settings: BotSettings) -> None:
+    """AI 早报生成器（S8-BRIEF）。源未配置/过期/失败在运行期返回空内容跳过，
+    与生活早报一样属于降级而非加载错误，这里没有可失败的外部加载。"""
+    jobs = jobs_from_settings(settings)
+    if not any(job.job_type == "ai_morning" for job in jobs):
+        return
+
+    async def _briefing(effective: BotSettings) -> str | None:
+        return await build_ai_briefing_message(effective)
+
+    register_builder("ai_morning", _briefing)
+
+
 settings = get_settings()
 if settings.scheduled_job_list:
     # 泛化路径为唯一权威；旧 SCHEDULED_CRON_* 变量不再参与注册
     _register_game_builders(settings)
     _register_life_builders(settings)
+    _register_ai_briefing_builder(settings)
     for job in jobs_from_settings(settings):
         scheduler.add_job(
             _make_typed_job_runner(job),

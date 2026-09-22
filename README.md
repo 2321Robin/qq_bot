@@ -99,6 +99,8 @@ flowchart LR
 | 游戏日历提醒 | `SCHEDULED_JOBS` 的 `game_morning`/`game_evening` + `GAME_CALENDAR_PATH` | 手工维护的游戏活动日历（模板：`tests/fixtures/game_reports/game_calendar.template.json`）驱动确定性规则引擎：版本更新仅早报、活动开启/结束窗口 2 天、周常周日、月常月末、过期自动隐藏；空内容不发消息，非法文件拒绝启动 |
 | 生活早晚报 | `SCHEDULED_JOBS` 的 `life_morning`/`life_evening` | 自部署 60s fork 提供"每天60秒读懂世界"新闻、热搜与小黑盒热帖；离线日期/农历/节日与倒计时板块；可选 LLM 润色：新闻润色排序（确定性校验兜底、失败回退模板、独立每日上限）；热搜默认 10 条、同题去重，LLM 结合联网搜索资料逐条介绍（无资料回退纯标题）；板块级独立降级，任一来源失败自动省略该板块 |
 | 手动早晚报 | `/早报`、`/晚报` | 在当前群主动触发一次生活早报/晚报（与定时任务同一组装管线），便于即时查看 |
+| AI 早报 | `SCHEDULED_JOBS` 的 `ai_morning` + `AI_BRIEFING_FEED_URL` | 默认拉取「橘鸦AI早报」公开 RSS（每天一期、自带原文链接与逐条详情），LLM 逐条摘要成一行快讯（标题原样保留、只依据该条资料，确定性校验失败回退纯标题模板），过期自动跳过；调用计入 ai_briefing 配额 |
+| 手动 AI 早报 | `/AI早报` | 在当前群主动触发一次 AI 早报（与定时任务同一组装管线） |
 | 命名提及 | `NAMED_MENTION_REPLACEMENTS` | 定时消息与 AI 回复中的 `@昵称` 替换为真正的 @提及（账号仅从配置读取，不写死在源码） |
 | 配额与预算（阶段 4） | `QUOTA_ENABLED` 等 | 按群滑动窗口限流与每日费用上限（`actual` 强制、`estimated/unknown` 只记录）；`/配额`、`/最近故障` 管理员命令（按 `ADMIN_USER_IDS` 鉴权） |
 

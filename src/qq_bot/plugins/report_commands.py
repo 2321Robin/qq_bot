@@ -1,6 +1,7 @@
-"""Manual life-report commands (S6-REPORT-07): /早报 and /晚报 trigger the
-same builders the scheduled jobs use, into the invoking group. Sections that
-fail simply stay absent; an empty source config yields a date-only report.
+"""Manual report commands (S6-REPORT-07, S8-BRIEF): /早报 and /晚报 trigger
+the life-report builders, /AI早报 triggers the AI briefing builder — the same
+builders the scheduled jobs use, into the invoking group. Sections that fail
+simply stay absent; an empty source config yields a date-only report.
 Explicit commands bypass the AI quota by design (same as /help, /精灵)."""
 
 from nonebot import on_command
@@ -8,6 +9,7 @@ from nonebot.adapters.onebot.v11 import GroupMessageEvent
 
 from qq_bot.config import get_settings
 from qq_bot.observability import metrics
+from qq_bot.services.ai_briefing import build_ai_briefing_message
 from qq_bot.services.daily_report import (
     build_life_evening_message,
     build_life_morning_message,
@@ -16,6 +18,9 @@ from qq_bot.services.onebot_send import finish_with_send_errors_logged
 
 life_morning_command = on_command("早报", priority=5, block=True)
 life_evening_command = on_command("晚报", priority=5, block=True)
+ai_briefing_command = on_command(
+    "AI早报", aliases={"ai早报", "AI日报", "ai日报"}, priority=5, block=True
+)
 
 
 def _resolve_report_client():
@@ -51,4 +56,15 @@ async def handle_life_evening(event: GroupMessageEvent) -> None:
     metrics.COMMANDS.labels("晚报").inc()
     await finish_with_send_errors_logged(
         life_evening_command, await _build_report(settings, build_life_evening_message)
+    )
+
+
+@ai_briefing_command.handle()
+async def handle_ai_briefing(event: GroupMessageEvent) -> None:
+    settings = get_settings()
+    if not settings.group_allowed(event.group_id):
+        return
+    metrics.COMMANDS.labels("AI早报").inc()
+    await finish_with_send_errors_logged(
+        ai_briefing_command, await _build_report(settings, build_ai_briefing_message)
     )

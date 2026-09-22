@@ -81,3 +81,40 @@ async def test_command_ignored_in_disallowed_group(monkeypatch: pytest.MonkeyPat
 
     await report_commands_plugin.handle_life_morning(FakeEvent())  # type: ignore[arg-type]
     # 未抛 FinishCalled 即通过：非允许群不回复
+
+
+async def test_ai_briefing_command_sends_briefing(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_common_patches(monkeypatch)
+
+    async def fake_build(settings, *, client, now=None):
+        assert client == "fake-client"
+        return "【AI早报】内容"
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        report_commands_plugin,
+        "build_ai_briefing_message",
+        lambda settings, *, client=None, now=None: fake_build(settings, client=client),
+    )
+    monkeypatch.setattr(report_commands_plugin.ai_briefing_command, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled) as exc_info:
+        await report_commands_plugin.handle_ai_briefing(FakeEvent())  # type: ignore[arg-type]
+
+    assert "【AI早报】" in str(exc_info.value.message)
+
+
+async def test_ai_briefing_command_ignored_in_disallowed_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_common_patches(monkeypatch, allowed_group_ids="9999")
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(report_commands_plugin.ai_briefing_command, "finish", fake_finish)
+
+    await report_commands_plugin.handle_ai_briefing(FakeEvent())  # type: ignore[arg-type]
+    # 未抛 FinishCalled 即通过：非允许群不回复

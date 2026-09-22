@@ -60,6 +60,7 @@ SCHEDULED_JOB_TYPES: tuple[str, ...] = (
     "life_evening",
     "game_morning",
     "game_evening",
+    "ai_morning",
 )
 
 
@@ -153,9 +154,7 @@ def parse_named_mention_replacements(value: str | None) -> dict[str, str]:
 # ---- 自主群聊插话（S7-AUTO）内置词表与人设默认 ----
 # 放在 config 层避免 services -> config 的循环导入。
 # 人设不得内嵌具体台词示例——小模型会把示例当成模板复读（S7-AUTO-P2-09 教训）
-DEFAULT_PERSONA_PROMPT = (
-    "说话简短随意爱玩梗，偶尔自嘲；被怼会嘴硬但不真正得罪人；接梗优先于答题。"
-)
+DEFAULT_PERSONA_PROMPT = "说话简短随意爱玩梗，偶尔自嘲；被怼会嘴硬但不真正得罪人；接梗优先于答题。"
 BUILTIN_SENSITIVE_WORDS = (
     "赌博",
     "博彩",
@@ -322,6 +321,24 @@ class BotSettings(BaseSettings):
     report_evening_news_endpoint: str = (
         "toutiao"  # 晚报新闻源：toutiao=头条热榜（避免与早报重复）| news=同源
     )
+
+    # ---- AI 早报（S8-BRIEF）----
+    # 消息源默认为「橘鸦AI早报」公开 RSS（一天一期，含全部要闻标题、原文链接
+    # 与逐条详情）；SCHEDULED_JOBS 配 ai_morning 后生效，也可群里发 /AI早报
+    # 手动触发。LLM 逐条摘要失败/校验不过自动回退纯标题模板。
+    ai_briefing_feed_url: str = "https://daily.juya.uk/rss.xml"  # 空 = 功能关闭
+    ai_briefing_timeout_seconds: float = 15.0
+    ai_briefing_max_age_hours: float = 30.0  # 最新一期超过此时效视为过期，本次跳过
+    ai_briefing_max_items: int = 10
+    ai_briefing_detail_chars: int = 350  # 每条送入 LLM 的资料字数上限
+    ai_briefing_credit: str = "素材来源：橘鸦AI早报"  # 末行署名；空 = 不署名
+    ai_briefing_ai_enabled: bool = True  # LLM 逐条摘要总开关
+    ai_briefing_ai_model: str = ""  # 空 = 复用 ai_model
+    ai_briefing_ai_provider: str = (
+        "primary"  # primary=主链路 | fallback=改用备用 Provider（同 REPORT_AI_PROVIDER）
+    )
+    ai_briefing_ai_timeout_seconds: float = 90.0  # 免费档模型生成慢，独立于主链路超时
+    ai_briefing_ai_daily_max: int = 10  # 每日上限（quota scope=ai_briefing）；0 = 关闭摘要
 
     # ---- 自主群聊插话与人设（S7-AUTO）----
     auto_chat_enabled: bool = False
@@ -634,6 +651,48 @@ class BotSettings(BaseSettings):
             raise ValueError("report_evening_news_endpoint must be one of: news, toutiao")
         return value
 
+    @field_validator("ai_briefing_timeout_seconds", "ai_briefing_ai_timeout_seconds")
+    @classmethod
+    def validate_ai_briefing_timeout_seconds(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("ai_briefing timeouts must be greater than 0")
+        return value
+
+    @field_validator("ai_briefing_max_age_hours")
+    @classmethod
+    def validate_ai_briefing_max_age_hours(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("ai_briefing_max_age_hours must be greater than 0")
+        return value
+
+    @field_validator("ai_briefing_max_items")
+    @classmethod
+    def validate_ai_briefing_max_items(cls, value: int) -> int:
+        if value < 1 or value > 20:
+            raise ValueError("ai_briefing_max_items must be between 1 and 20")
+        return value
+
+    @field_validator("ai_briefing_detail_chars")
+    @classmethod
+    def validate_ai_briefing_detail_chars(cls, value: int) -> int:
+        if value < 0 or value > 2000:
+            raise ValueError("ai_briefing_detail_chars must be between 0 and 2000")
+        return value
+
+    @field_validator("ai_briefing_ai_provider")
+    @classmethod
+    def validate_ai_briefing_ai_provider(cls, value: str) -> str:
+        if value not in {"primary", "fallback"}:
+            raise ValueError("ai_briefing_ai_provider must be one of: primary, fallback")
+        return value
+
+    @field_validator("ai_briefing_ai_daily_max")
+    @classmethod
+    def validate_ai_briefing_ai_daily_max(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("ai_briefing_ai_daily_max must be non-negative")
+        return value
+
     @field_validator(
         "ai_context_window_tokens", "ai_output_reserve_tokens", "ai_token_safety_margin"
     )
@@ -775,6 +834,18 @@ class BotSettings(BaseSettings):
 
     def has_report_source_config(self) -> bool:
         return bool(self.normalized_report_60s_base_url)
+
+    @property
+    def normalized_ai_briefing_feed_url(self) -> str:
+        return self.ai_briefing_feed_url.strip().rstrip("/")
+
+    @property
+    def ai_briefing_llm_model(self) -> str:
+        """Briefing compose model; empty means it reuses the main AI model."""
+        return self.ai_briefing_ai_model.strip() or self.ai_model
+
+    def has_ai_briefing_feed_config(self) -> bool:
+        return bool(self.normalized_ai_briefing_feed_url)
 
     @property
     def report_news_blocklist_list(self) -> list[str]:

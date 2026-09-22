@@ -190,6 +190,20 @@ _define(
     "Life report LLM polish outcomes",
     ["section", "result"],
 )
+_define(
+    "BRIEFING_FEED_TOTAL",
+    Counter,
+    "qq_bot_briefing_feed_total",
+    "AI briefing feed outcomes",
+    ["result"],
+)
+_define(
+    "BRIEFING_LLM_TOTAL",
+    Counter,
+    "qq_bot_briefing_llm_total",
+    "AI briefing compose outcomes",
+    ["result"],
+)
 
 
 def set_metrics_enabled(enabled: bool) -> None:
