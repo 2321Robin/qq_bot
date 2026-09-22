@@ -342,6 +342,7 @@ def split_casual_reply(text: str, *, max_parts: int = 3) -> list[str]:
     merged.append("，".join(parts[max_parts - 1 :]))
     return merged
 
+
 COLD_FALLBACK_MESSAGES = (
     "怎么没人理我…鱼都晒干了",
     "就当我说的是空气吧",

@@ -414,9 +414,7 @@ def _build_auto_chat_hooks(
         """多段发送（S7-AUTO-P2-10）：前面的碎片走裸 API 连发（带打字节奏
         的间隔，失败静默——碎片是装饰性的），最后一段走 finish 的完整
         重试/熔断链路。"""
-        parts = (
-            [text] if isinstance(text, str) else [p for p in (p.strip() for p in text) if p]
-        )
+        parts = [text] if isinstance(text, str) else [p for p in (p.strip() for p in text) if p]
         if not parts:
             return
         try:
