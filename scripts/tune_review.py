@@ -229,9 +229,23 @@ def make_handler(entries: list[dict]) -> type[BaseHTTPRequestHandler]:
 def main() -> None:
     tune_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_TUNE
     entries = load_entries(tune_path)
-    server = HTTPServer(("127.0.0.1", PORT), make_handler(entries))
+    # Windows 的 Hyper-V 会保留部分端口段（bind 报 10013），逐个候选尝试
+    candidates = (
+        [int(sys.argv[2])] if len(sys.argv) > 2 else [8788, 18788, 17888, 16888, 15888]
+    )
+    server = None
+    for port in candidates:
+        try:
+            server = HTTPServer(("127.0.0.1", port), make_handler(entries))
+            break
+        except OSError:
+            continue
+    if server is None:
+        print("所有候选端口都被占用/保留，请用第二个参数指定端口。")
+        raise SystemExit(1)
+    port = server.server_address[1]
     print(f"已加载 {len(entries)} 条记录：{tune_path}")
-    print(f"复核页面：http://127.0.0.1:{PORT}  （Ctrl+C 退出）")
+    print(f"复核页面：http://127.0.0.1:{port}  （Ctrl+C 退出）")
     print(f"标注保存到：{LABELS_FILE}")
     try:
         server.serve_forever()
