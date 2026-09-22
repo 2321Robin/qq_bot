@@ -70,3 +70,4 @@ evals/reports/*
 
 # Local live-eval run configuration (contains provider keys, never committed)
 evals/live-run/
+data/auto_chat_tune*.json*
