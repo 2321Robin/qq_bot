@@ -166,6 +166,9 @@ class EvidenceStore:
                 urls.append(entry.evidence.url)
         return urls
 
+    def __len__(self) -> int:
+        return len(self._entries)
+
 
 class GroundingVerifier:
     """Deterministic, non-disableable grounding checks (S2-EVID-04..06)."""

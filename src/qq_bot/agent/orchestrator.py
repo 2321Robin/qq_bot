@@ -423,7 +423,7 @@ class AgentOrchestrator:
                     else:
                         result = await spec.execute(
                             call.arguments,
-                            ToolContext(scope=request.scope, evidence_index=calls_used),
+                            ToolContext(scope=request.scope, evidence_index=len(store)),
                         )
                         cache[key] = result
                         calls_used += 1

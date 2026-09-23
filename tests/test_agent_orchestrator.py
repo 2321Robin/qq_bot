@@ -597,3 +597,52 @@ def test_call_log_never_contains_arguments_or_content() -> None:
     serialized = json.dumps(orc.call_log, ensure_ascii=False)
     assert "TestPetA" not in serialized  # query argument never logged
     assert "洛克王国" not in serialized  # draft text never logged
+
+
+# ---------------------------------------------------------------------------
+# Evidence id uniqueness across repeated tool calls (S2-EVID-01)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_second_web_search_does_not_collide_evidence_ids() -> None:
+    from tests.test_agent_guardrails import (
+        FakeSearchClient,
+        FakeSearchResponse,
+        _result,
+        _tavily_payload,
+    )
+    from qq_bot.agent.tools.web import register_web_tool
+
+    client = FakeSearchClient(
+        FakeSearchResponse(
+            _tavily_payload(
+                [
+                    _result("一", "https://roco.qq.com/1", "内容一"),
+                    _result("二", "https://roco.qq.com/2", "内容二"),
+                ]
+            )
+        )
+    )
+    registry = ToolRegistry()
+    register_web_tool(
+        registry, settings=_settings(search_enabled=True, tavily_api_key="t"), client=client
+    )
+    registry.validate()
+
+    gateway = FakeGateway(
+        [
+            _tool_call("search_web", {"query": "公告一"}, "c1"),
+            _tool_call("search_web", {"query": "公告二"}, "c2"),
+            _final({"claims": [{"text": "已为你查到相关公告。", "kind": "conversational"}]}),
+        ]
+    )
+    orc = AgentOrchestrator(registry=registry, gateway=gateway, settings=_settings())
+
+    outcome = await orc.run(_request(prompt="两次搜索", route_kind=RouteKind.WEB_SEARCH))
+
+    assert not isinstance(outcome, SafeFailure)
+    assert orc.call_log[0]["status"] == "ok"
+    assert orc.call_log[1]["status"] == "ok"
+    assert orc.call_log[0]["evidence_ids"] == ["W1", "W2"]
+    assert orc.call_log[1]["evidence_ids"] == ["W3", "W4"]
