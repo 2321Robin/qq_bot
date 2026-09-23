@@ -118,6 +118,10 @@ class AppRuntime:
         set_trace_enabled(settings.trace_enabled)
         http_client: httpx.AsyncClient | None = None
         repository: ChatMemoryRepository | None = None
+        agent_stack: (
+            tuple[ToolRegistry, AiModelGateway, LayeredMemoryService, AgentOrchestrator] | None
+        ) = None
+        quota: QuotaService | None = None
         try:
             http_client = httpx.AsyncClient(timeout=httpx.Timeout(settings.ai_timeout_seconds))
             repository = ChatMemoryRepository(
@@ -136,6 +140,13 @@ class AppRuntime:
             }
             for name, breaker in self._breakers.items():
                 metrics.CIRCUIT_INFO.labels(name, breaker.state.value).set(1)
+            agent_stack = self._build_agent_stack(settings, repository, http_client)
+            if settings.quota_enabled:
+                from qq_bot.services.quota import QuotaService
+
+                quota = QuotaService(settings, repository)
+            else:
+                quota = None
         except Exception:
             if repository is not None:
                 try:
@@ -151,17 +162,10 @@ class AppRuntime:
             raise
         self._http_client = http_client
         self._repository = repository
-        self._registry, self._gateway, self._memory, self._orchestrator = self._build_agent_stack(
-            settings, repository, http_client
-        )
-        if settings.quota_enabled:
-            from qq_bot.services.quota import QuotaService
-
-            self._quota = QuotaService(settings, repository)
-        else:
-            self._quota = None
+        self._registry, self._gateway, self._memory, self._orchestrator = agent_stack
+        self._quota = quota
         self._state = RuntimeState.READY
-        logger.info("runtime ready (schema version supported)")
+        logger.info("runtime started")
 
     def _build_agent_stack(
         self,

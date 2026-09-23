@@ -142,6 +142,31 @@ async def test_startup_failure_cleans_up_and_never_reaches_ready(tmp_path, monke
     assert runtime.state is RuntimeState.STOPPED
 
 
+@pytest.mark.asyncio
+async def test_startup_agent_stack_failure_closes_resources(tmp_path, monkeypatch) -> None:
+    """A failure raised by _build_agent_stack must run the same cleanup path as
+    http/repository failures: both resources closed and state FAILED, with no
+    half-assigned runtime attributes left behind."""
+    runtime = AppRuntime(settings=_settings(tmp_path))
+    captured: dict[str, object] = {}
+
+    def fake_build(settings, repository, http_client) -> None:
+        captured["repository"] = repository
+        captured["http_client"] = http_client
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(runtime, "_build_agent_stack", fake_build)
+    with pytest.raises(RuntimeError, match="boom"):
+        await runtime.startup()
+    assert runtime.state is RuntimeState.FAILED
+    assert captured["repository"]._connection is None  # repository closed during cleanup
+    assert captured["http_client"].is_closed  # HTTP client closed during cleanup
+    assert runtime._http_client is None  # resources are only assigned after success
+    assert runtime._repository is None
+    with pytest.raises(RuntimeStateError):
+        runtime.get_chat_repository()
+
+
 class FakeDriver:
     def __init__(self) -> None:
         self.startup_hooks: list = []
