@@ -1000,7 +1000,9 @@ class TestTuneLog:
 
         tune_file = tmp_path / "tune.jsonl"
         m._TUNE_LOG_PATH = str(tune_file)
-        h = Harness(["聊会"], _run_settings(auto_chat_sample_rate=0.0, auto_chat_tune_log_enabled=True))
+        h = Harness(
+            ["聊会"], _run_settings(auto_chat_sample_rate=0.0, auto_chat_tune_log_enabled=True)
+        )
         h.state.note_reply(1001, settings=h.settings)
         await _run(h, raw_text="聊会")
         lines = tune_file.read_text(encoding="utf-8").splitlines()

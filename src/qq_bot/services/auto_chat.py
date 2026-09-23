@@ -377,9 +377,7 @@ def _is_questionish(text: str) -> bool:
     return bool(stripped) and stripped[-1] in "吗呢吧嘛"
 
 
-def plusone_triggered(
-    rows: Sequence[ChatMemoryRow], raw_text: str, *, sender_user_id: int
-) -> bool:
+def plusone_triggered(rows: Sequence[ChatMemoryRow], raw_text: str, *, sender_user_id: int) -> bool:
     """≥2 人发过一模一样的消息（含当前发送者）→ 跟发一条一样的（+1 文化）。"""
     text = raw_text.strip()
     if not text:
@@ -732,9 +730,7 @@ async def run_auto_chat(
                 return await complete(
                     system_prompt=casual_system_prompt(persona),
                     user_prompt=(
-                        build_casual_user_prompt(
-                            rows, recent_replies=_recent_replies(group_id)
-                        )
+                        build_casual_user_prompt(rows, recent_replies=_recent_replies(group_id))
                         + f"\n风格要求：{style_directive(rng)}"
                     ),
                     settings=settings,

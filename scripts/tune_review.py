@@ -20,7 +20,6 @@ import json
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_TUNE = ROOT / "data" / "auto_chat_tune.jsonl"
@@ -146,9 +145,7 @@ def load_labels() -> dict:
 
 
 def save_labels(labels: dict) -> None:
-    LABELS_FILE.write_text(
-        json.dumps(labels, ensure_ascii=False, indent=0), encoding="utf-8"
-    )
+    LABELS_FILE.write_text(json.dumps(labels, ensure_ascii=False, indent=0), encoding="utf-8")
 
 
 def export_csv(entries: list[dict], labels: dict) -> str:
@@ -189,16 +186,16 @@ def make_handler(entries: list[dict]) -> type[BaseHTTPRequestHandler]:
         def do_GET(self) -> None:  # noqa: N802
             if self.path == "/":
                 page = _PAGE.replace("__ENTRIES__", json.dumps(entries, ensure_ascii=False))
-                page = page.replace("__LABELS__", json.dumps(labels_box["data"], ensure_ascii=False))
+                page = page.replace(
+                    "__LABELS__", json.dumps(labels_box["data"], ensure_ascii=False)
+                )
                 self._send(200, page.encode("utf-8"), "text/html; charset=utf-8")
             elif self.path == "/export":
                 csv_text = export_csv(entries, labels_box["data"])
                 body = b"\xef\xbb\xbf" + csv_text.encode("utf-8")  # BOM 让 Excel 识别 UTF-8
                 self.send_response(200)
                 self.send_header("Content-Type", "text/csv; charset=utf-8")
-                self.send_header(
-                    "Content-Disposition", "attachment; filename=tune_labels.csv"
-                )
+                self.send_header("Content-Disposition", "attachment; filename=tune_labels.csv")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -230,9 +227,7 @@ def main() -> None:
     tune_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_TUNE
     entries = load_entries(tune_path)
     # Windows 的 Hyper-V 会保留部分端口段（bind 报 10013），逐个候选尝试
-    candidates = (
-        [int(sys.argv[2])] if len(sys.argv) > 2 else [8788, 18788, 17888, 16888, 15888]
-    )
+    candidates = [int(sys.argv[2])] if len(sys.argv) > 2 else [8788, 18788, 17888, 16888, 15888]
     server = None
     for port in candidates:
         try:
