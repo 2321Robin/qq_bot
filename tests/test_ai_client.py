@@ -648,6 +648,23 @@ async def test_request_model_turn_parses_tool_calls() -> None:
 
 
 @pytest.mark.asyncio
+async def test_request_model_turn_payload_includes_model() -> None:
+    settings = BotSettings(ai_api_key="secret", ai_model="test-model")
+    client = FakeClient(FakeResponse(_tool_call_message()))
+
+    await request_model_turn(
+        messages=[{"role": "user", "content": "TestPetA 的编号"}],
+        tools=[{"type": "function", "function": {"name": "lookup_pet"}}],
+        tool_choice="auto",
+        response_format=None,
+        settings=settings,
+        client=client,
+    )
+
+    assert client.calls[0]["json"]["model"] == "test-model"
+
+
+@pytest.mark.asyncio
 async def test_request_model_turn_unparseable_arguments_is_explicit_error() -> None:
     settings = BotSettings(ai_api_key="secret")
     client = FakeClient(FakeResponse(_tool_call_message(arguments="不是JSON")))
@@ -743,6 +760,8 @@ async def test_request_model_turn_primary_failure_enters_fallback() -> None:
     assert response.text == '{"a": 1}'
     assert len(client.calls) == 2
     assert client.calls[1]["url"] == "https://fallback.example.com/v1/chat/completions"
+    assert client.calls[0]["json"]["model"] == settings.ai_model
+    assert client.calls[1]["json"]["model"] == settings.ai_fallback_model
 
 
 @pytest.mark.asyncio

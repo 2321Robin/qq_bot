@@ -457,7 +457,7 @@ async def _post_once(
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             },
-            json=payload,
+            json={**payload, "model": model},
         )
         response.raise_for_status()
         data = response.json()
