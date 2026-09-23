@@ -45,10 +45,20 @@ def is_send_timeout_error(error: Exception) -> bool:
     if "timeout" not in text.lower():
         return False
     if isinstance(error, NetworkError):
-        return "send_msg" in text or "send_group_msg" in text
+        # 任何网络层发送超时都无法证明服务端未接受消息（含 send_private_msg），
+        # 一律按模糊超时处理：不重试、不记熔断。
+        return True
     if isinstance(error, ActionFailed):
         return "sendmsg" in text.replace("_", "").lower()
     return False
+
+
+def _timeout_log_detail(exc: Exception) -> str:
+    """Redacted detail for the ambiguous-timeout log: ActionFailed payloads may
+    carry raw ids from the OneBot implementation and never reach the logger."""
+    if isinstance(exc, ActionFailed):
+        return f"{type(exc).__name__} (payload omitted)"
+    return f"{type(exc).__name__}: {exc}"[:300]
 
 
 def classify_send_error(error: Exception) -> SendErrorClassification:
@@ -165,7 +175,10 @@ async def finish_with_send_errors_logged(
                 get_logger("qq_bot.onebot_send"),
                 logging.WARNING,
                 "send_ambiguous_timeout",
-                message=(f"Message send timed out and may not be visible in QQ: {exc!r}"),
+                message=(
+                    f"Message send timed out and may not be visible in QQ: "
+                    f"{_timeout_log_detail(exc)}"
+                ),
                 category="ambiguous_timeout",
             )
         raise

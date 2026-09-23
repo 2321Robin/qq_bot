@@ -9,6 +9,7 @@ from nonebot.exception import FinishedException
 from qq_bot.services import onebot_send
 from qq_bot.services.onebot_send import (
     SendErrorCategory,
+    _timeout_log_detail,
     classify_send_error,
     finish_with_send_errors_logged,
     is_send_timeout_error,
@@ -46,9 +47,13 @@ def test_is_send_timeout_error_matches_napcat_send_action_timeout() -> None:
     assert is_send_timeout_error(error)
 
 
-def test_is_send_timeout_error_ignores_non_send_timeout() -> None:
-    assert not is_send_timeout_error(NetworkError("WebSocket call api get_login_info timeout"))
+def test_is_send_timeout_error_ignores_non_timeout_errors() -> None:
     assert not is_send_timeout_error(RuntimeError("send failed"))
+
+
+def test_is_send_timeout_error_treats_any_network_timeout_as_ambiguous() -> None:
+    # 网络层超时无法证明服务端未接受消息，即使 API 名不含 send_msg 也视为模糊超时
+    assert is_send_timeout_error(NetworkError("WebSocket call api get_login_info timeout"))
 
 
 def test_classify_send_error_timeout_is_ambiguous_and_never_retried() -> None:
@@ -56,6 +61,22 @@ def test_classify_send_error_timeout_is_ambiguous_and_never_retried() -> None:
     assert classification.category is SendErrorCategory.AMBIGUOUS_TIMEOUT
     assert classification.retryable is False
     assert classification.counts_against_breaker is False
+
+
+def test_private_send_timeout_is_ambiguous() -> None:
+    exc = NetworkError("WebSocket call api send_private_msg timeout")
+    assert is_send_timeout_error(exc) is True
+    assert classify_send_error(exc).category is SendErrorCategory.AMBIGUOUS_TIMEOUT
+
+
+def test_timeout_log_detail_never_contains_action_failed_payload() -> None:
+    exc = ActionFailed(user_id=12345, message="raw payload")
+    detail = _timeout_log_detail(exc)
+    assert "12345" not in detail
+    assert "raw payload" not in detail
+
+    network = NetworkError("WebSocket call api send_private_msg timeout")
+    assert "send_private_msg timeout" in _timeout_log_detail(network)
 
 
 def test_classify_send_error_connection_failure_is_retryable() -> None:
