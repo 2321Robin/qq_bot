@@ -400,3 +400,57 @@ async def test_redeliver_disabled_when_max_zero() -> None:
     assert fake_bot.sent == []
     assert _redeliver_metric("static", "ok") == ok_before
     assert _redeliver_metric("static", "failed") == failed_before
+
+
+# ---- 调度器加固：misfire 宽限 + 未预期异常可观测（Task 8）----
+
+
+def test_typed_jobs_registered_with_misfire_grace_and_coalesce(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """typed cron 注册必须带 misfire_grace_time=300 与 coalesce=True：
+    APScheduler 默认宽限仅 1 秒，事件循环短暂卡顿即静默跳过当日任务。"""
+    captured: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        scheduler_plugin.scheduler, "add_job", lambda *args, **kwargs: captured.append(kwargs)
+    )
+    settings = _configured_settings(scheduled_jobs="static@09:00,life_morning@07:30")
+
+    scheduler_plugin._register_typed_jobs(scheduler_jobs_module.jobs_from_settings(settings))
+
+    assert [kwargs["id"] for kwargs in captured] == ["static_0900", "life_morning_0730"]
+    for kwargs in captured:
+        assert kwargs["misfire_grace_time"] == 300
+        assert kwargs["coalesce"] is True
+
+
+def test_legacy_jobs_kwargs_carry_misfire_grace_and_coalesce() -> None:
+    """legacy 泛化路径（SCHEDULED_CRON_*）注册参数同样带宽限与合并。"""
+    settings = _configured_settings(scheduled_jobs="", scheduled_cron_times="11:00,16:10")
+
+    kwargs_list = build_scheduler_jobs_kwargs(settings)
+
+    assert [kwargs["id"] for kwargs in kwargs_list] == [
+        "daily_group_message_1100",
+        "daily_group_message_1610",
+    ]
+    for kwargs in kwargs_list:
+        assert kwargs["misfire_grace_time"] == 300
+        assert kwargs["coalesce"] is True
+
+
+async def test_unexpected_builder_exception_is_recorded_and_reraised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _boom(settings: BotSettings) -> str | None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(scheduler_plugin, "get_builder", lambda job_type: _boom)
+    job = ScheduledJob(job_type="static", hour=9, minute=0)
+    before = _job_metric(job.job_type, "failed")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await run_scheduled_job(job, None, settings=_configured_settings())
+
+    # 未预期异常补记 failed 指标后原样上抛（不吞异常，只补可观测性）
+    assert _job_metric(job.job_type, "failed") == before + 1

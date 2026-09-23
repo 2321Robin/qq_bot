@@ -103,6 +103,8 @@ def test_build_scheduler_jobs_kwargs_uses_configured_times() -> None:
             "minute": 0,
             "id": "daily_group_message_1100",
             "replace_existing": True,
+            "misfire_grace_time": 300,
+            "coalesce": True,
         },
         {
             "trigger": "cron",
@@ -110,6 +112,8 @@ def test_build_scheduler_jobs_kwargs_uses_configured_times() -> None:
             "minute": 10,
             "id": "daily_group_message_1210",
             "replace_existing": True,
+            "misfire_grace_time": 300,
+            "coalesce": True,
         },
         {
             "trigger": "cron",
@@ -117,6 +121,8 @@ def test_build_scheduler_jobs_kwargs_uses_configured_times() -> None:
             "minute": 10,
             "id": "daily_group_message_1610",
             "replace_existing": True,
+            "misfire_grace_time": 300,
+            "coalesce": True,
         },
         {
             "trigger": "cron",
@@ -124,6 +130,8 @@ def test_build_scheduler_jobs_kwargs_uses_configured_times() -> None:
             "minute": 10,
             "id": "daily_group_message_2010",
             "replace_existing": True,
+            "misfire_grace_time": 300,
+            "coalesce": True,
         },
     ]
 

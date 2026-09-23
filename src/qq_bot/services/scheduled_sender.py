@@ -47,6 +47,9 @@ def build_scheduler_jobs_kwargs(settings: BotSettings) -> list[dict[str, object]
             "minute": minute,
             "id": f"daily_group_message_{hour:02d}{minute:02d}",
             "replace_existing": True,
+            # 与 typed 路径一致：默认 1 秒宽限会被事件循环卡顿静默跳过
+            "misfire_grace_time": 300,
+            "coalesce": True,
         }
         for hour, minute in settings.scheduled_cron_time_list
     ]

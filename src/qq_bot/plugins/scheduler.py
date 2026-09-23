@@ -130,84 +130,98 @@ async def run_scheduled_job(
         message="Scheduled job triggered.",
         job=job.job_id,
     )
-    builder = get_builder(job.job_type)
-    if builder is None:
-        metrics.SCHEDULED_JOBS_TOTAL.labels(job.job_type, "skipped_no_builder").inc()
-        record_event(
-            logger,
-            logging.WARNING,
-            "scheduled_job_no_builder",
-            message="No content builder registered for job type.",
-            job=job.job_id,
-        )
-        return
-    # 生成器允许同步（确定性规则引擎，如 game_*）或异步（static/网络型）签名
-    built = builder(effective)
-    message = await built if inspect.isawaitable(built) else built
-    if not message or not message.strip():
-        metrics.SCHEDULED_JOBS_TOTAL.labels(job.job_type, "skipped_empty").inc()
+    # 兜底可观测（S6-SCHED-03）：未预期异常不能只进 APScheduler 自己的日志。
+    # 发送失败已由内部 failures 列表处理（含 skipped_* 提前返回），不会走到
+    # 这个 except，因此不存在双重计数。
+    try:
+        builder = get_builder(job.job_type)
+        if builder is None:
+            metrics.SCHEDULED_JOBS_TOTAL.labels(job.job_type, "skipped_no_builder").inc()
+            record_event(
+                logger,
+                logging.WARNING,
+                "scheduled_job_no_builder",
+                message="No content builder registered for job type.",
+                job=job.job_id,
+            )
+            return
+        # 生成器允许同步（确定性规则引擎，如 game_*）或异步（static/网络型）签名
+        built = builder(effective)
+        message = await built if inspect.isawaitable(built) else built
+        if not message or not message.strip():
+            metrics.SCHEDULED_JOBS_TOTAL.labels(job.job_type, "skipped_empty").inc()
+            record_event(
+                logger,
+                logging.INFO,
+                "scheduled_job_skipped_empty",
+                message="Builder produced no content; skipping send.",
+                job=job.job_id,
+            )
+            return
+        if bot is None:
+            metrics.SCHEDULED_JOBS_TOTAL.labels(job.job_type, "skipped_no_bot").inc()
+            record_event(
+                logger,
+                logging.WARNING,
+                "scheduled_no_bot_connected",
+                message="No OneBot v11 bot is connected; scheduled job skipped.",
+                job=job.job_id,
+            )
+            return
+        group_ids = filter_allowed_group_ids(effective.scheduled_group_id_list, effective)
+        if not group_ids:
+            metrics.SCHEDULED_JOBS_TOTAL.labels(job.job_type, "skipped_no_groups").inc()
+            return
         record_event(
             logger,
             logging.INFO,
-            "scheduled_job_skipped_empty",
-            message="Builder produced no content; skipping send.",
+            "scheduled_sending",
+            message=f"Sending scheduled job content to {len(group_ids)} group(s).",
             job=job.job_id,
         )
-        return
-    if bot is None:
-        metrics.SCHEDULED_JOBS_TOTAL.labels(job.job_type, "skipped_no_bot").inc()
+        failures = await send_group_messages(
+            bot,
+            group_ids,
+            message,
+            named_mention_replacements=effective.named_mention_replacement_map,
+        )
+        result = "failed" if failures else "ok"
+        metrics.SCHEDULED_JOBS_TOTAL.labels(job.job_type, result).inc()
         record_event(
             logger,
-            logging.WARNING,
-            "scheduled_no_bot_connected",
-            message="No OneBot v11 bot is connected; scheduled job skipped.",
+            logging.INFO,
+            "scheduled_job_finished",
+            message=(
+                f"Scheduled job finished: {len(group_ids) - len(failures)} succeeded, "
+                f"{len(failures)} failed."
+            ),
             job=job.job_id,
         )
-        return
-    group_ids = filter_allowed_group_ids(effective.scheduled_group_id_list, effective)
-    if not group_ids:
-        metrics.SCHEDULED_JOBS_TOTAL.labels(job.job_type, "skipped_no_groups").inc()
-        return
-    record_event(
-        logger,
-        logging.INFO,
-        "scheduled_sending",
-        message=f"Sending scheduled job content to {len(group_ids)} group(s).",
-        job=job.job_id,
-    )
-    failures = await send_group_messages(
-        bot,
-        group_ids,
-        message,
-        named_mention_replacements=effective.named_mention_replacement_map,
-    )
-    result = "failed" if failures else "ok"
-    metrics.SCHEDULED_JOBS_TOTAL.labels(job.job_type, result).inc()
-    record_event(
-        logger,
-        logging.INFO,
-        "scheduled_job_finished",
-        message=(
-            f"Scheduled job finished: {len(group_ids) - len(failures)} succeeded, "
-            f"{len(failures)} failed."
-        ),
-        job=job.job_id,
-    )
-    if failures:
+        if failures:
+            record_event(
+                logger,
+                logging.WARNING,
+                "scheduled_partial_failure",
+                message=f"Scheduled message failed for {len(failures)} group(s).",
+                job=job.job_id,
+            )
+            _schedule_redelivery(
+                job=job,
+                bot=bot,
+                group_ids=failures,
+                message=message,
+                settings=effective,
+            )
+    except Exception:
+        metrics.SCHEDULED_JOBS_TOTAL.labels(job.job_type, "failed").inc()
         record_event(
             logger,
-            logging.WARNING,
-            "scheduled_partial_failure",
-            message=f"Scheduled message failed for {len(failures)} group(s).",
+            logging.ERROR,
+            "scheduled_job_failed",
+            message="Scheduled job raised an unexpected exception.",
             job=job.job_id,
         )
-        _schedule_redelivery(
-            job=job,
-            bot=bot,
-            group_ids=failures,
-            message=message,
-            settings=effective,
-        )
+        raise
 
 
 def _schedule_redelivery(
@@ -279,6 +293,32 @@ def _make_typed_job_runner(job: ScheduledJob):
     return _run_typed_job
 
 
+def _register_typed_jobs(jobs: list[ScheduledJob]) -> None:
+    """为每个 typed 任务注册 cron 触发器。
+
+    misfire_grace_time=300 + coalesce=True：APScheduler 默认宽限仅 1 秒，
+    事件循环被同步 IO 卡住超过 1 秒当日任务即被静默跳过；5 分钟宽限内补跑，
+    且多次错过的触发合并为一次。
+    """
+    for job in jobs:
+        scheduler.add_job(
+            _make_typed_job_runner(job),
+            "cron",
+            hour=job.hour,
+            minute=job.minute,
+            id=job.job_id,
+            replace_existing=True,
+            misfire_grace_time=300,
+            coalesce=True,
+        )
+        record_event(
+            logger,
+            logging.INFO,
+            "scheduled_job_registered",
+            message=f"Registered scheduled job: {job.job_id} at {job.hour:02d}:{job.minute:02d}.",
+        )
+
+
 def _register_game_builders(settings: BotSettings) -> None:
     """Load and validate the game calendar, then register game_* builders.
 
@@ -332,21 +372,7 @@ if settings.scheduled_job_list:
     _register_game_builders(settings)
     _register_life_builders(settings)
     _register_ai_briefing_builder(settings)
-    for job in jobs_from_settings(settings):
-        scheduler.add_job(
-            _make_typed_job_runner(job),
-            "cron",
-            hour=job.hour,
-            minute=job.minute,
-            id=job.job_id,
-            replace_existing=True,
-        )
-        record_event(
-            logger,
-            logging.INFO,
-            "scheduled_job_registered",
-            message=f"Registered scheduled job: {job.job_id} at {job.hour:02d}:{job.minute:02d}.",
-        )
+    _register_typed_jobs(jobs_from_settings(settings))
 elif settings.scheduled_enabled():
     for job_kwargs in build_scheduler_jobs_kwargs(settings):
         scheduler.add_job(send_daily_messages, **job_kwargs)
