@@ -28,6 +28,7 @@ from qq_bot.services.chat_memory import (
     ChatSummaryRow,
     UserPreferenceRow,
 )
+from qq_bot.services.memory_prompt import build_user_aliases
 
 logger = logging.getLogger("qq_bot.layered_memory")
 
@@ -150,7 +151,8 @@ class LayeredMemoryService:
         """Ask the model for the structured summary JSON; any failure degrades
         to no summary instead of leaking internals."""
         assert self._gateway is not None
-        lines = [f"{row.created_at} user={row.user_id}: {row.message_text}" for row in rows]
+        alias = build_user_aliases(rows)
+        lines = [f"{row.created_at} {alias[row.user_id]}: {row.message_text}" for row in rows]
         try:
             response = await self._gateway.request_model_turn(
                 messages=[

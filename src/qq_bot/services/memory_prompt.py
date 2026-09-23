@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Iterable, Protocol
 
@@ -92,16 +93,30 @@ def _parse_natural_mentioned_user_reference(
     return MemoryReference(question=cleaned_question, user_id=mentioned_user_ids[0], limit=limit)
 
 
+def build_user_aliases(rows: Sequence[ChatMemoryRow]) -> dict[int, str]:
+    """Stable per-call aliases (用户A/B/C…) so raw QQ ids never reach the
+    model prompt — same rationale as the auto-chat gate (实测泄露问题)."""
+    alias: dict[int, str] = {}
+    for row in rows:
+        if row.user_id not in alias:
+            alias[row.user_id] = f"用户{chr(ord('A') + len(alias) % 26)}"
+    return alias
+
+
+def render_rows_with_aliases(rows: Sequence[ChatMemoryRow]) -> list[str]:
+    alias = build_user_aliases(rows)
+    lines: list[str] = []
+    for row in rows:
+        lines.append(f"{alias[row.user_id]}：{row.message_text}")
+        if row.ai_reply:
+            lines.append(f"机器人：{row.ai_reply}")
+    return lines
+
+
 def format_chat_context(rows: list[ChatMemoryRow]) -> str:
     if not rows:
         return "没有找到相关历史聊天记录。"
-
-    lines = ["历史聊天记录："]
-    for row in rows:
-        lines.append(f"用户{row.user_id}：{row.message_text}")
-        if row.ai_reply:
-            lines.append(f"机器人：{row.ai_reply}")
-    return "\n".join(lines)
+    return "\n".join(["历史聊天记录：", *render_rows_with_aliases(rows)])
 
 
 def _extract_keyword(head: str) -> str | None:

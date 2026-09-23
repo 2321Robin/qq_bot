@@ -7,6 +7,7 @@ import pytest
 
 from qq_bot.config import BotSettings
 from qq_bot.plugins import ops as ops_plugin
+from qq_bot.observability.logging import hash_id
 from qq_bot.services.chat_memory import ChatMemoryRepository
 from qq_bot.services.quota import QuotaService
 
@@ -118,6 +119,35 @@ async def test_failures_command_admin_sees_events_without_bodies(monkeypatch, tm
         assert "message" not in text.lower().replace("message", "", 1) or "rate_denied" in text
     finally:
         await repository.close()
+
+
+async def test_failures_command_hashes_cross_group_scope_ids(monkeypatch, tmp_path) -> None:
+    class StubQuotaService:
+        async def recent_failures(self, limit: int = 10) -> list[dict[str, object]]:
+            return [
+                {
+                    "at": "2026-09-23T00:00:00",
+                    "scope_type": "group",
+                    "scope_id": 987654321,
+                    "kind": "rate",
+                    "reason": "denied",
+                }
+            ]
+
+    monkeypatch.setattr(ops_plugin, "get_settings", lambda: _settings(admin_user_ids="2880000001"))
+    monkeypatch.setattr(ops_plugin, "get_runtime", lambda: _FakeRuntime(StubQuotaService()))
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(ops_plugin.failures_command, "finish", fake_finish)
+    with pytest.raises(FinishCalled) as exc_info:
+        await ops_plugin.handle_failures(FakeEvent())  # type: ignore[arg-type]
+    text = str(exc_info.value.message)
+    # cross-group raw ids never reach this group's chat (S4-QUOTA-07)
+    assert "987654321" not in text
+    assert hash_id(987654321, kind="group") in text
+    assert "rate/denied" in text
 
 
 async def test_failures_command_empty_state(monkeypatch, tmp_path) -> None:

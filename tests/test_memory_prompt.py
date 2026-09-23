@@ -125,9 +125,42 @@ def test_format_chat_context_includes_messages_and_ai_replies() -> None:
 
     context = format_chat_context(rows)
 
-    assert "用户2001：ai 你好" in context
+    assert "用户A：ai 你好" in context
     assert "机器人：你好呀" in context
-    assert "用户2002：洛克王国" in context
+    assert "用户B：洛克王国" in context
+    # raw QQ ids never reach the prompt (aliasing, 实测泄露问题)
+    assert "2001" not in context
+    assert "2002" not in context
+
+
+def test_format_chat_context_aliases_raw_user_ids() -> None:
+    rows = [
+        ChatMemoryRow(
+            id=1,
+            group_id=1,
+            user_id=12345,
+            message_text="今天活动是什么",
+            created_at="2026-09-23T00:00:00+00:00",
+            is_ai_prompt=False,
+            ai_reply="",
+        ),
+        ChatMemoryRow(
+            id=2,
+            group_id=1,
+            user_id=67890,
+            message_text="同问",
+            created_at="2026-09-23T00:01:00+00:00",
+            is_ai_prompt=False,
+            ai_reply="好的",
+        ),
+    ]
+
+    text = format_chat_context(rows)
+
+    assert "12345" not in text
+    assert "67890" not in text
+    assert "用户A：今天活动是什么" in text
+    assert "用户B：同问" in text
 
 
 def test_format_chat_context_reports_empty_history() -> None:

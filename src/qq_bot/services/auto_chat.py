@@ -23,6 +23,7 @@ from qq_bot.observability import metrics, record_error
 from qq_bot.observability.logging import current_request_id
 from qq_bot.observability.tracing import get_tracer
 from qq_bot.services.chat_memory import ChatMemoryRow
+from qq_bot.services.memory_prompt import render_rows_with_aliases as _render_rows
 from qq_bot.services.persona import (
     Persona,
     casual_system_prompt,
@@ -238,18 +239,9 @@ def detect_negative_feedback(
     return any(any(w in t for w in negative_words) and mentions_persona(t, persona) for t in texts)
 
 
-def _render_rows(rows: Sequence[ChatMemoryRow]) -> list[str]:
-    """上下文渲染用匿名别名（用户A/B/C…），防止模型把原始 QQ 号当内容
-    复读出来（实测泄露问题）。"""
-    alias: dict[int, str] = {}
-    lines: list[str] = []
-    for row in rows:
-        if row.user_id not in alias:
-            alias[row.user_id] = f"用户{chr(ord('A') + len(alias) % 26)}"
-        lines.append(f"{alias[row.user_id]}：{row.message_text}")
-        if row.ai_reply:
-            lines.append(f"机器人：{row.ai_reply}")
-    return lines
+# 上下文渲染的匿名别名（用户A/B/C…，防止原始 QQ 号进入模型 prompt，
+# 实测泄露问题）已上收到 memory_prompt；保留 `_render_rows` 名字以兼容
+# 既有调用点与测试。别名按每次调用重建，无跨请求状态。
 
 
 def build_gate_user_prompt(rows: Sequence[ChatMemoryRow]) -> str:

@@ -285,7 +285,7 @@ async def test_ai_chat_ignores_self_mention_for_explicit_user_history(
         roco_context: str = "",
     ) -> str:
         assert prompt == "总结他的观点"
-        assert "用户2002：他的观点" in chat_context
+        assert "用户A：他的观点" in chat_context
         return "总结好了"
 
     async def fake_finish(message: object) -> None:
@@ -669,7 +669,7 @@ async def test_ai_chat_passes_default_group_memory_context(
         roco_context: str = "",
     ) -> str:
         assert prompt == "继续"
-        assert "用户2002：之前的问题" in chat_context
+        assert "用户A：之前的问题" in chat_context
         assert "机器人：之前的回答" in chat_context
         return "带记忆回复"
 
@@ -729,8 +729,8 @@ async def test_ai_chat_uses_recent_group_messages_by_default(
         roco_context: str = "",
     ) -> str:
         assert prompt == "刚才大家在说什么"
-        assert "用户2002：普通群友发言" in chat_context
-        assert "用户2003：另一个群友发言" in chat_context
+        assert "用户A：普通群友发言" in chat_context
+        assert "用户B：另一个群友发言" in chat_context
         return "他们在聊天"
 
     async def fake_finish(message: object) -> None:
@@ -846,7 +846,7 @@ async def test_ai_chat_uses_actual_at_segment_for_explicit_user_history(
         roco_context: str = "",
     ) -> str:
         assert prompt == "总结他的观点"
-        assert "用户2002：他的观点" in chat_context
+        assert "用户A：他的观点" in chat_context
         return "总结好了"
 
     async def fake_finish(message: object) -> None:
@@ -916,7 +916,7 @@ async def test_ai_chat_summarizes_mentioned_user_recent_messages_in_natural_prom
         roco_context: str = "",
     ) -> str:
         assert prompt == "总结 最近三条消息"
-        assert "用户2002：目标用户的信息" in chat_context
+        assert "用户A：目标用户的信息" in chat_context
         return "总结好了"
 
     async def fake_finish(message: object) -> None:
@@ -979,7 +979,7 @@ async def test_ai_chat_does_not_scope_group_history_to_at_after_separator(
         roco_context: str = "",
     ) -> str:
         assert prompt == "你怎么看"
-        assert "用户2003：群聊观点" in chat_context
+        assert "用户A：群聊观点" in chat_context
         return "总结好了"
 
     async def fake_finish(message: object) -> None:

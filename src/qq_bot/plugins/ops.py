@@ -1,9 +1,10 @@
 """Admin ops commands: quota view and recent quota events (S4-QUOTA-05).
 
 Authorized via ``admin_user_ids``; non-admins are rejected (and the attempt
-is recorded). Output is owner-facing: raw integer group/user ids are allowed
-here — never in logs or metrics (S4-QUOTA-07). ``detail`` never contains
-message bodies.
+is recorded). Output is owner-facing, but cross-group scope ids are always
+hashed (``hash_id``) so other groups' raw group ids never reach this group's
+chat (S4-QUOTA-07); only the current group's own id may appear raw. Never in
+logs or metrics. ``detail`` never contains message bodies.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from nonebot.adapters.onebot.v11 import GroupMessageEvent
 
 from qq_bot.config import get_settings
 from qq_bot.observability import metrics, record_error
-from qq_bot.observability.logging import get_logger
+from qq_bot.observability.logging import get_logger, hash_id
 from qq_bot.runtime import RuntimeStateError, get_runtime
 from qq_bot.services.onebot_send import finish_with_send_errors_logged
 
@@ -88,5 +89,9 @@ async def handle_failures(event: GroupMessageEvent) -> None:
         return
     lines = ["最近故障："]
     for entry in events:
-        lines.append(f"{entry['at'][:19]} 群{entry['scope_id']} {entry['kind']}/{entry['reason']}")
+        if entry["scope_type"] == "group":
+            scope_label = hash_id(entry["scope_id"], kind="group")
+        else:
+            scope_label = f"{entry['scope_type']}#{entry['scope_id']}"
+        lines.append(f"{entry['at'][:19]} {scope_label} {entry['kind']}/{entry['reason']}")
     await finish_with_send_errors_logged(failures_command, "\n".join(lines))
