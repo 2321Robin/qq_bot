@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import aiosqlite
 import pytest
 
 from qq_bot.config import BotSettings
@@ -171,3 +172,19 @@ def test_quota_scope_contextvar_binds_and_restores() -> None:
     with quota_scope("group", 1001):
         assert active_quota_scope() == ("group", 1001)
     assert active_quota_scope() is None
+
+
+async def test_record_usage_and_event_are_committed_immediately(repository, tmp_path) -> None:
+    service = QuotaService(_settings(quota_enabled=True), repository)
+    await service.record_usage(scope_type="group", scope_id=1001, tokens=10, cost=ACTUAL)
+    await service.record_event(
+        "cost_estimated", scope_type="group", scope_id=1001, reason="unknown"
+    )
+
+    # 用第二个独立连接验证：只有真正 COMMIT 过的数据才可见
+    async with aiosqlite.connect(tmp_path / "quota.sqlite3") as other:
+        usage = await (await other.execute("SELECT requests, tokens FROM quota_usage")).fetchone()
+        events = await (await other.execute("SELECT COUNT(*) FROM quota_events")).fetchone()
+
+    assert usage == (1, 10)
+    assert events == (1,)

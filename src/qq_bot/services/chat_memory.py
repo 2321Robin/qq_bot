@@ -124,6 +124,12 @@ class ChatMemoryRepository:
         connection = self._require_open()
         return await connection.execute(sql, parameters)
 
+    async def commit(self) -> None:
+        """Commit the shared connection's current transaction (used by the
+        quota service so its writes never linger uncommitted)."""
+        connection = self._require_open()
+        await connection.commit()
+
     async def check_ready(self) -> int | None:
         """Read-only liveness probe: return the max applied schema version,
         or None when the probe fails (S4-HEALTH-02). Bounded to 2 seconds so

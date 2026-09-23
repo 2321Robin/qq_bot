@@ -32,9 +32,11 @@ _WINDOW_SECONDS = 60.0
 
 class QuotaRepository(Protocol):
     """The minimal repository surface the service needs (the runtime's
-    ChatMemoryRepository satisfies it via ``execute``)."""
+    ChatMemoryRepository satisfies it via ``execute``/``commit``)."""
 
     async def execute(self, sql: str, parameters: Sequence[Any] = ()) -> Any: ...
+
+    async def commit(self) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -157,6 +159,7 @@ class QuotaService:
             """,
             (scope_type, scope_id, day, int(tokens), float(actual_cost), _now_iso()),
         )
+        await self._repository.commit()
         if cost is not None and cost.status != "actual":
             await self.record_event(
                 "cost_estimated",
@@ -179,6 +182,7 @@ class QuotaService:
             "INSERT INTO quota_events (at, scope_type, scope_id, kind, reason, detail) VALUES (?, ?, ?, ?, ?, ?)",
             (_now_iso(), scope_type, scope_id, kind, reason, detail),
         )
+        await self._repository.commit()
 
     async def summary(self, *, scope_type: str, scope_id: int) -> dict[str, Any]:
         """Today's usage plus the configured caps, for the admin view."""
