@@ -234,6 +234,26 @@ async def test_compose_ok_verified_text_and_quota_recorded(
     assert "甲的资料" in prompts[0]
 
 
+async def test_compose_survives_quota_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _BrokenQuota:
+        async def summary(self, *, scope_type: str, scope_id: int) -> dict[str, Any]:
+            raise RuntimeError("db locked")
+
+        async def record_usage(
+            self, *, scope_type: str, scope_id: int, tokens: int, cost: float | None
+        ) -> None:
+            raise RuntimeError("db locked")
+
+    async def fake_reply(_prompt: str, **_kwargs: Any) -> str:
+        return "2. 乙公司融资，B轮数亿元\n1. 甲模型发布，权重全部开放"
+
+    monkeypatch.setattr(ai_briefing, "_quota_service", lambda: _BrokenQuota())
+    monkeypatch.setattr(ai_briefing, "request_ai_reply", fake_reply)
+    outcome = await compose_briefing(_items(), _settings(ai_briefing_ai_enabled=True))
+    assert outcome.ok is True  # 配额炸了不阻塞简报
+    assert outcome.reason == "ok"
+
+
 async def test_compose_falls_back_on_fabrication(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_reply(_prompt: str, **_kwargs: Any) -> str:
         return "1. 甲模型发布，权重全部开放\n2. 完全无关的编造新闻"

@@ -73,6 +73,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Removed obsolete `/计数` capture counting command and local counter configuration.
 
+### Fixed
+
+- Fixed the broken CI quality gate: removed a stale unused import and applied ruff-format across the package so the lint/format job passes again.
+- Fixed the chat-completions payload built by `request_model_turn` omitting the `model` field: every AI request now declares the model explicitly, as required by providers that reject model-less bodies.
+- Fixed quota usage/event writes silently never persisting: `quota_usage`/`quota_events` inserts now commit immediately on their own transaction instead of riding the caller's borrowed, possibly-rolled-back transaction.
+- Fixed the agent evidence store crashing on the second tool call: evidence ids are now derived from the store's current size, so repeated tool calls in one conversation can no longer mint colliding ids.
+- Fixed agent-stack startup failures leaving half-built resources behind with a stuck status: the runtime now cleans up what was created and marks the stack FAILED when the build raises.
+- Fixed send-timeout semantics: every network-layer send timeout is treated as ambiguous (delivery state unknown — no automatic retry that could double-send) and error payloads in logs/failure records are redacted.
+- Fixed identifier leakage in model and ops surfaces: @-answer and summary prompts now alias user ids to 用户A/B/C-style placeholders, and ops outputs hash cross-group ids instead of printing them raw.
+- Fixed scheduler resilience and observability for typed cron jobs: runs kicked off while the process was down/asleep get a misfire grace window (fire once late instead of vanishing or bursting), and failed runs are logged and metered instead of disappearing silently.
+- Fixed quota-subsystem errors (e.g. a locked quota database) aborting the entire daily report or AI briefing send: the quota gate and usage-accounting calls in both the report polish and briefing compose pipelines now treat any quota failure as "quota disabled" (no daily cap enforced, no usage recorded, `record_error("quota", "unknown")`), keeping the LLM-never-blocks-the-report contract intact.
+
 ## [0.1.0] - 2026-06-04
 
 ## [0.1.0] - 2026-06-04

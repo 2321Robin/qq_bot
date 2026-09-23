@@ -342,6 +342,28 @@ async def test_polish_success_records_usage(monkeypatch: pytest.MonkeyPatch) -> 
     assert quota.recorded[0]["scope_type"] == "report"
 
 
+async def test_polish_survives_quota_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    from qq_bot.services import daily_report
+
+    class _BrokenQuota:
+        async def summary(self, *, scope_type: str, scope_id: int):
+            raise RuntimeError("db locked")
+
+        async def record_usage(self, **kwargs: Any) -> None:
+            raise RuntimeError("db locked")
+
+    async def _good_polish(*args: Any, **kwargs: Any) -> str:
+        return "· 甲\n\n【寄语】早上好"
+
+    monkeypatch.setattr(daily_report, "_quota_service", lambda: _BrokenQuota())
+    monkeypatch.setattr(daily_report, "request_ai_reply", _good_polish)
+    outcome = await daily_report.polish_news(
+        (NewsItem(title="甲"),), _settings(report_ai_enabled=True)
+    )
+    assert outcome.ok is True  # 配额炸了不阻塞报告
+    assert outcome.reason == "ok"
+
+
 # ---- 早/晚报组装器（S6-REPORT-05）----
 
 

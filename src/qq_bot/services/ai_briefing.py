@@ -22,7 +22,7 @@ from xml.etree import ElementTree as ET
 import httpx
 
 from qq_bot.config import BotSettings
-from qq_bot.observability import metrics
+from qq_bot.observability import metrics, record_error
 from qq_bot.services.ai_client import request_ai_reply
 from qq_bot.services.daily_report import (
     AsyncGetClient,
@@ -336,8 +336,15 @@ async def compose_briefing(
         return PolishOutcome(ok=False, text=template, reason="disabled")
     quota = _quota_service()
     if quota is not None:
-        summary = await quota.summary(scope_type="ai_briefing", scope_id=0)
-        if int(summary.get("requests", 0)) >= settings.ai_briefing_ai_daily_max:
+        # 配额子系统故障（如 DB locked）按「未启用配额」降级：不封顶、不记账、
+        # 不抛出——LLM 永不阻塞简报
+        try:
+            summary = await quota.summary(scope_type="ai_briefing", scope_id=0)
+            capped = int(summary.get("requests", 0)) >= settings.ai_briefing_ai_daily_max
+        except Exception:
+            record_error("quota", "unknown")
+            capped = False
+        if capped:
             return PolishOutcome(ok=False, text=template, reason="capped")
     # 模型/链路选择与 REPORT_AI_* 同语义：model 空 = 复用 ai_model；
     # provider=fallback 时整个首选链路切到备用 Provider。
@@ -372,7 +379,10 @@ async def compose_briefing(
         reply = repaired
     if quota is not None:
         # 订阅套餐无按量账单：tokens/cost 如实记 0/None，requests 计数由表自增
-        await quota.record_usage(scope_type="ai_briefing", scope_id=0, tokens=0, cost=None)
+        try:
+            await quota.record_usage(scope_type="ai_briefing", scope_id=0, tokens=0, cost=None)
+        except Exception:
+            record_error("quota", "unknown")
     return PolishOutcome(ok=True, text=reply, reason="ok")
 
 
