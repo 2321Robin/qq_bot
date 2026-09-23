@@ -63,10 +63,14 @@ When the bot is running, it may process the following categories of data:
   database (same file as chat memory, `CHAT_MEMORY_PATH`), consistent
   with the existing integer storage convention.
 - **Admin command exception:** the owner-facing admin commands `/配额`
-  and `/最近故障` (authorized via `ADMIN_USER_IDS`) display **raw
-  integer group numbers** in their replies so an owner can map usage to
-  a group. This is a deliberate, documented exception: raw identifiers
-  appear only in the admin chat reply, never in logs, metrics, spans or
+  and `/最近故障` (authorized via `ADMIN_USER_IDS`) never reveal other
+  groups' raw group numbers. `/最近故障` renders every cross-group scope
+  id as an **irreversible hash** (sha256 truncated to 16 hex chars,
+  `group_` prefix, e.g. `group_<hash>`), so those entries cannot be
+  mapped back to raw integers. The raw-id exception therefore narrows to
+  `/配额`, which displays the **current group's own** raw integer group
+  number so an owner can map usage to that group. Raw identifiers appear
+  only in the admin chat reply, never in logs, metrics, spans or
   reports.
 
 ## 3. External data transmission
