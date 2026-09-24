@@ -31,4 +31,9 @@ regexes = [
     # Documented placeholder token in the one-click startup design docs —
     # never a real WebUI token.
     '''webui\?token=['"]?TOKEN_PLACEHOLDER''',
+    # Synthetic WBI signing keys in tests/test_bili_dynamic.py — obviously
+    # fake hex fixtures exercising mixin_key math, never real Bilibili keys.
+    # Pinned to the exact literals so a real key can never match.
+    '''a1b2c3d4e5f60718293a4b5c6d7e8f9a''',
+    '''0f9e8d7c6b5a4938271504a3b2c1d0e9''',
 ]
