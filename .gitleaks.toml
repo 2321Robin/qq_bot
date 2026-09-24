@@ -22,18 +22,22 @@ tags = ["napcat", "token", "url"]
 # ---- Allowlist ----
 # Only known-safe test/sample values.  Never real tokens, accounts, or paths.
 
-[allowlist]
+# Value allowlist: exact known-safe strings in example configs and fixtures.
+[[allowlists]]
 description = "Known safe values used in example configs and test fixtures"
-
-# startup.example.ps1 uses empty strings and port 8081 — safe by design.
 regexes = [
     '''NapCatDir\s*=\s*""''',
     # Documented placeholder token in the one-click startup design docs —
     # never a real WebUI token.
     '''webui\?token=['"]?TOKEN_PLACEHOLDER''',
-    # Synthetic WBI signing keys in tests/test_bili_dynamic.py — obviously
-    # fake hex fixtures exercising mixin_key math, never real Bilibili keys.
-    # Pinned to the exact literals so a real key can never match.
-    '''a1b2c3d4e5f60718293a4b5c6d7e8f9a''',
-    '''0f9e8d7c6b5a4938271504a3b2c1d0e9''',
 ]
+
+# Path+value allowlist (AND): tests/test_bili_dynamic.py holds only synthetic
+# hex fixtures for the Bilibili WBI mixin_key math — 32-hex values in that one
+# file are fake by construction, so they are allowed only when BOTH the path
+# and the 32-hex shape match. Real keys elsewhere still fail the scan.
+[[allowlists]]
+description = "Synthetic WBI key fixtures in tests/test_bili_dynamic.py"
+condition = "AND"
+paths = ['''^tests/test_bili_dynamic\.py$''']
+regexes = ['''^[0-9a-f]{32}$''']
