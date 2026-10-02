@@ -346,6 +346,10 @@ class BotSettings(BaseSettings):
     )
     ai_briefing_ai_timeout_seconds: float = 90.0  # 免费档模型生成慢，独立于主链路超时
     ai_briefing_ai_daily_max: int = 10  # 每日上限（quota scope=ai_briefing）；0 = 关闭摘要
+    # 定时任务只发当天（北京时间）的期刊（2026-10-02 用户裁决：不发昨天的重复
+    # 内容）；当天的还没发布时按以下参数等待重试，全部落空才放弃本次
+    ai_briefing_retry_interval_seconds: float = 1800.0  # 重试间隔；源更新慢时每 30 分钟再试
+    ai_briefing_retry_max_attempts: int = 24  # 含首轮的最多拉取轮数；0 = 不等待重试
 
     # ---- 自主群聊插话与人设（S7-AUTO）----
     auto_chat_enabled: bool = False
@@ -673,6 +677,20 @@ class BotSettings(BaseSettings):
     def validate_ai_briefing_max_age_hours(cls, value: float) -> float:
         if value <= 0:
             raise ValueError("ai_briefing_max_age_hours must be greater than 0")
+        return value
+
+    @field_validator("ai_briefing_retry_interval_seconds")
+    @classmethod
+    def validate_ai_briefing_retry_interval_seconds(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("ai_briefing_retry_interval_seconds must be greater than 0")
+        return value
+
+    @field_validator("ai_briefing_retry_max_attempts")
+    @classmethod
+    def validate_ai_briefing_retry_max_attempts(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("ai_briefing_retry_max_attempts must be non-negative")
         return value
 
     @field_validator("ai_briefing_max_items")

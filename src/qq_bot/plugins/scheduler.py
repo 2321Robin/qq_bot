@@ -355,13 +355,14 @@ def _register_life_builders(settings: BotSettings) -> None:
 
 def _register_ai_briefing_builder(settings: BotSettings) -> None:
     """AI 早报生成器（S8-BRIEF）。源未配置/过期/失败在运行期返回空内容跳过，
-    与生活早报一样属于降级而非加载错误，这里没有可失败的外部加载。"""
+    与生活早报一样属于降级而非加载错误，这里没有可失败的外部加载。
+    wait=True：定时只发当天期刊，源更新慢时在 builder 内按配置间隔重试。"""
     jobs = jobs_from_settings(settings)
     if not any(job.job_type == "ai_morning" for job in jobs):
         return
 
     async def _briefing(effective: BotSettings) -> str | None:
-        return await build_ai_briefing_message(effective)
+        return await build_ai_briefing_message(effective, wait=True)
 
     register_builder("ai_morning", _briefing)
 

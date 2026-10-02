@@ -271,7 +271,7 @@ async def test_life_job_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_ai_briefing_job_sends_briefing(monkeypatch: pytest.MonkeyPatch) -> None:
     """AI 早报任务端到端（S8-BRIEF）：注册 builder → 组装 → 共享发送管线。"""
 
-    async def fake_build(settings, *, client=None, now=None):
+    async def fake_build(settings, *, client=None, now=None, wait=False):
         assert settings.scheduled_job_list == [("ai_morning", 9, 30)]
         return "【AI早报】9月22日 周二\n1. 测试新闻"
 

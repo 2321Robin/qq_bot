@@ -1,19 +1,29 @@
 """AI 早报内容管线（S8-BRIEF）。
 
-消息源为「橘鸦AI早报」的公开 RSS（daily.juya.uk/rss.xml，一天一期）：每期
+消息源为「橘鸦AI早报」的公开 RSS（daily.juya.uk/rss.xml，一天一期）：每期在
 「概览」给出当日全部要闻的标题、分类与原文链接，正文部分给每条新闻的详细
-内容。本服务拉取最新一期并校验时效，再用 LLM 把每条「标题+资料」改写成
-一行摘要——与生活早报润色同一契约：标题必须原样保留，说明只能依据该条
-资料；确定性校验失败/超时/关闭一律回退纯标题模板，LLM 永不阻塞发送。
+内容，条目自带发布日期（YYYY-MM-DD，北京时间）与文字版页面链接。
+
+两种发送模式（2026-10-02 用户裁决）：
+- 定时任务（wait=True）：只发**当天**的期刊；源更新晚（如 10 点后才发刊）
+  时每 AI_BRIEFING_RETRY_INTERVAL_SECONDS 重试一次，直至拿到当天刊，超过
+  AI_BRIEFING_RETRY_MAX_ATTEMPTS 轮才放弃——宁可晚发/不发，不发昨天的
+  重复内容。
+- 手动命令（wait=False）：立即返回最新一期（时效内），不等待。
+
+消息头部日期一律用期刊真实日期（而非发送日期），末行附该期文字版链接。
+LLM 编辑与生活早报润色同一契约：标题必须原样保留，说明只能依据该条资料；
+确定性校验失败/超时/关闭一律回退纯标题模板，LLM 永不阻塞发送。
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from typing import Any
@@ -23,6 +33,7 @@ import httpx
 
 from qq_bot.config import BotSettings
 from qq_bot.observability import metrics, record_error
+from qq_bot.observability.logging import get_logger, record_event
 from qq_bot.services.ai_client import request_ai_reply
 from qq_bot.services.daily_report import (
     AsyncGetClient,
@@ -41,9 +52,14 @@ from qq_bot.services.reliability import (
     wrap_http_error,
 )
 
+logger = get_logger("qq_bot.ai_briefing")
+
 _MAX_ATTEMPTS = 3
 _CONTENT_ENCODED_TAG = "{http://purl.org/rss/1.0/modules/content/}encoded"
 _ITEM_NUMBER_RE = re.compile(r"#(\d+)")
+# 源按北京时间发刊（无夏令时），固定 +8 即可
+_BEIJING_TZ = timezone(timedelta(hours=8))
+_DATE_IN_TEXT_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
 
 
 class SourceError(RuntimeError):
@@ -57,6 +73,13 @@ class BriefingItem:
     headline: str
     url: str = ""
     detail: str = ""
+
+
+@dataclass(frozen=True)
+class ParsedIssue:
+    issue_date: date  # 期刊日期（RSS 标题 YYYY-MM-DD，北京时间）
+    link: str  # 该期文字版页面链接（RSS <link>，空 = 源未提供）
+    items: tuple[BriefingItem, ...]
 
 
 # ---- 源 HTML 解析 ----
@@ -156,8 +179,31 @@ def _parse_pub_date(text: str) -> datetime | None:
     return parsed
 
 
-def _extract_issue_content(xml_text: str) -> tuple[datetime, str]:
-    """Return the freshest dated issue's (pubDate, content HTML)."""
+def _parse_issue_date(title: str, content_html: str) -> date | None:
+    """Issue date from the RSS title (YYYY-MM-DD), falling back to the h1."""
+    title = title.strip()
+    try:
+        return date.fromisoformat(title)
+    except ValueError:
+        pass
+    match = _DATE_IN_TEXT_RE.search(title)
+    if match:
+        try:
+            return date.fromisoformat(match.group(1))
+        except ValueError:
+            pass
+    # 正文 h1 形如「AI 早报 2026-09-22」；只看开头一小段，避免误匹配正文日期
+    match = _DATE_IN_TEXT_RE.search(content_html[:600])
+    if match:
+        try:
+            return date.fromisoformat(match.group(1))
+        except ValueError:
+            return None
+    return None
+
+
+def _extract_issue(xml_text: str) -> tuple[datetime, date, str, str]:
+    """Return the freshest dated issue's (pubDate, issue date, link, HTML)."""
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError as exc:
@@ -165,7 +211,7 @@ def _extract_issue_content(xml_text: str) -> tuple[datetime, str]:
     channel = root.find("channel")
     entries = channel.findall("item") if channel is not None else []
     best_pub: datetime | None = None
-    best_content = ""
+    best: tuple[date, str, str] | None = None
     for item in entries:
         content = (item.findtext(_CONTENT_ENCODED_TAG) or "").strip()
         if not content:
@@ -173,11 +219,15 @@ def _extract_issue_content(xml_text: str) -> tuple[datetime, str]:
         pub = _parse_pub_date(item.findtext("pubDate") or "")
         if pub is None:
             continue
+        issue_date = _parse_issue_date(item.findtext("title") or "", content)
+        if issue_date is None:
+            continue
         if best_pub is None or pub > best_pub:
-            best_pub, best_content = pub, content
-    if best_pub is None or not best_content:
+            best_pub = pub
+            best = (issue_date, (item.findtext("link") or "").strip(), content)
+    if best_pub is None or best is None:
         raise SourceError("ai briefing feed has no dated issue")
-    return best_pub, best_content
+    return best_pub, best[0], best[1], best[2]
 
 
 def parse_briefing_issue(
@@ -185,10 +235,10 @@ def parse_briefing_issue(
     *,
     now: datetime,
     max_age_hours: float,
-) -> tuple[BriefingItem, ...]:
-    """Parse the freshest RSS issue into briefing items; stale or unusable
-    issues raise :class:`SourceError` so the run is skipped entirely."""
-    pub, content = _extract_issue_content(xml_text)
+) -> ParsedIssue:
+    """Parse the freshest RSS issue; stale or unusable issues raise
+    :class:`SourceError` so the caller can skip or retry."""
+    pub, issue_date, link, content = _extract_issue(xml_text)
     age_hours = (now - pub).total_seconds() / 3600.0
     if age_hours > max_age_hours:
         raise SourceError(f"ai briefing issue is stale ({age_hours:.0f}h old)")
@@ -209,7 +259,7 @@ def parse_briefing_issue(
         )
     if not items:
         raise SourceError("ai briefing issue has no overview items")
-    return tuple(items)
+    return ParsedIssue(issue_date=issue_date, link=link, items=tuple(items))
 
 
 # ---- 拉取（与生活早报同款：重试 + 熔断，失败 SourceError）----
@@ -387,37 +437,84 @@ async def compose_briefing(
 
 
 # ---- 组装 ----
+async def _render_issue_message(issue: ParsedIssue, settings: BotSettings) -> str:
+    """Render one parsed issue into the final message; the date header and
+    the 文字版 link always describe the issue itself, never the send time."""
+    items = issue.items[: settings.ai_briefing_max_items]
+    if not items:
+        return ""
+    outcome = await compose_briefing(items, settings)
+    metrics.BRIEFING_LLM_TOTAL.labels(outcome.reason).inc()
+    body = outcome.text if outcome.ok else render_briefing_template(items)
+    parts = [*build_date_lines(issue.issue_date, kind="AI早报"), body]
+    credit = settings.ai_briefing_credit.strip()
+    if credit:
+        parts.append(credit)
+    if issue.link:
+        parts.append(f"文字版：{issue.link}")
+    return "\n".join(parts)
+
+
 async def build_ai_briefing_message(
     settings: BotSettings,
     *,
     client: AsyncGetClient | None = None,
     now: datetime | None = None,
+    wait: bool = False,
+    sleep: Callable[[float], Any] = asyncio.sleep,
 ) -> str | None:
-    """Build one AI briefing message; ``None`` means nothing to send this
-    round (feed unconfigured/unavailable/stale) and the run is skipped."""
+    """Build one AI briefing message; ``None`` means nothing to send.
+
+    ``wait=False``（手动命令）：最新一期（时效内）立即返回，日期头用期刊真实
+    日期，绝不等待。
+    ``wait=True``（定时任务）：只发当天（北京时间）的期刊；当天的还没发布或
+    当轮拉取失败时，每 AI_BRIEFING_RETRY_INTERVAL_SECONDS 重试一次，最多
+    AI_BRIEFING_RETRY_MAX_ATTEMPTS 轮（0 = 不等待），全部落空返回 None。
+    """
     if not settings.has_ai_briefing_feed_config():
         return None
-    # 本地时区（日报头部的日期/农历按本地日算）；注入 aware datetime 供测试
-    effective_now = now if now is not None else datetime.now().astimezone()
-    try:
-        xml_text = await fetch_briefing_xml(settings, client)
-        items = parse_briefing_issue(
-            xml_text,
-            now=effective_now,
-            max_age_hours=settings.ai_briefing_max_age_hours,
+    rounds = max(settings.ai_briefing_retry_max_attempts, 0) if wait else 1
+    for attempt in range(1, rounds + 1):
+        # 每轮取当前时钟：长等待期间「今天」与时效都以当轮为准（测试注入固定 now）
+        round_now = now if now is not None else datetime.now().astimezone()
+        today = round_now.astimezone(_BEIJING_TZ).date()
+        try:
+            xml_text = await fetch_briefing_xml(settings, client)
+            issue = parse_briefing_issue(
+                xml_text,
+                now=round_now,
+                max_age_hours=settings.ai_briefing_max_age_hours,
+            )
+        except SourceError:
+            metrics.BRIEFING_FEED_TOTAL.labels("unavailable").inc()
+            record_event(
+                logger,
+                logging.INFO,
+                "briefing_fetch_failed",
+                message="AI briefing fetch/parse failed this round.",
+                round=attempt,
+            )
+        else:
+            if not wait or issue.issue_date == today:
+                metrics.BRIEFING_FEED_TOTAL.labels("ok").inc()
+                return await _render_issue_message(issue, settings)
+            metrics.BRIEFING_FEED_TOTAL.labels("not_today").inc()
+            record_event(
+                logger,
+                logging.INFO,
+                "briefing_issue_not_today",
+                message="Latest issue is not today's; waiting for the source to publish.",
+                issue=issue.issue_date.isoformat(),
+                round=attempt,
+            )
+        if attempt < rounds:
+            await sleep(settings.ai_briefing_retry_interval_seconds)
+    if wait:
+        record_event(
+            logger,
+            logging.WARNING,
+            "briefing_wait_exhausted",
+            message="AI briefing gave up waiting for today's issue; skipping this run.",
+            rounds=rounds,
         )
-    except SourceError:
-        metrics.BRIEFING_FEED_TOTAL.labels("unavailable").inc()
-        return None
-    metrics.BRIEFING_FEED_TOTAL.labels("ok").inc()
-    items = items[: settings.ai_briefing_max_items]
-    if not items:
-        return None
-    outcome = await compose_briefing(items, settings)
-    metrics.BRIEFING_LLM_TOTAL.labels(outcome.reason).inc()
-    body = outcome.text if outcome.ok else render_briefing_template(items)
-    parts = [*build_date_lines(effective_now.date(), kind="AI早报"), body]
-    credit = settings.ai_briefing_credit.strip()
-    if credit:
-        parts.append(credit)
-    return "\n".join(parts)
+    return None
