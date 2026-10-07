@@ -48,6 +48,15 @@ async def _cancel_leftover_tasks():
     await asyncio.gather(*pending, return_exceptions=True)
 
 
+@pytest.fixture(autouse=True)
+def _fresh_auto_chat_state():
+    from qq_bot.services import auto_chat as _m
+
+    _m._RECENT_REPLIES.clear()
+    yield
+    _m._RECENT_REPLIES.clear()
+
+
 class FakeClock:
     def __init__(self) -> None:
         self.now = 1000.0
@@ -371,7 +380,7 @@ class Harness:
         return fake_request_completion
 
 
-async def _run(h: Harness, raw_text: str = "一起去打新活动吗") -> None:
+async def _run(h: Harness, raw_text: str = "一起去打新活动吗", _completion=None) -> None:
     await run_auto_chat(
         event=FakeEvent(),
         raw_text=raw_text,
@@ -383,7 +392,7 @@ async def _run(h: Harness, raw_text: str = "一起去打新活动吗") -> None:
         rng=h.rng,
         sleeper=h.sleeper,
         _cold_sleep=h.instant_cold_sleep,
-        _request_completion=h.completion(),
+        _request_completion=_completion or h.completion(),
     )
 
 
@@ -686,10 +695,21 @@ async def test_hot_mode_second_quick_message_not_blocked_by_normal_cooldown() ->
         ),
         state=AutoChatState(clock=clock),
     )
-    await _run(h, raw_text="第一条")
+    gate_seq = iter(['{"should_reply": true, "reason": "banter", "confidence": 0.9}'] * 2)
+    casual_seq = iter(["这是头一条", "这是完全不同的另一条"])
+
+    def varying_completion():
+        async def fake(**kwargs) -> str:
+            if "决策器" in kwargs["system_prompt"]:
+                return next(gate_seq)
+            return next(casual_seq)
+
+        return fake
+
+    await _run(h, raw_text="第一条", _completion=varying_completion())
     clock.advance(60.0)
-    await _run(h, raw_text="第二条")
-    assert h.sent == ["你们这是要去哪？", "你们这是要去哪？"]
+    await _run(h, raw_text="第二条", _completion=varying_completion())
+    assert h.sent == ["这是头一条", "这是完全不同的另一条"]
 
 
 @pytest.mark.asyncio
@@ -1019,3 +1039,61 @@ class TestTuneLog:
 
         m._TUNE_LOG_PATH = str(tmp_path / "off.jsonl")
         assert True  # _run_settings 默认 enabled=False，其余用例已验证不写
+
+
+# ---- 二期修复 S7-AUTO-P2-12：反回声 + 自去重 ----
+
+
+class TestAntiEcho:
+    @pytest.mark.asyncio
+    async def test_echo_reply_regenerated(self) -> None:
+        h = Harness(["聊会"], _run_settings())
+        h.state.note_reply(1001, settings=h.settings)
+        h.casual_content = "破防了？称号自己领的还赖账😜"
+        seq = iter(["破防了？称号自己领的还赖账😜", "换个说法，这称号本来就是我领的"])
+        calls = {"n": 0}
+
+        def completion():
+            async def fake(**kwargs) -> str:
+                calls["n"] += 1
+                return next(seq)
+
+            return fake
+
+        await _run(h, raw_text="破防了？称号自己领的还赖账", _completion=completion())
+        assert calls["n"] == 2  # 回声触发一次重写
+        assert h.sent == ["换个说法", "这称号本来就是我领的"]  # 拆分：逗号 → 连发
+
+    @pytest.mark.asyncio
+    async def test_self_repeat_regenerated(self) -> None:
+        h = Harness(
+            ["聊会"],
+            _run_settings(auto_chat_hot_cooldown_seconds=0.0, auto_chat_cooldown_seconds=0.0),
+        )
+        h.state.note_reply(1001, settings=h.settings)
+        seq = iter(["不服就刚", "不服就刚", "这次不重复了"])
+
+        def completion():
+            async def fake(**kwargs) -> str:
+                return next(seq)
+
+            return fake
+
+        await _run(h, raw_text="聊会", _completion=completion())
+        await _run(h, raw_text="又聊会", _completion=completion())
+        assert h.sent[-1] == "这次不重复了"
+
+    @pytest.mark.asyncio
+    async def test_double_bad_reply_dropped(self) -> None:
+        h = Harness(["聊会"], _run_settings())
+        h.state.note_reply(1001, settings=h.settings)
+        h.casual_content = "破防了？称号自己领的还赖账😜"
+
+        def completion():
+            async def fake(**kwargs) -> str:
+                return h.casual_content  # 永远回声
+
+            return fake
+
+        await _run(h, raw_text="破防了？称号自己领的还赖账", _completion=completion())
+        assert h.sent == []

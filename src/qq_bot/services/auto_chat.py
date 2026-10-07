@@ -10,12 +10,13 @@ from __future__ import annotations
 import asyncio
 import json
 import random
-from collections import deque
-from pathlib import Path
 import re
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from difflib import SequenceMatcher
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Sequence
 
 from qq_bot.config import BotSettings
@@ -344,6 +345,9 @@ def split_casual_reply(text: str, *, max_parts: int = 3) -> list[str]:
     return merged
 
 
+_PUNCT_NORM_RE = re.compile(r"[\s，,、；;。.!！?？~～…\"'「」『』（）()·]+")
+
+
 _ARTIFACT_RE = re.compile(r"用户\d{4,}|(?<!\d)\d{5,11}(?!\d)")
 _EMOJI_RE = "[🀀-🫿☀-➿⬀-⯿️]"
 
@@ -352,6 +356,26 @@ def _has_id_artifact(text: str) -> bool:
     """回复里出现"用户+数字"或裸长数字串 = 把 prompt 上下文格式当内容
     抄出来了（实测问题），整条放弃。"""
     return bool(_ARTIFACT_RE.search(text))
+
+
+def _norm_text(text: str) -> str:
+    return _PUNCT_NORM_RE.sub("", text).lower()
+
+
+def _reply_issue(reply: str, trigger: str, recent: Sequence[str]) -> str | None:
+    """自主回复质量闸（S7-AUTO-P2-12）：返回拒绝原因，None 表示通过。
+    echo = 几乎复述触发句；repeat = 与自己最近发言高度雷同。"""
+    norm_reply = _norm_text(reply)
+    if not norm_reply:
+        return "empty"
+    norm_trigger = _norm_text(trigger)
+    if len(norm_trigger) >= 6 and norm_trigger in norm_reply:
+        return "echo"
+    for prev in recent:
+        norm_prev = _norm_text(prev)
+        if norm_prev and SequenceMatcher(None, norm_reply, norm_prev).ratio() >= 0.8:
+            return "repeat"
+    return None
 
 
 def _strip_excl_and_emoji_punct(text: str) -> str:
@@ -515,7 +539,7 @@ def schedule_cold_check(
                         ),
                         settings=settings,
                         client=client,
-                        model=settings.ai_model,
+                        model=settings.auto_chat_reply_model or settings.ai_model,
                         max_tokens=100,
                         temperature=settings.auto_chat_reply_temperature,
                     )
@@ -727,7 +751,7 @@ async def run_auto_chat(
                     ),
                     settings=settings,
                     client=client,
-                    model=settings.ai_model,
+                    model=settings.auto_chat_reply_model or settings.ai_model,
                     max_tokens=100,
                     temperature=settings.auto_chat_reply_temperature,
                 )
@@ -759,6 +783,34 @@ async def run_auto_chat(
         if _has_id_artifact(reply):
             _metric("generate", "artifact")
             return
+        issue = _reply_issue(reply, raw_text, _recent_replies(group_id))
+        if issue is not None:
+            retry_model = settings.auto_chat_reply_model or settings.ai_model
+            retry_prompt = (
+                build_casual_user_prompt(rows, recent_replies=_recent_replies(group_id))
+                + f"\n风格要求：{style_directive(rng)}"
+                + "\n重写要求：你刚才的回复被拒绝（"
+                + ("几乎复述了别人的原话" if issue == "echo" else "和自己最近的话重复")
+                + "）。必须换一个完全不同的角度，用不同的词语，简短回应最新消息。"
+            )
+            try:
+                reply = (
+                    await complete(
+                        system_prompt=casual_system_prompt(persona),
+                        user_prompt=retry_prompt,
+                        settings=settings,
+                        client=client,
+                        model=retry_model,
+                        max_tokens=100,
+                        temperature=settings.auto_chat_reply_temperature,
+                    )
+                ).strip()
+            except Exception:
+                reply = ""
+            issue = _reply_issue(reply, raw_text, _recent_replies(group_id)) if reply else "empty"
+            if issue is not None:
+                _metric("generate", "repeat")
+                return
     if any(word in reply for word in settings.auto_chat_sensitive_word_list):
         _metric("generate", "filtered")
         return
