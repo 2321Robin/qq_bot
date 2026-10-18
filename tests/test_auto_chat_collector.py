@@ -94,6 +94,30 @@ async def test_prefilter_drops_items_and_empty_batch_skips_delivery():
 
 
 @pytest.mark.asyncio
+async def test_deliver_failure_emits_collect_error_without_propagating():
+    """交付抛异常：护栏优先，回调 collect/error 且异常不外泄（不炸消息主路径）。"""
+    delivered: list[CollectedBatch] = []
+    metrics_seen: list[str] = []
+
+    async def deliver(group_id: int, batch: CollectedBatch) -> None:
+        delivered.append(batch)
+        raise RuntimeError("delivery exploded")
+
+    c = AutoChatCollector(
+        quiet_seconds=0.05,
+        max_seconds=1.0,
+        prefilter=_pass,
+        metric=lambda stage, result: metrics_seen.append(f"{stage}/{result}"),
+        deliver=deliver,
+    )
+    await c.submit(1, _item("一句话"))
+    await asyncio.sleep(0.3)
+    assert len(delivered) == 1  # deliver 确实被调到并抛出
+    assert "collect/error" in metrics_seen
+    assert c.pending_count() == 0
+
+
+@pytest.mark.asyncio
 async def test_per_group_isolation_and_pending_count():
     batches: list[CollectedBatch] = []
 

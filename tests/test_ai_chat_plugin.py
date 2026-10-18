@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 import pytest
 from nonebot.adapters.onebot.v11 import Message
 from nonebot.exception import FinishedException
+from prometheus_client import REGISTRY
 
 from qq_bot.config import BotSettings
 from qq_bot.plugins import ai_chat as ai_chat_plugin
@@ -2068,6 +2069,82 @@ async def test_auto_chat_collector_delivery_runs_pipeline_with_batch_and_hooks(
     assert callable(captured["quota_check"])
     assert 1001 not in ai_chat_plugin._PENDING_AUTO_HOOKS
     assert ai_chat_plugin._AUTO_CHAT_COLLECTOR.pending_count() == 0
+
+
+def _auto_chat_metric(stage: str, result: str) -> float:
+    return (
+        REGISTRY.get_sample_value("qq_bot_auto_chat_total", {"stage": stage, "result": result})
+        or 0.0
+    )
+
+
+@pytest.mark.asyncio
+async def test_auto_chat_bypass_direct_call_emits_collect_bypass_metric(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """点名旁路直连管道前补 collect/bypass 指标（spec 观测性要求）。"""
+    captured: dict = {}
+
+    async def fake_run_auto_chat(**kwargs):
+        captured.update(kwargs)
+
+    class RecordingStore(EmptyMemoryStore):
+        async def add_message(self, **kwargs) -> int:
+            return 123
+
+    monkeypatch.setattr(ai_chat_plugin, "run_auto_chat", fake_run_auto_chat)
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(
+            allowed_group_ids="1001",
+            auto_chat_enabled=True,
+            auto_chat_collect_enabled=True,
+            persona_name="小洛",
+        ),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: RecordingStore())
+    monkeypatch.setattr(ai_chat_plugin, "_PENDING_AUTO_HOOKS", {})
+
+    before = _auto_chat_metric("collect", "bypass")
+    await ai_chat_plugin.handle_ai_chat(FakeEvent("小洛在吗"))  # type: ignore[arg-type]
+
+    assert captured["raw_text"] == "小洛在吗"  # 旁路直连，未进收集窗口
+    assert _auto_chat_metric("collect", "bypass") == before + 1
+
+
+@pytest.mark.asyncio
+async def test_auto_chat_collect_disabled_direct_call_emits_collect_disabled_metric(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """collect 关闭时直连管道前补 collect/disabled 指标（spec 观测性要求）。"""
+    captured: dict = {}
+
+    async def fake_run_auto_chat(**kwargs):
+        captured.update(kwargs)
+
+    class RecordingStore(EmptyMemoryStore):
+        async def add_message(self, **kwargs) -> int:
+            return 123
+
+    monkeypatch.setattr(ai_chat_plugin, "run_auto_chat", fake_run_auto_chat)
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(
+            allowed_group_ids="1001",
+            auto_chat_enabled=True,
+            auto_chat_collect_enabled=False,
+        ),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: RecordingStore())
+    monkeypatch.setattr(ai_chat_plugin, "_PENDING_AUTO_HOOKS", {})
+
+    before = _auto_chat_metric("collect", "disabled")
+    await ai_chat_plugin.handle_ai_chat(FakeEvent("随便聊聊"))  # type: ignore[arg-type]
+
+    assert captured["raw_text"] == "随便聊聊"  # 直连管道，未进收集窗口
+    assert _auto_chat_metric("collect", "disabled") == before + 1
 
 
 # ---- 固定文案池化（S7-AUTO-08）----

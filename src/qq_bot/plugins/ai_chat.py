@@ -486,7 +486,21 @@ async def _maybe_auto_reply(
         TriggerCategory.QUOTED,
         TriggerCategory.YOU_PLURAL,
     )
-    if not settings.auto_chat_collect_enabled or bypass:
+    if not settings.auto_chat_collect_enabled:
+        # spec 观测性要求 collect 阶段 result 覆盖 bypass/disabled：直连前补指标
+        metrics.AUTO_CHAT.labels("collect", "disabled").inc()
+        await run_auto_chat(
+            event=event,
+            raw_text=raw_text,
+            settings=settings,
+            memory_store=memory_store,
+            send=send,
+            quota_check=quota_check,
+            client=http_client,
+        )
+        return
+    if bypass:
+        metrics.AUTO_CHAT.labels("collect", "bypass").inc()
         await run_auto_chat(
             event=event,
             raw_text=raw_text,
