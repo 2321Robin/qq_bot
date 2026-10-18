@@ -1398,3 +1398,94 @@ class TestBatchPipeline:
         lines = gate_calls[0]["user_prompt"].splitlines()
         batch_lines = lines[lines.index(_BATCH_SECTION_HEADER) + 1 :]
         assert batch_lines[-1].endswith("开黑吗")  # 批次段末行 = 过滤后幸存项
+
+
+class TestLearningInjection:
+    def test_gate_prompt_jargon_section(self) -> None:
+        rows = [_row("在吗", user_id=2001, row_id=1)]
+        prompt = build_gate_user_prompt(rows, jargon_refs=("咸鱼翻车：搞砸了",))
+        assert "本群黑话参考" in prompt and "咸鱼翻车：搞砸了" in prompt
+
+    def test_casual_prompt_expression_and_jargon_sections(self) -> None:
+        rows = [_row("在吗", user_id=2001, row_id=1)]
+        prompt = build_casual_user_prompt(
+            rows, expression_refs=("{对象}吗", "确实"), jargon_refs=("咸鱼翻车：搞砸了",)
+        )
+        assert "本群表达参考" in prompt and "{对象}吗" in prompt
+        assert "本群黑话参考" in prompt
+
+    def test_empty_refs_omit_sections(self) -> None:
+        prompt = build_casual_user_prompt([_row("在吗", user_id=2001, row_id=1)])
+        assert "本群表达参考" not in prompt and "本群黑话参考" not in prompt
+
+    async def test_injection_flows_into_generation_and_touches(self) -> None:
+        h = Harness(
+            ["随便聊聊"],
+            _run_settings(
+                expression_learn_enabled=True, expression_min_active=1, auto_chat_sample_rate=1.0
+            ),
+        )
+
+        class LearnMemory(FakeMemory):
+            def __init__(self, texts: list[str]):
+                super().__init__(texts)
+                self.touched: list[int] = []
+
+            async def sample_expressions(self, *, group_id, limit, threshold, rng=None):
+                from qq_bot.services.chat_memory import ExpressionRow
+
+                return [
+                    ExpressionRow(
+                        id=7,
+                        group_id=group_id,
+                        template="{对象}吗",
+                        slot_count=1,
+                        evidence_row_id=None,
+                        evidence_digest="",
+                        status="active",
+                        count=3,
+                        manual=0,
+                        created_at="",
+                        last_used_at=None,
+                    )
+                ]
+
+            async def list_jargon(self, *, group_id, status, limit=10):
+                from qq_bot.services.chat_memory import JargonRow
+
+                return [
+                    JargonRow(
+                        id=2,
+                        group_id=group_id,
+                        term="咸鱼翻车",
+                        definition="搞砸了",
+                        status="confirmed",
+                        hits=5,
+                        manual=0,
+                        first_seen_at="",
+                        last_seen_at="",
+                        confirmed_at=None,
+                    )
+                ]
+
+            async def touch_expressions(self, ids, *, now=None):
+                self.touched = list(ids)
+                return len(ids)
+
+        learn_mem = LearnMemory(["随便聊聊"])
+        h.memory = learn_mem
+        await _run(h, "随便聊聊")
+        gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
+        gen_calls = [c for c in h.completions if "决策器" not in c["system_prompt"]]
+        assert "本群黑话参考" in gate_calls[0]["user_prompt"]
+        assert "本群表达参考" in gen_calls[0]["user_prompt"]
+        assert learn_mem.touched == [7]
+
+    async def test_injection_skipped_when_disabled(self) -> None:
+        h = Harness(
+            ["随便聊聊"], _run_settings(expression_learn_enabled=False, auto_chat_sample_rate=1.0)
+        )
+        await _run(h, "随便聊聊")
+        for c in h.completions:
+            assert "本群表达参考" not in c["user_prompt"]
+            assert "本群黑话参考" not in c["user_prompt"]

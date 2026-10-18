@@ -356,15 +356,26 @@ _BATCH_SECTION_HEADER = (
     "以下消息是刚刚连续发生的对话（同一个人的相邻消息为连发），主要回应最后一条："
 )
 
+# 学习参考（S10-HUMAN-P1-04）：表达句式仅供语气参考，黑话仅供理解。
+# 内容仍须回应最新消息；禁止照抄原句，不确定含义就不要用黑话。
+_EXPRESSION_SECTION_HEADER = "本群表达参考（仅供语气参考，禁止照抄原句，内容仍须回应最新消息）："
+_JARGON_SECTION_HEADER = "本群黑话参考（理解用，不确定含义就不要用）："
+
 
 def build_gate_user_prompt(
-    rows: Sequence[ChatMemoryRow], *, batch_rows: Sequence[ChatMemoryRow] = ()
+    rows: Sequence[ChatMemoryRow],
+    *,
+    batch_rows: Sequence[ChatMemoryRow] = (),
+    jargon_refs: Sequence[str] = (),
 ) -> str:
     lines = ["最近群消息（最后一条是最新消息）："]
     lines.extend(_render_rows(rows))
     if batch_rows:
         lines.append(_BATCH_SECTION_HEADER)
         lines.extend(render_batch_rows(batch_rows, build_user_aliases([*rows, *batch_rows])))
+    if jargon_refs:
+        lines.append(_JARGON_SECTION_HEADER)
+        lines.extend(f"- {text}" for text in jargon_refs)
     return "\n".join(lines)
 
 
@@ -373,12 +384,20 @@ def build_casual_user_prompt(
     recent_replies: Sequence[str] = (),
     *,
     batch_rows: Sequence[ChatMemoryRow] = (),
+    expression_refs: Sequence[str] = (),
+    jargon_refs: Sequence[str] = (),
 ) -> str:
     lines = ["最近群消息（最后一条是最新消息）："]
     lines.extend(_render_rows(rows))
     if batch_rows:
         lines.append(_BATCH_SECTION_HEADER)
         lines.extend(render_batch_rows(batch_rows, build_user_aliases([*rows, *batch_rows])))
+    if expression_refs:
+        lines.append(_EXPRESSION_SECTION_HEADER)
+        lines.extend(f"- {text}" for text in expression_refs)
+    if jargon_refs:
+        lines.append(_JARGON_SECTION_HEADER)
+        lines.extend(f"- {text}" for text in jargon_refs)
     if recent_replies:
         lines.append("你最近发过的消息（换着花样说，禁止重复这些句式和用词）：")
         lines.extend(f"- {text}" for text in recent_replies)
@@ -729,6 +748,41 @@ def schedule_cold_check(
     task.add_done_callback(_COLD_TASKS.discard)
 
 
+async def _jargon_refs(
+    memory_store: Any, group_id: int, *, settings: BotSettings
+) -> tuple[str, ...]:
+    """已确认黑话的「术语：释义」引用串（S10-HUMAN-P1-04）。关闭或任何失败
+    （含存储未实现该方法）都返回空——注入是护栏增强，绝不拖累主流程。"""
+    if not settings.expression_learn_enabled:
+        return ()
+    try:
+        rows = await memory_store.list_jargon(
+            group_id=group_id, status="confirmed", limit=settings.jargon_inject_max
+        )
+        return tuple(f"{r.term}：{r.definition}" for r in rows)
+    except Exception:
+        return ()
+
+
+async def _expression_sample(
+    memory_store: Any, group_id: int, *, settings: BotSettings
+) -> tuple[Any, ...]:
+    """学习到的活跃表达行样本（S10-HUMAN-P1-04）。关闭或任何失败（含存储
+    未实现该方法）都返回空。调用方按 ``r.template`` 渲染参考、``r.id`` 回写。"""
+    if not settings.expression_learn_enabled:
+        return ()
+    try:
+        return tuple(
+            await memory_store.sample_expressions(
+                group_id=group_id,
+                limit=settings.expression_inject_max,
+                threshold=settings.expression_min_active,
+            )
+        )
+    except Exception:
+        return ()
+
+
 async def run_auto_chat(
     *,
     event: Any,
@@ -859,6 +913,10 @@ async def run_auto_chat(
     category = classify_trigger(trigger_text, settings=settings, quoted_self=quoted_self)
     tracer = get_tracer()
     reply = None  # plusone 分支直接采用原文；其余路径由生成产出
+    # 学习参考（S10-HUMAN-P1-04）：黑话在决策门之前取一次，门与生成器共用；
+    # 表达样本在生成时才取（生成路径专属），回写 id 也来自那里。
+    jargon_refs = await _jargon_refs(memory_store, group_id, settings=settings)
+    expression_ids: list[int] = []
     if category is TriggerCategory.NICKNAMED:
         _metric("prefilter", "nicknamed")
     elif category is TriggerCategory.QUOTED:
@@ -883,7 +941,9 @@ async def run_auto_chat(
             content = await complete(
                 system_prompt=GATE_SYSTEM_PROMPT,
                 user_prompt=build_gate_user_prompt(
-                    rows, batch_rows=_batch_as_rows(items, group_id) if is_batch else ()
+                    rows,
+                    batch_rows=_batch_as_rows(items, group_id) if is_batch else (),
+                    jargon_refs=jargon_refs,
                 ),
                 settings=settings,
                 client=client,
@@ -928,6 +988,11 @@ async def run_auto_chat(
             return
         if reply is None:
             generate_span = tracer.start_span("auto.generate", trace_id=current_request_id())
+            # 表达样本每次 run 只取一次：重试 prompt 复用同一批参考（重试不是
+            # 新的一轮群聊），id 也一并留待发送成功后回写。
+            expression_rows = await _expression_sample(memory_store, group_id, settings=settings)
+            expression_refs = tuple(r.template for r in expression_rows)
+            expression_ids = [r.id for r in expression_rows]
 
             async def _generate() -> str:
                 return await complete(
@@ -937,6 +1002,8 @@ async def run_auto_chat(
                             rows,
                             recent_replies=_recent_replies(group_id),
                             batch_rows=_batch_as_rows(items, group_id) if is_batch else (),
+                            expression_refs=expression_refs,
+                            jargon_refs=jargon_refs,
                         )
                         + f"\n风格要求：{style_directive(rng)}"
                     ),
@@ -982,6 +1049,8 @@ async def run_auto_chat(
                     rows,
                     recent_replies=_recent_replies(group_id),
                     batch_rows=_batch_as_rows(items, group_id) if is_batch else (),
+                    expression_refs=expression_refs,
+                    jargon_refs=jargon_refs,
                 )
                 + f"\n风格要求：{style_directive(rng)}"
                 + "\n重写要求：你刚才的回复被拒绝（"
@@ -1068,4 +1137,11 @@ async def run_auto_chat(
         typo_applied=typo_applied,
     )
     await send(parts)
+    # 表达使用回写（S10-HUMAN-P1-04）：仅生成路径采样到 id 且真的发出去了才记；
+    # 失败静默——计数统计不能拖累主流程。
+    if expression_ids:
+        try:
+            await memory_store.touch_expressions(expression_ids)
+        except Exception:
+            pass
     _metric("send", "ok")  # 已移交发送器；发送失败由 onebot_send 的 SEND_RESULTS 计数
