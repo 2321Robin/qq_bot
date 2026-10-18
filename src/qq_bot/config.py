@@ -376,6 +376,7 @@ class BotSettings(BaseSettings):
     auto_chat_collect_enabled: bool = True
     auto_chat_collect_quiet_seconds: float = 2.0
     auto_chat_collect_max_seconds: float = 8.0
+    auto_chat_quote_reply_enabled: bool = True  # H4：引用解析与引用必回
     auto_chat_sensitive_words: str = ""  # 追加词（逗号分隔），与内置表合并
     auto_chat_negative_words: str = ""  # 追加词（逗号分隔），与内置表合并
     auto_chat_ignored_user_ids: str = ""  # 自主插话忽略的发送者（可放其他机器人号）
