@@ -210,6 +210,27 @@ _define(
     "AI briefing compose outcomes",
     ["result"],
 )
+_define(
+    "EXPRESSION_TOTAL",
+    Counter,
+    "qq_bot_expression_total",
+    "Expression learning pipeline results",
+    ["stage", "result"],
+)
+_define(
+    "JARGON_TOTAL",
+    Counter,
+    "qq_bot_jargon_total",
+    "Jargon learning pipeline results",
+    ["stage", "result"],
+)
+_define(
+    "EXPRESSION_ACTIVE",
+    Gauge,
+    "qq_bot_expression_active",
+    "Active expression templates per group",
+    ["group_hash"],
+)
 
 
 def set_metrics_enabled(enabled: bool) -> None:
