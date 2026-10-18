@@ -13,7 +13,10 @@ Three commands, all admin-only (the feature switch never waives authorization �
 The learning round runs as a detached task; the handler sends an immediate ack
 via ``matcher.send`` (which does not terminate it), and the round itself finishes
 the matcher from the inherited context — the same mechanism as the cold-check
-delivery in ``ai_chat`` / ``auto_chat``.
+delivery in ``ai_chat`` / ``auto_chat``. The task keeps a strong reference in
+``_LEARN_TASKS`` until it finishes: CPython's asyncio only holds weak references
+to tasks, so an unreferenced in-flight round could be garbage-collected before
+its broadcast.
 """
 
 from __future__ import annotations
@@ -49,6 +52,10 @@ _STATUS_MESSAGES = {
     "disabled": "表达学习未开启",
     "error": "学习失败，请稍后再试",
 }
+
+# 后台学习任务的强引用集合：asyncio 只保存弱引用，不持有会被 GC 掉
+# （同 auto_chat._COLD_TASKS / scheduler._REDELIVER_TASKS）。
+_LEARN_TASKS: set[asyncio.Task] = set()
 
 
 def _is_admin(event: GroupMessageEvent) -> bool:
@@ -99,8 +106,6 @@ async def _run_round(
         await finish_with_send_errors_logged(matcher, _STATUS_MESSAGES["error"])
         return
     text = _broadcast_text(summary)
-    if summary.status == "ok":
-        metrics.COMMANDS.labels("表达学习").inc()
     logger.info(
         "learning round done: group=%s status=%s batches=%d stored=%d jargon_new=%d",
         hash_id(group_id, kind="group"),
@@ -143,7 +148,9 @@ async def handle_learn(event: GroupMessageEvent) -> None:
             quota=quota,
         )
     )
+    _LEARN_TASKS.add(task)
     task.add_done_callback(_log_task_failure)
+    task.add_done_callback(_LEARN_TASKS.discard)
 
 
 def _log_task_failure(task: asyncio.Future) -> None:
@@ -165,7 +172,12 @@ async def handle_expression(event: GroupMessageEvent, args: Message = CommandArg
         return
     settings = get_settings()
     parts = _split_args(args)
-    memory_store = get_chat_repository()
+    try:
+        memory_store = get_chat_repository()
+    except RuntimeStateError:
+        logger.exception("expression command requested before runtime is ready")
+        await finish_with_send_errors_logged(expr_command, "记忆服务暂不可用，请稍后再试。")
+        return
     sub = parts[0] if parts else "列表"
     if sub == "列表":
         rows = await memory_store.list_active_expressions(group_id=event.group_id)
@@ -180,7 +192,15 @@ async def handle_expression(event: GroupMessageEvent, args: Message = CommandArg
             await finish_with_send_errors_logged(
                 expr_command, "用法：/表达 禁用 <id>（编号见 /表达 列表）"
             )
-        disabled = await memory_store.disable_expression(expression_id=int(parts[1]))
+        expression_id = int(parts[1])
+        # 群隔离：disable_expression 只有 id 谓词（无 group_id），跨群 id 会被误伤，
+        # 因此先在插件层确认该 id 属于本群的活跃池（不满足则不动仓库状态）。
+        rows = await memory_store.list_active_expressions(group_id=event.group_id)
+        if not any(row.id == expression_id for row in rows):
+            await finish_with_send_errors_logged(
+                expr_command, f"未找到该 id 的表达模板 #{expression_id}。"
+            )
+        disabled = await memory_store.disable_expression(expression_id=expression_id)
         if disabled:
             await finish_with_send_errors_logged(expr_command, f"已禁用表达模板 #{parts[1]}。")
         await finish_with_send_errors_logged(expr_command, "未找到或已禁用该表达模板。")
@@ -193,7 +213,12 @@ async def handle_jargon(event: GroupMessageEvent, args: Message = CommandArg()) 
         _reject("learn")
         return
     parts = _split_args(args)
-    memory_store = get_chat_repository()
+    try:
+        memory_store = get_chat_repository()
+    except RuntimeStateError:
+        logger.exception("jargon command requested before runtime is ready")
+        await finish_with_send_errors_logged(jargon_command, "记忆服务暂不可用，请稍后再试。")
+        return
     sub = parts[0] if parts else "列表"
     if sub == "列表":
         rows = await memory_store.list_jargon(

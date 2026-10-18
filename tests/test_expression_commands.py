@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import gc
 
 import bot  # noqa: F401  (NoneBot init for on_command)
 import pytest
@@ -85,10 +86,12 @@ class SpyLearningRound:
         return self.summary
 
 
-def _expression_row(row_id: int, template: str, count: int = 3) -> ExpressionRow:
+def _expression_row(
+    row_id: int, template: str, count: int = 3, group_id: int = 1001
+) -> ExpressionRow:
     return ExpressionRow(
         id=row_id,
-        group_id=1001,
+        group_id=group_id,
         template=template,
         slot_count=1,
         evidence_row_id=1,
@@ -131,9 +134,11 @@ class SpyRepository:
         self.disable_expression_result = True
         self.override_jargon_result = True
         self.disable_jargon_result = True
+        self.list_active_calls: list[int] = []
 
     async def list_active_expressions(self, *, group_id: int):
-        return list(self.expressions)
+        self.list_active_calls.append(group_id)
+        return [row for row in self.expressions if row.group_id == group_id]
 
     async def disable_expression(self, *, expression_id: int) -> bool:
         self.disabled_expression_ids.append(expression_id)
@@ -386,6 +391,70 @@ async def test_learn_command_runtime_not_ready_is_reported(
     assert "学习失败" in matcher.finished[0]
 
 
+async def test_learn_command_holds_task_strong_reference(
+    monkeypatch: pytest.MonkeyPatch, admin_settings: BotSettings, repo: SpyRepository, matcher
+) -> None:
+    """GC 防护（Fix Round 1）：进行中的学习轮次必须被 _LEARN_TASKS 强引用持有，
+    asyncio 只保存弱引用，否则任务可能在播报前被垃圾回收。"""
+
+    class SlowRound:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def __call__(self, **kwargs):
+            self.started.set()
+            await self.release.wait()
+            return RoundSummary(status="ok", stored=1)
+
+    round_task = SlowRound()
+    monkeypatch.setattr(plugin, "run_learning_round", round_task)
+    monkeypatch.setattr(plugin, "get_runtime", lambda: FakeRuntime())
+    _patch_matchers(monkeypatch, matcher)
+
+    await _drive(plugin.handle_learn(FakeEvent()))  # type: ignore[arg-type]
+
+    # 轮次进行中（等待释放）：任务必须在强引用集合里，GC 拿不走
+    await round_task.started.wait()
+    assert plugin._LEARN_TASKS, "learning task must be held against GC while in flight"
+    held = next(iter(plugin._LEARN_TASKS))
+    assert not held.done()
+
+    # 即使强制垃圾回收，任务依然存活并最终完成播报
+    gc.collect()
+    round_task.release.set()
+    await _drain_background_tasks()
+
+    assert plugin._LEARN_TASKS == set(), "finished task must be discarded from the hold set"
+    assert len(matcher.finished) == 1
+    assert "入库1" in matcher.finished[0]
+
+
+async def test_learn_command_metric_counted_once(
+    monkeypatch: pytest.MonkeyPatch, admin_settings: BotSettings, repo: SpyRepository, matcher
+) -> None:
+    """COMMANDS 指标只在 handler 侧计一次（Fix Round 1）：round 内的旧增量已删，
+    ok 状态不再被重复计数。"""
+    counted: list[str] = []
+
+    class FakeMetric:
+        def labels(self, name: str) -> "FakeMetric":
+            self._name = name
+            return self
+
+        def inc(self) -> None:
+            counted.append(self._name)
+
+    monkeypatch.setattr(plugin.metrics, "COMMANDS", FakeMetric())
+    _enable_round(monkeypatch, SpyLearningRound(summary=RoundSummary(status="ok", stored=1)))
+    _patch_matchers(monkeypatch, matcher)
+
+    await _drive(plugin.handle_learn(FakeEvent()))  # type: ignore[arg-type]
+    await _drain_background_tasks()
+
+    assert counted == ["表达学习"]
+
+
 # ---------------------------------------------------------------------------
 # /表达 列表
 # ---------------------------------------------------------------------------
@@ -458,6 +527,7 @@ async def test_expression_disable_non_admin_is_rejected(
 async def test_expression_disable_admin(
     monkeypatch: pytest.MonkeyPatch, admin_settings: BotSettings, repo: SpyRepository, matcher
 ) -> None:
+    repo.expressions = [_expression_row(7, "这不是{对象}吗")]
     _patch_matchers(monkeypatch, matcher)
 
     await _drive(plugin.handle_expression(FakeEvent(), _args("禁用 7")))  # type: ignore[arg-type]
@@ -470,12 +540,40 @@ async def test_expression_disable_admin(
 async def test_expression_disable_missing_template(
     monkeypatch: pytest.MonkeyPatch, admin_settings: BotSettings, repo: SpyRepository, matcher
 ) -> None:
+    repo.expressions = [_expression_row(7, "这不是{对象}吗")]
     repo.disable_expression_result = False
     _patch_matchers(monkeypatch, matcher)
 
     await _drive(plugin.handle_expression(FakeEvent(), _args("禁用 7")))  # type: ignore[arg-type]
 
     assert "未找到或已禁用" in matcher.finished[0]
+
+
+async def test_expression_disable_foreign_group_id_is_not_disabled(
+    monkeypatch: pytest.MonkeyPatch, admin_settings: BotSettings, repo: SpyRepository, matcher
+) -> None:
+    """群隔离（Fix Round 1）：id 属于别的群 → 拒绝且不动仓库状态。"""
+    repo.expressions = [_expression_row(7, "这不是{对象}吗", group_id=2002)]
+    _patch_matchers(monkeypatch, matcher)
+
+    await _drive(plugin.handle_expression(FakeEvent(), _args("禁用 7")))  # type: ignore[arg-type]
+
+    assert "未找到该 id 的表达模板 #7" in matcher.finished[0]
+    assert repo.disabled_expression_ids == []
+    assert repo.list_active_calls == [1001]
+
+
+async def test_expression_disable_disabled_template_id_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, admin_settings: BotSettings, repo: SpyRepository, matcher
+) -> None:
+    """已禁用（不在活跃池）的 id → 同样走群作用域预检，不再调用 disable。"""
+    repo.expressions = []  # 活跃池为空：#7 已禁用
+    _patch_matchers(monkeypatch, matcher)
+
+    await _drive(plugin.handle_expression(FakeEvent(), _args("禁用 7")))  # type: ignore[arg-type]
+
+    assert "未找到该 id 的表达模板 #7" in matcher.finished[0]
+    assert repo.disabled_expression_ids == []
 
 
 async def test_expression_disable_requires_id(
@@ -487,6 +585,81 @@ async def test_expression_disable_requires_id(
 
     assert repo.disabled_expression_ids == []
     assert "用法" in matcher.finished[0]
+
+
+# ---------------------------------------------------------------------------
+# 只读命令不受总开关限制 / 运行时未就绪的兜底（Fix Round 1）
+# ---------------------------------------------------------------------------
+
+
+async def test_expression_list_reads_repo_with_learn_switch_off(
+    monkeypatch: pytest.MonkeyPatch, matcher
+) -> None:
+    """只读命令不受总开关限制：``expression_learn_enabled=False`` 时仍读库渲染。"""
+    repo = SpyRepository()
+    repo.expressions = [_expression_row(1, "这不是{对象}吗"), _expression_row(2, "确实")]
+    monkeypatch.setattr(plugin, "get_chat_repository", lambda: repo)
+    monkeypatch.setattr(plugin, "get_settings", lambda: _settings(expression_learn_enabled=False))
+    _patch_matchers(monkeypatch, matcher)
+
+    await _drive(plugin.handle_expression(FakeEvent(), _args("列表")))  # type: ignore[arg-type]
+
+    assert repo.list_active_calls == [1001]
+    text = matcher.finished[0]
+    assert "本群表达模板 2 条" in text
+    assert "这不是{对象}吗" in text
+    assert "#2" in text
+
+
+async def test_expression_list_reads_repo_with_learn_switch_off_and_empty_pool(
+    monkeypatch: pytest.MonkeyPatch, matcher
+) -> None:
+    """同上，空库时给出空列表措辞（而非被开关拦下）。"""
+    repo = SpyRepository()
+    monkeypatch.setattr(plugin, "get_chat_repository", lambda: repo)
+    monkeypatch.setattr(plugin, "get_settings", lambda: _settings(expression_learn_enabled=False))
+    _patch_matchers(monkeypatch, matcher)
+
+    await _drive(plugin.handle_expression(FakeEvent(), _args("")))  # type: ignore[arg-type]
+
+    assert repo.list_active_calls == [1001]
+    assert matcher.finished == ["本群暂无表达模板"]
+
+
+@pytest.mark.parametrize("args_text", ["列表", "禁用 7"])
+async def test_expression_command_without_runtime_reports_unavailable(
+    monkeypatch: pytest.MonkeyPatch, admin_settings: BotSettings, matcher, args_text: str
+) -> None:
+    """运行时未就绪 → 优雅兜底，不向调用方抛 RuntimeStateError。"""
+
+    def _broken_repository():
+        raise RuntimeStateError("runtime not ready")
+
+    monkeypatch.setattr(plugin, "get_chat_repository", _broken_repository)
+    _patch_matchers(monkeypatch, matcher)
+
+    await _drive(  # type: ignore[arg-type]
+        plugin.handle_expression(FakeEvent(), _args(args_text))
+    )
+
+    assert matcher.finished == ["记忆服务暂不可用，请稍后再试。"]
+
+
+@pytest.mark.parametrize("args_text", ["列表", "禁用 咸鱼翻车"])
+async def test_jargon_command_without_runtime_reports_unavailable(
+    monkeypatch: pytest.MonkeyPatch, admin_settings: BotSettings, matcher, args_text: str
+) -> None:
+    def _broken_repository():
+        raise RuntimeStateError("runtime not ready")
+
+    monkeypatch.setattr(plugin, "get_chat_repository", _broken_repository)
+    _patch_matchers(monkeypatch, matcher)
+
+    await _drive(  # type: ignore[arg-type]
+        plugin.handle_jargon(FakeEvent(), _args(args_text))
+    )
+
+    assert matcher.finished == ["记忆服务暂不可用，请稍后再试。"]
 
 
 # ---------------------------------------------------------------------------
@@ -672,3 +845,24 @@ async def test_expression_disable_and_override_against_real_repository(
     row = await real_repository.get_jargon(group_id=1001, term="咸鱼翻车")
     assert row is not None
     assert row.status == "disabled"
+
+
+async def test_expression_disable_foreign_group_id_against_real_repository(
+    monkeypatch: pytest.MonkeyPatch, admin_settings: BotSettings, real_repository, matcher
+) -> None:
+    """真实仓库上的群隔离（Fix Round 1）：别的群插入的模板 id 不被本群禁用。"""
+    await real_repository.upsert_expression(
+        group_id=2002,
+        template="别的群的模板",
+        slot_count=1,
+        evidence_row_id=None,
+        evidence_digest="other",
+    )
+    _patch_matchers(monkeypatch, matcher)
+
+    await _drive(plugin.handle_expression(FakeEvent(), _args("禁用 1")))  # type: ignore[arg-type]
+
+    assert "未找到该 id 的表达模板 #1" in matcher.finished[0]
+    # 别的群的模板仍是 active，跨群禁用没有发生
+    assert await real_repository.list_active_expressions(group_id=2002) != []
+    assert await real_repository.list_active_expressions(group_id=1001) == []
