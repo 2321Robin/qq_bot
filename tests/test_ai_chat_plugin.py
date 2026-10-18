@@ -1883,6 +1883,7 @@ async def test_auto_chat_disabled_keeps_legacy_behavior(
 async def test_auto_chat_enabled_routes_plain_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """旁路直连路径（S10-HUMAN-P0 H1 后）：collect 关闭时普通消息仍直连管道。"""
     captured: dict = {}
 
     async def fake_run_auto_chat(**kwargs):
@@ -1896,7 +1897,11 @@ async def test_auto_chat_enabled_routes_plain_message(
     monkeypatch.setattr(
         ai_chat_plugin,
         "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", auto_chat_enabled=True),
+        lambda: BotSettings(
+            allowed_group_ids="1001",
+            auto_chat_enabled=True,
+            auto_chat_collect_enabled=False,
+        ),
     )
     monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: RecordingStore())
 
@@ -1958,6 +1963,7 @@ async def test_auto_chat_quota_and_send_closures(
         lambda: BotSettings(
             allowed_group_ids="1001",
             auto_chat_enabled=True,
+            auto_chat_collect_enabled=False,
             named_mention_replacements="@小洛=2880000001",
         ),
     )
@@ -1970,6 +1976,98 @@ async def test_auto_chat_quota_and_send_closures(
 
     with pytest.raises(FinishCalled):
         await captured["send"]("你好，@小洛")
+
+
+# ---- 收集窗口接线（S10-HUMAN-P0-04）----
+
+
+@pytest.mark.asyncio
+async def test_auto_chat_collect_route_stashes_hooks_and_submits_batch_item(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """普通消息不再直连 run_auto_chat：暂存 quota/send 钩子，携带
+    row_id 的 BatchItem 交给收集器，并刷新 pending gauge。"""
+    submitted: list[tuple[int, object]] = []
+
+    class FakeCollector:
+        async def submit(self, group_id: int, item: object) -> None:
+            submitted.append((group_id, item))
+
+        def pending_count(self) -> int:
+            return len(submitted)
+
+    class RecordingStore(EmptyMemoryStore):
+        async def add_message(self, **kwargs) -> int:
+            return 777
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", auto_chat_enabled=True),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: RecordingStore())
+    monkeypatch.setattr(ai_chat_plugin, "_get_auto_chat_collector", lambda: FakeCollector())
+    monkeypatch.setattr(ai_chat_plugin, "_PENDING_AUTO_HOOKS", {})
+
+    await ai_chat_plugin.handle_ai_chat(FakeEvent("随便聊聊"))  # type: ignore[arg-type]
+
+    assert len(submitted) == 1
+    group_id, item = submitted[0]
+    assert group_id == 1001
+    assert item.raw_text == "随便聊聊"
+    assert item.sender_user_id == 2001
+    assert item.row_id == 777
+    assert 1001 in ai_chat_plugin._PENDING_AUTO_HOOKS
+    quota_check, send = ai_chat_plugin._PENDING_AUTO_HOOKS[1001]
+    assert callable(quota_check)
+    assert callable(send)
+
+
+@pytest.mark.asyncio
+async def test_auto_chat_collector_delivery_runs_pipeline_with_batch_and_hooks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """静默到期后 _deliver 整批交给 run_auto_chat(batch=...)：复用暂存钩子、
+    触发文本取批次末条，交付后钩子弹出、pending 归零。"""
+    captured: dict = {}
+
+    async def fake_run_auto_chat(**kwargs):
+        captured.update(kwargs)
+        await asyncio.sleep(0)  # 保持 _deliver 可等待的真实异步形态
+
+    class RecordingStore(EmptyMemoryStore):
+        async def add_message(self, **kwargs) -> int:
+            return 888
+
+    settings = BotSettings(
+        allowed_group_ids="1001",
+        auto_chat_enabled=True,
+        auto_chat_collect_quiet_seconds=0.02,
+        auto_chat_collect_max_seconds=0.5,
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_settings", lambda: settings)
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: RecordingStore())
+    monkeypatch.setattr(ai_chat_plugin, "run_auto_chat", fake_run_auto_chat)
+    monkeypatch.setattr(ai_chat_plugin, "_AUTO_CHAT_COLLECTOR", None)
+    monkeypatch.setattr(ai_chat_plugin, "_PENDING_AUTO_HOOKS", {})
+
+    await ai_chat_plugin.handle_ai_chat(FakeEvent("随便聊聊"))  # type: ignore[arg-type]
+
+    for _ in range(100):
+        if captured:
+            break
+        await asyncio.sleep(0.01)
+    await asyncio.sleep(0.05)  # 等 _run 任务完全收尾，避免悬空 task
+
+    assert captured["raw_text"] == "随便聊聊"
+    assert [it.raw_text for it in captured["batch"]] == ["随便聊聊"]
+    assert captured["event"].group_id == 1001
+    assert captured["settings"].auto_chat_collect_quiet_seconds == 0.02
+    assert captured["memory_store"] is not None
+    assert callable(captured["send"])
+    assert callable(captured["quota_check"])
+    assert 1001 not in ai_chat_plugin._PENDING_AUTO_HOOKS
+    assert ai_chat_plugin._AUTO_CHAT_COLLECTOR.pending_count() == 0
 
 
 # ---- 固定文案池化（S7-AUTO-08）----

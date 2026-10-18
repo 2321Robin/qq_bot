@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 import asyncio
 import random
+from types import SimpleNamespace
 from typing import Awaitable, Callable, Sequence
 
 from nonebot import get_bots, logger, on_message
@@ -22,7 +23,16 @@ from qq_bot.runtime import (
     get_runtime,
 )
 from qq_bot.services.ai_client import AIReplyError, request_ai_reply
-from qq_bot.services.auto_chat import run_auto_chat, schedule_cold_check, shared_state
+from qq_bot.services.auto_chat import (
+    BatchItem,
+    TriggerCategory,
+    classify_trigger,
+    run_auto_chat,
+    schedule_cold_check,
+    shared_state,
+    static_prefilter,
+)
+from qq_bot.services.auto_chat_collector import AutoChatCollector, CollectedBatch
 from qq_bot.services.chat_memory import ChatMemoryRepository
 from qq_bot.services.persona import load_persona
 from qq_bot.services.memory_prompt import (
@@ -136,7 +146,7 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
             if prompt is None:
                 if memory_store is not None:
                     try:
-                        await memory_store.add_message(
+                        stored_row_id = await memory_store.add_message(
                             group_id=event.group_id,
                             user_id=event.user_id,
                             message_text=raw_text,
@@ -155,6 +165,7 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                                 settings=settings,
                                 memory_store=memory_store,
                                 http_client=http_client,
+                                row_id=stored_row_id,
                             )
                 return
 
@@ -455,22 +466,96 @@ async def _maybe_auto_reply(
     settings: BotSettings,
     memory_store: ChatMemoryRepository,
     http_client: object | None,
+    row_id: int | None = None,
+    quoted_self: bool = False,
 ) -> None:
     """Bridge from the plugin into the auto-chat pipeline (S7-AUTO-07).
-    Send/quota are injected so the service stays matcher- and runtime-free."""
+    Send/quota are injected so the service stays matcher- and runtime-free.
+
+    入口分流（S10-HUMAN-P0 H1）：点名/引用/"你们"旁路直达管道（等不了话尾）；
+    其余普通消息在 `auto_chat_collect_enabled` 时先进收集窗口，静默到期后
+    整批交付，防抢答。`quoted_self` 本任务先落参数与透传（Task 6 才有真实
+    来源，调用处恒为 False）。"""
     load_persona(settings)  # 前置校验：人设配置可解析（坏配置早失败）
 
     quota_check, send = _build_auto_chat_hooks(event, settings)
 
-    await run_auto_chat(
-        event=event,
-        raw_text=raw_text,
-        settings=settings,
-        memory_store=memory_store,
-        send=send,
-        quota_check=quota_check,
-        client=http_client,
+    category = classify_trigger(raw_text, settings=settings, quoted_self=quoted_self)
+    bypass = category in (
+        TriggerCategory.NICKNAMED,
+        TriggerCategory.QUOTED,
+        TriggerCategory.YOU_PLURAL,
     )
+    if not settings.auto_chat_collect_enabled or bypass:
+        await run_auto_chat(
+            event=event,
+            raw_text=raw_text,
+            settings=settings,
+            memory_store=memory_store,
+            send=send,
+            quota_check=quota_check,
+            client=http_client,
+        )
+        return
+    collector = _get_auto_chat_collector()
+    _PENDING_AUTO_HOOKS.setdefault(event.group_id, (quota_check, send))
+    await collector.submit(
+        event.group_id,
+        BatchItem(
+            raw_text=raw_text,
+            sender_user_id=event.user_id,
+            created_at=datetime.now(UTC),
+            row_id=row_id,
+        ),
+    )
+    metrics.AUTO_CHAT_PENDING.set(collector.pending_count())
+
+
+_AUTO_CHAT_COLLECTOR: AutoChatCollector | None = None
+_PENDING_AUTO_HOOKS: dict[int, tuple] = {}
+
+
+def _get_auto_chat_collector() -> AutoChatCollector:
+    """进程级收集器单例：quiet/max 与 prefilter 在首建时从当前 settings
+    固化（settings 视为每进程静态，不做热重载）。"""
+    global _AUTO_CHAT_COLLECTOR
+    if _AUTO_CHAT_COLLECTOR is None:
+        settings = get_settings()
+
+        async def _deliver(group_id: int, batch: CollectedBatch) -> None:
+            hooks = _PENDING_AUTO_HOOKS.pop(group_id, None)
+            quota_check, send = hooks if hooks else (None, None)
+            try:
+                memory_store = get_chat_repository()
+                http_client = get_http_client()
+            except Exception:
+                memory_store = None
+                http_client = None
+            if memory_store is None or send is None:
+                return
+            await run_auto_chat(
+                event=SimpleNamespace(group_id=group_id),
+                raw_text=batch.items[-1].raw_text,
+                batch=batch.items,
+                settings=get_settings(),
+                memory_store=memory_store,
+                send=send,
+                quota_check=quota_check,
+                client=http_client,
+            )
+            # 交付后刷新 pending gauge（批次已出队，恢复到当前全局挂起数）
+            metrics.AUTO_CHAT_PENDING.set(
+                0 if _AUTO_CHAT_COLLECTOR is None else _AUTO_CHAT_COLLECTOR.pending_count()
+            )
+
+        _AUTO_CHAT_COLLECTOR = AutoChatCollector(
+            quiet_seconds=settings.auto_chat_collect_quiet_seconds,
+            max_seconds=settings.auto_chat_collect_max_seconds,
+            prefilter=lambda text: static_prefilter(text, settings=settings),
+            metric=lambda stage, result: metrics.AUTO_CHAT.labels(stage, result).inc(),
+            deliver=_deliver,
+        )
+    return _AUTO_CHAT_COLLECTOR
 
 
 def _mentions_self(event: GroupMessageEvent) -> bool:

@@ -148,6 +148,12 @@ _define(
     ["stage", "result"],
 )
 _define(
+    "AUTO_CHAT_PENDING",
+    Gauge,
+    "qq_bot_auto_chat_pending_batches",
+    "Pending auto-chat collection batches",
+)
+_define(
     "ROUTES",
     Counter,
     "qq_bot_route_total",
