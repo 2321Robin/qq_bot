@@ -103,14 +103,16 @@ def build_user_aliases(rows: Sequence[ChatMemoryRow]) -> dict[int, str]:
     return alias
 
 
-# 引用令牌（S10-HUMAN-P0 H4）：入库文本里的 `u{id}` 标记在渲染层替换。
-_REF_TOKEN_RE = re.compile(r"u(\d+)")
+# 引用标记（S10-HUMAN-P0 H4 + Fix Round 1）：入库文本里的 `[引用 u{id}:`
+# 标记头在渲染层替换。锚定完整标记头（含方括号），避免误伤普通文本
+# （如 "au999"、"u4200"）。
+_REF_TOKEN_RE = re.compile(r"\[引用 u(\d+):")
 
 
 def substitute_reference_tokens(text: str, alias: dict[int, str]) -> str:
-    """把入库文本中的引用令牌 u{id} 替换为该次渲染的匿名别名；
+    """把入库文本中的引用标记头 `[引用 u{id}:` 替换为该次渲染的匿名别名；
     映射外的 id 显示"用户?"（H4 spec：渲染层绝不出现原始 QQ 号）。"""
-    return _REF_TOKEN_RE.sub(lambda m: alias.get(int(m.group(1)), "用户?"), text)
+    return _REF_TOKEN_RE.sub(lambda m: f"[引用 {alias.get(int(m.group(1)), '用户?')}:", text)
 
 
 def render_rows_with_aliases(rows: Sequence[ChatMemoryRow]) -> list[str]:

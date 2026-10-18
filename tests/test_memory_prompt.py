@@ -185,3 +185,9 @@ def test_unknown_reference_token_becomes_anon() -> None:
 
 def test_plain_text_untouched() -> None:
     assert substitute_reference_tokens("来u一下", {}) == "来u一下"
+
+
+def test_ordinary_text_with_letter_u_digits_untouched() -> None:
+    """Fix Round 1：替换锚定完整标记头 `[引用 u<id>:`，普通文本里的
+    "au999"/"u4200" 之类不被误替换。"""
+    assert substitute_reference_tokens("au999 和 u4200", {}) == "au999 和 u4200"

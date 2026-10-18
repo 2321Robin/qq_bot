@@ -2347,8 +2347,11 @@ async def test_quoted_other_user_renders_marker_into_pipeline_text(
         def pending_count(self) -> int:
             return len(submitted)
 
+    written: list[dict] = []
+
     class RecordingStore(EmptyMemoryStore):
         async def add_message(self, **kwargs) -> int:
+            written.append(kwargs)
             return 654
 
     auto_calls: list = []
@@ -2372,6 +2375,8 @@ async def test_quoted_other_user_renders_marker_into_pipeline_text(
     assert len(submitted) == 1
     assert submitted[0].raw_text == "回复 [引用 u12345:上分]：冲"
     assert auto_calls == []  # 普通引用不走旁路
+    # Fix Round 1：存储侧同样带标记（非 self 方向的入库文本可回查引用上下文）
+    assert written[0]["message_text"] == "回复 [引用 u12345:上分]：冲"
 
 
 @pytest.mark.asyncio
@@ -2413,3 +2418,116 @@ async def test_quote_reply_disabled_ignores_reply_segments(
 
     assert len(submitted) == 1
     assert submitted[0].raw_text == "随便聊聊"  # 未渲染、未旁路
+
+
+# ---- Fix Round 1（S10-HUMAN-P0-06）：标记只进存储/auto 管道，命令/提问
+# ---- 提取继续用未加标记的 raw_text ----
+
+
+@pytest.mark.asyncio
+async def test_quoted_reply_with_ai_prefix_still_explicit_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fix Round 1 回归 A：reply + "ai xxx" 前缀仍识别为显式 AI 命令；
+    提示词不含 u{id} 令牌与 [引用 标记（标记只进存储）。"""
+    captured: dict = {}
+
+    async def fake_request_ai_reply(
+        prompt: str,
+        *,
+        settings: BotSettings,
+        client: object | None = None,
+        search_context: str = "",
+        chat_context: str = "",
+        roco_context: str = "",
+    ) -> str:
+        captured["prompt"] = prompt
+        return "帮你看了"
+
+    written: list[dict] = []
+
+    class RecordingStore(EmptyMemoryStore):
+        async def add_message(self, **kwargs) -> int:
+            written.append(kwargs)
+            return 555
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(
+            allowed_group_ids="1001",
+            ai_api_key="secret",
+            auto_chat_enabled=False,
+            auto_chat_quote_reply_enabled=True,
+        ),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: RecordingStore())
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    event = FakeEvent(
+        "ai 帮我看看这个",
+        segments=[FakeReplySegment({"id": 11, "qq": 12345, "text": "上分"})],
+    )
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(event)  # type: ignore[arg-type]
+
+    prompt = captured["prompt"]
+    assert prompt == "帮我看看这个"
+    assert "u12345" not in prompt
+    assert "[引用" not in prompt
+    # 存储侧仍带标记：引用上下文保留给本地存储与后续渲染
+    assert written[0]["message_text"] == "回复 [引用 u12345:上分]：ai 帮我看看这个"
+
+
+@pytest.mark.asyncio
+async def test_quoted_reply_addressed_to_bot_prompt_has_no_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fix Round 1 回归 B：reply + @bot（to_me）走显式应答路径；提示词绝不
+    携带原始 u{id} 令牌（QQ 号经模型回显进群聊即隐私边界破防）。"""
+    captured: dict = {}
+
+    async def fake_request_ai_reply(
+        prompt: str,
+        *,
+        settings: BotSettings,
+        client: object | None = None,
+        search_context: str = "",
+        chat_context: str = "",
+        roco_context: str = "",
+    ) -> str:
+        captured["prompt"] = prompt
+        return "看到了"
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(
+            allowed_group_ids="1001",
+            ai_api_key="secret",
+            auto_chat_quote_reply_enabled=True,
+        ),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    event = FakeEvent(
+        "帮我看看这个",
+        segments=[FakeReplySegment({"id": 12, "qq": 12345, "text": "上分"})],
+        to_me=True,
+    )
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(event)  # type: ignore[arg-type]
+
+    prompt = captured["prompt"]
+    assert prompt == "帮我看看这个"
+    assert "u12345" not in prompt
+    assert "[引用" not in prompt

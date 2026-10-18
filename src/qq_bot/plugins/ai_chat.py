@@ -133,12 +133,16 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
 
             raw_text = event.get_message().extract_plain_text().strip()
 
-            # 引用接线（S10-HUMAN-P0-06 H4）：先登记本条消息供后续引用回查，
-            # 再解析 reply 段。引用自己 → quoted_self 必回旁路（不渲染标记）；
-            # 引用他人 → 渲染 u{id} 标记（只进本地 chat 存储，渲染层由
-            # memory_prompt 替换为匿名别名，绝不出现在日志/指标/发送文本）。
+            # 引用接线（S10-HUMAN-P0-06 H4 + Fix Round 1）：先登记本条消息供
+            # 后续引用回查，再解析 reply 段。引用自己 → quoted_self 必回旁路
+            # （不渲染标记）；引用他人 → 渲染 u{id} 标记进 stored_text，只有
+            # 本地 chat 存储与 auto 管道吃标记文本（渲染层由 memory_prompt
+            # 替换为匿名别名，绝不出现在日志/指标/发送文本）。命令/提问提取
+            # 继续用未加标记的 raw_text：reply + "ai " 前缀仍是显式命令，被 @
+            # 时提示词不携带 u{id}（防止 QQ 号经模型回显进群聊）。
             quoted_self = False
             quoted_ref = None
+            stored_text = raw_text
             if settings.auto_chat_quote_reply_enabled:
                 from qq_bot.services.quote_reference import (
                     parse_reply_reference,
@@ -155,7 +159,7 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                     quoted_self = True
                     quoted_ref = None  # self 引用必回，但不渲染标记
                 if quoted_ref is not None:
-                    raw_text = render_quoted_raw_text(raw_text, quoted_ref)
+                    stored_text = render_quoted_raw_text(raw_text, quoted_ref)
 
             prompt = extract_ai_prompt(raw_text, prefix=settings.ai_prefix)
 
@@ -174,7 +178,7 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                         stored_row_id = await memory_store.add_message(
                             group_id=event.group_id,
                             user_id=event.user_id,
-                            message_text=raw_text,
+                            message_text=stored_text,
                             is_ai_prompt=is_ai_prompt,
                         )
                     except Exception as exc:
@@ -186,7 +190,7 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                         if settings.auto_chat_enabled:
                             await _maybe_auto_reply(
                                 event,
-                                raw_text=raw_text,
+                                raw_text=stored_text,
                                 settings=settings,
                                 memory_store=memory_store,
                                 http_client=http_client,
@@ -266,7 +270,7 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                 memory_message_id = await memory_store.add_message(
                     group_id=event.group_id,
                     user_id=event.user_id,
-                    message_text=raw_text,
+                    message_text=stored_text,
                     is_ai_prompt=is_ai_prompt,
                 )
             except Exception as exc:
