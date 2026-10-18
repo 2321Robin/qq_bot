@@ -66,6 +66,44 @@ async def test_messages_since_is_group_scoped_and_reads_empty_ai_reply(tmp_path)
         await repo.close()
 
 
+async def test_messages_since_never_returns_bot_reply_as_message_text(tmp_path):
+    """自我污染的真正不变式（S10-HUMAN-P1-FINAL 第二轮）。
+
+    机器人说过的话只写在 ``ai_reply`` 列：它挂在人类那一行的附带上，
+    从不作为 ``message_text`` 行出现。若 ``messages_since`` 把机器人回复
+    当消息正文返回，学习轮的证据解析就会在人类消息里「找到」这句机器人
+    话并把它学成句式——自我污染闭环就此打开。此处在真实 sqlite 上锁死
+    该不变式：机器人文本只出现在 ``ai_reply``，``message_text`` 仍是人类自己的话。
+
+    轮级回归（候选模板被拒）见 ``tests/test_expression_learner.py``
+    ``test_bot_reply_text_is_never_learnable_evidence``。"""
+    repo = _repo(tmp_path)
+    await repo.open()
+    try:
+        message_id = await repo.add_message(
+            group_id=1001,
+            user_id=2001,
+            message_text="人类自己的话",
+            created_at=datetime.now(UTC) - timedelta(minutes=5),
+        )
+        await repo.update_ai_reply(message_id, "机器人自己的回复")
+        await repo.add_message(
+            group_id=1001,
+            user_id=2002,
+            message_text="另一个人说的话",
+            created_at=datetime.now(UTC) - timedelta(minutes=4),
+        )
+
+        rows = await repo.messages_since(group_id=1001, days=7)
+
+        assert [r.message_text for r in rows] == ["人类自己的话", "另一个人说的话"]
+        assert all("机器人自己的回复" not in r.message_text for r in rows)
+        # 机器人文本确实落库了，但只在 ai_reply 列——上面的断言因此有意义
+        assert [r.ai_reply for r in rows] == ["机器人自己的回复", ""]
+    finally:
+        await repo.close()
+
+
 async def test_expression_upsert_create_then_bump(tmp_path):
     repo = _repo(tmp_path)
     await repo.open()

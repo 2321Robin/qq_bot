@@ -773,8 +773,10 @@ async def _expression_sample(
     观测（spec 观测节）：``inject/ok``（样本非空 → 本轮生成有参考可用）、
     ``inject/skip_insufficient``（活跃池未过阈值 → 空样本）、
     ``inject/skip_disabled``（功能关闭）。三者都记在 helper 里而不是 run_auto_chat
-    顶层：helper 只在生成路径被调用一次（每轮回复至多一条），不会在决策门、
-    点名旁路等路径上被反复触发，指标是「每次生成尝试的注入结局」这一诚实信号。
+    顶层：每次进入生成路径（含点名/引用必回/普通采样）且功能关闭时发射一次，
+    每次生成尝试恰好一次（样本整轮只采一次，重试不重复采），指标是「每次
+    生成尝试的注入结局」这一诚实信号；决策门、冷却/backoff 等前置退出在
+    到达 helper 之前就返回，不会触发。
     存储异常（fail-soft）不贴任何 inject 标签——那不是规格里的 skip 理由。"""
     if not settings.expression_learn_enabled:
         metrics.EXPRESSION_TOTAL.labels("inject", "skip_disabled").inc()

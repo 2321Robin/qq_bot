@@ -408,7 +408,14 @@ async def test_bot_reply_text_is_never_learnable_evidence():
     机器人的回复只存在于 ``ai_reply`` 列，从不作为 ``message_text`` 行；
     因此以机器人回复为 evidence_quote 的候选模板必须被拒——证据原文不在
     任何一条人类消息正文里（``_resolve_evidence_row`` 找不到行 →
-    validate/rejected），本批零入库。"""
+    validate/rejected），本批零入库。
+
+    注意：本用例只锁死轮级（解析器）行为——即使机器人回复泄漏进
+    ``message_text``，证据也能解析到行，本断言仍然会绿。真正的不变式
+    （``messages_since`` 从不把机器人文本当消息正文返回）在
+    ``tests/test_chat_memory_learning.py``
+    ``test_messages_since_never_returns_bot_reply_as_message_text``
+    的真实 sqlite 上锁死；那一处才是污染闭环的入口。"""
     mem = _BotReplyPollutionMemory(["随便聊聊", "确实"])
     settings = _settings()
 
