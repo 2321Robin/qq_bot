@@ -63,12 +63,6 @@ def validate_expression(
             return False, "unslotted_too_long"
         if quote and quote not in grounded:
             return False, "fixed_not_grounded"
-        # 无槽位模板整条即表达词：它引用的 evidence_quote 必须装得下它本身
-        # （quote 至少与模板等长）。模板比自己的引用还长 ⇒ 该引用根本不可能
-        # 逐字包含它，模型是把引用之外的 content word 一起抄了进来
-        # （如"去打新活动吗"引用"那新活动吗"——6 > 5，拒）。
-        if quote and len(text) > len(quote):
-            return False, "fixed_not_grounded"
         return True, "ok"
     for fragment in fragments:
         fragment = fragment.strip()
@@ -285,10 +279,10 @@ def _batch_prompt(batch: list[ChatMemoryRow], directive: str) -> str:
 async def _review_candidates(
     *, batch, candidates, settings, complete, quota, summary: RoundSummary
 ) -> list[bool]:
-    """自检闸：逐条 accept/reject。调用本身失败（异常 → 无文本）时全拒
-    （spec 护栏 4：自检调用失败 → 本批不产生任何入库）；调用成功但文本不是
-    可用的自检结果时，保留确定性校验的结论——自检的职责是「剔除」而不是
-    「批准」，没有明确拒绝信号就不推翻已过全部硬闸的候选。"""
+    """自检闸：逐条 accept/reject。拿不到可用的自检结论一律全拒
+    （spec 护栏 4：自检调用失败 → 本批不产生任何入库）：调用本身失败
+    （异常 / 非文本）与调用成功但文本不是可解析的自检结果同属
+    「无法判定」，不区分成因，都按失败处理（fail closed）。"""
     listed = "\n".join(f"{i}. {candidate[0]}" for i, candidate in enumerate(candidates))
     content = await _llm(
         complete,
@@ -303,14 +297,11 @@ async def _review_candidates(
         ),
         json_mode=True,
     )
-    if content is None:
-        metrics.EXPRESSION_TOTAL.labels("review", "error").inc()
-        return [False] * len(candidates)
     decisions = _parse_review(content, len(candidates))
     if decisions is None:
-        # 调用成功但没有可解析的自检结论：不推翻校验结论
+        # 拿不到可判定的自检结论（调用失败或文本不可解析）→ 全拒
         metrics.EXPRESSION_TOTAL.labels("review", "error").inc()
-        return [True] * len(candidates)
+        return [False] * len(candidates)
     accepted = sum(1 for accept in decisions if accept)
     metrics.EXPRESSION_TOTAL.labels("review", "kept" if accepted else "rejected").inc()
     return decisions
@@ -408,11 +399,6 @@ async def _process_batch(
             metrics.EXPRESSION_TOTAL.labels("validate", "rejected").inc()
             continue
         candidates.append((template, quote, evidence_row))
-    if expressions:
-        if candidates:
-            metrics.EXPRESSION_TOTAL.labels("validate", "kept").inc()
-        else:
-            metrics.EXPRESSION_TOTAL.labels("validate", "rejected").inc()
     summary.expressions_extracted += len(candidates)
 
     if candidates:
@@ -438,7 +424,8 @@ async def _process_batch(
                     evidence_digest=_evidence_digest(quote),
                 )
             except Exception:
-                metrics.EXPRESSION_TOTAL.labels("store", "error").inc()
+                # 非 spec 标签集（store 只有 ok|duplicate）：静默跳过，
+                # stored/duplicated 均不递增，摘要如实反映未入库
                 continue
             if outcome == "created":
                 summary.stored += 1

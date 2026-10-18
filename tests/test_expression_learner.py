@@ -142,10 +142,8 @@ async def test_round_happy_path_extracts_stores_and_confirms_jargon():
                 expressions=[
                     {"template": "那{对象}吗", "evidence_quote": "那新活动吗"},
                     {"template": "确实", "evidence_quote": "确实"},
-                    {
-                        "template": "去打新活动吗",
-                        "evidence_quote": "那新活动吗",
-                    },  # 校验拒绝：内容词
+                    {"template": "那{对象}杀我", "evidence_quote": "那新活动杀我"},
+                    # 校验拒绝：含槽位模板的固定片段带内容词（"杀我" 不在虚词白名单）
                 ],
                 jargon=["咸鱼翻车"],
             )
@@ -170,21 +168,89 @@ async def test_round_extract_failure_isolates_batch():
     texts = [f"消息{i}" for i in range(25)]  # 2 批
     mem = FakeMemory(texts)
 
-    calls = {"n": 0}
+    calls = {"extract": 0, "review": 0, "define": 0}
 
     async def complete(**kwargs):
-        calls["n"] += 1
-        if calls["n"] == 1:
-            return "不是json"  # 第一批提取失败
-        return _extract_payload(
-            expressions=[{"template": "确实", "evidence_quote": texts[20]}], jargon=[]
-        )
+        system = kwargs["system_prompt"]
+        if "表达分析器" in system:
+            calls["extract"] += 1
+            if calls["extract"] == 1:
+                return "不是json"  # 第一批提取失败
+            return _extract_payload(
+                expressions=[{"template": "确实", "evidence_quote": texts[20]}], jargon=[]
+            )
+        if "表达审核器" in system:
+            calls["review"] += 1
+            return _review_payload(accept_indexes={0}, count=1)
+        calls["define"] += 1
+        return json.dumps({"definition": "群内用语"})  # 黑话释义
 
     summary = await run_learning_round(
         group_id=1, memory_store=mem, settings=_settings(), complete=complete, quota=None
     )
     assert summary.status == "ok" and summary.batches == 2
+    # 第一批提取失败 → 该批不进入校验/自检；第二批照常（自检分支被真实走到）
+    assert calls["extract"] == 2 and calls["review"] == 1
+    assert summary.rejected_review == 0
     assert summary.stored == 1  # 第二批照常
+    assert len(mem.stored) == 1 and mem.stored[0]["template"] == "确实"
+
+
+async def test_round_review_parse_failure_rejects_all_and_stores_nothing():
+    """自检返回非自检 JSON（如提取形状的载荷）→ 全拒，本批零入库（fail closed）。"""
+    mem = FakeMemory(["那新活动吗", "确实"])
+
+    async def complete(**kwargs):
+        system = kwargs["system_prompt"]
+        if "表达分析器" in system:
+            return _extract_payload(
+                expressions=[
+                    {"template": "那{对象}吗", "evidence_quote": "那新活动吗"},
+                    {"template": "确实", "evidence_quote": "确实"},
+                ],
+                jargon=[],
+            )
+        if "表达审核器" in system:
+            # 提取形状的载荷：_parse_review 找不到 results / 长度不符 → None
+            return _extract_payload(
+                expressions=[{"template": "那{对象}吗", "evidence_quote": "那新活动吗"}], jargon=[]
+            )
+        raise AssertionError("自检失败后不应再发其它调用")
+
+    summary = await run_learning_round(
+        group_id=1, memory_store=mem, settings=_settings(), complete=complete, quota=None
+    )
+    assert summary.expressions_extracted == 2  # 通过校验的候选照常计数
+    assert summary.rejected_review == 2
+    assert summary.stored == 0 and summary.duplicated == 0
+    assert mem.stored == []  # upsert 从未被调用
+
+
+async def test_round_review_call_raises_rejects_all_and_stores_nothing():
+    """自检调用本身抛异常 → 无文本 → 同样全拒、零入库（spec 护栏 4）。"""
+    mem = FakeMemory(["那新活动吗", "确实"])
+
+    async def complete(**kwargs):
+        system = kwargs["system_prompt"]
+        if "表达分析器" in system:
+            return _extract_payload(
+                expressions=[
+                    {"template": "那{对象}吗", "evidence_quote": "那新活动吗"},
+                    {"template": "确实", "evidence_quote": "确实"},
+                ],
+                jargon=[],
+            )
+        if "表达审核器" in system:
+            raise RuntimeError("provider down")
+        raise AssertionError("自检失败后不应再发其它调用")
+
+    summary = await run_learning_round(
+        group_id=1, memory_store=mem, settings=_settings(), complete=complete, quota=None
+    )
+    assert summary.expressions_extracted == 2
+    assert summary.rejected_review == 2
+    assert summary.stored == 0 and summary.duplicated == 0
+    assert mem.stored == []
 
 
 class TestSplitSlots:
