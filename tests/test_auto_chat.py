@@ -362,6 +362,12 @@ class FakeMemory:
             rows.append(stale)
         return rows
 
+    def memory_text_rows(self):
+        return [
+            _row(t, user_id=2001 + i, row_id=i + 1, created_at=_fresh_iso())
+            for i, t in enumerate(self.texts)
+        ]
+
 
 class FakeAutoChatSettings(BotSettings):
     model_config = BotSettings.model_config.copy()
@@ -405,6 +411,9 @@ class Harness:
 
     async def quota_check(self) -> bool:
         return self.quota_allowed
+
+    def memory_text_rows(self):
+        return self.memory.memory_text_rows()
 
     async def sleeper(self, seconds: float) -> None:
         self.slept.append(seconds)
@@ -1188,3 +1197,70 @@ class TestClassifyTrigger:
             classify_trigger("今天好累啊", settings=_run_settings(persona_name="小洛"))
             is TriggerCategory.ORDINARY
         )
+
+
+# ---- S10-HUMAN-P0-03：BatchItem 与 run_auto_chat 批次契约 ----
+
+from qq_bot.services.auto_chat import BatchItem, batch_plusone_text  # noqa: E402
+
+
+async def _run_batch(h: Harness, items: list[BatchItem]) -> None:
+    await run_auto_chat(
+        event=FakeEvent(),
+        raw_text=items[-1].raw_text,
+        batch=items,
+        settings=h.settings,
+        memory_store=h.memory,
+        send=h.send,
+        quota_check=h.quota_check,
+        state=h.state,
+        rng=h.rng,
+        sleeper=h.sleeper,
+        _cold_sleep=h.instant_cold_sleep,
+        _request_completion=h.completion(),
+    )
+
+
+class TestBatchPipeline:
+    async def test_batch_gate_called_once_with_batch_context(self) -> None:
+        h = Harness(["随便聊聊"], _run_settings(auto_chat_sample_rate=1.0))
+        now = datetime.now(UTC)
+        items = [
+            BatchItem(raw_text="开黑吗", sender_user_id=3001, created_at=now, row_id=999),
+            BatchItem(raw_text="来不来", sender_user_id=3001, created_at=now, row_id=998),
+        ]
+        await _run_batch(h, items)
+        gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
+        assert len(gate_calls) == 1
+        assert "开黑吗" in gate_calls[0]["user_prompt"]
+        assert "连发2条" in gate_calls[0]["user_prompt"]
+        assert len(h.sent) >= 1
+
+    async def test_batch_rows_excluded_by_row_id(self) -> None:
+        # FakeMemory 的行 id 是 1..N；row_id=1/2 指向这两行 → 上下文只剩"随便聊聊"
+        h = Harness(["随便聊聊", "开黑吗", "来不来"], _run_settings(auto_chat_sample_rate=1.0))
+        now = datetime.now(UTC)
+        items = [
+            BatchItem(raw_text="开黑吗", sender_user_id=3001, created_at=now, row_id=2),
+            BatchItem(raw_text="来不来", sender_user_id=3001, created_at=now, row_id=3),
+        ]
+        await _run_batch(h, items)
+        gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
+        assert gate_calls[0]["user_prompt"].count("开黑吗") == 1  # 只在批次段出现一次
+
+    async def test_batch_plusone_uses_text_without_gate(self) -> None:
+        h = Harness(["冲冲冲", "冲冲冲"], _run_settings())  # 两行同文不同人（user 2001/2002）
+        now = datetime.now(UTC)
+        items = [BatchItem(raw_text="冲冲冲", sender_user_id=3001, created_at=now, row_id=99)]
+        assert batch_plusone_text(items, h.memory_text_rows()) == "冲冲冲"
+        await _run_batch(h, items)
+        assert h.sent == ["冲冲冲"]
+
+    async def test_batch_negative_feedback_sets_backoff(self) -> None:
+        h = Harness(["小洛闭嘴"], _run_settings())
+        h.state.acquire(1001, settings=h.settings)  # bot 刚发言 → recent+负反馈词 → 退避
+        now = datetime.now(UTC)
+        items = [BatchItem(raw_text="小洛你闭嘴", sender_user_id=3001, created_at=now, row_id=99)]
+        await _run_batch(h, items)
+        assert h.state.in_backoff(1001) is True
+        assert h.sent == []

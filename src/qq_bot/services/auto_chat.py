@@ -212,6 +212,50 @@ class GateDecision:
     confidence: float
 
 
+@dataclass(frozen=True)
+class BatchItem:
+    """收集器批次项（S10-HUMAN-P0 H1）。`row_id` 是 chat_memory 行 id，
+    供上下文去重（避免批次文本双渲染）；单消息旁路路径可为 None。"""
+
+    raw_text: str
+    sender_user_id: int
+    created_at: datetime
+    row_id: int | None = None
+
+
+def _batch_as_rows(items: Sequence[BatchItem], group_id: int) -> list[ChatMemoryRow]:
+    """批次项转合成行（负 id），供负反馈检测/调优上下文/批次渲染复用。"""
+    return [
+        ChatMemoryRow(
+            id=-(index + 1),
+            group_id=group_id,
+            user_id=item.sender_user_id,
+            message_text=item.raw_text,
+            created_at=item.created_at.isoformat(),
+            is_ai_prompt=False,
+            ai_reply=None,
+        )
+        for index, item in enumerate(items)
+    ]
+
+
+def batch_plusone_text(items: Sequence[BatchItem], rows: Sequence[ChatMemoryRow]) -> str | None:
+    """+1（批次版）：触发文本在批次∪近期行中存在不同发送者的同文消息。"""
+    trigger = items[-1].raw_text.strip()
+    if not trigger:
+        return None
+    senders = {items[-1].sender_user_id}
+    for item in items[:-1]:
+        if item.raw_text.strip() == trigger:
+            senders.add(item.sender_user_id)
+    for row in rows:
+        if row.message_text.strip() == trigger:
+            senders.add(row.user_id)
+    if any(uid != items[-1].sender_user_id for uid in senders):
+        return trigger
+    return None
+
+
 def static_prefilter(raw_text: str, *, settings: BotSettings) -> str:
     """Zero-cost static text rules. Returns "pass" or a rejection reason:
     "command" | "too_short" | "sensitive"."""
@@ -674,8 +718,13 @@ async def run_auto_chat(
     sleeper: Callable[[float], Awaitable[None]] = asyncio.sleep,
     _cold_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     _request_completion: Any = None,
+    batch: Sequence[BatchItem] | None = None,
 ) -> None:
     """Full pipeline for one non-addressed group message (spec 一/二/三/四节).
+
+    ``batch``（S10-HUMAN-P0）传入收集器预筛后的批次项时走批次路径：跳过
+    static_prefilter（收集器已逐条预筛），批次文本作为最后一条触发上下文；
+    ``batch=None`` 时为单消息路径，行为与历史版本逐行等价。
 
     ``_request_completion`` is a test seam defaulting to the real
     ``request_completion``; production callers never pass it. Send and quota
@@ -690,13 +739,32 @@ async def run_auto_chat(
     def _metric(stage: str, result: str) -> None:
         metrics.AUTO_CHAT.labels(stage, result).inc()
 
-    if event.user_id in settings.auto_chat_ignored_user_id_list:
+    is_batch = batch is not None
+    items = (
+        list(batch)
+        if is_batch
+        else [
+            BatchItem(raw_text=raw_text, sender_user_id=event.user_id, created_at=datetime.now(UTC))
+        ]
+    )
+    trigger_text = items[-1].raw_text
+
+    if is_batch:
+        items = [
+            it for it in items if it.sender_user_id not in settings.auto_chat_ignored_user_id_list
+        ]
+        if not items:
+            _metric("prefilter", "ignored")
+            return
+    elif event.user_id in settings.auto_chat_ignored_user_id_list:
         _metric("prefilter", "ignored")
         return
-    static = static_prefilter(raw_text, settings=settings)
-    if static in ("command", "sensitive"):
-        _metric("prefilter", static)
-        return
+    static = "pass"
+    if not is_batch:
+        static = static_prefilter(raw_text, settings=settings)
+        if static in ("command", "sensitive"):
+            _metric("prefilter", static)
+            return
 
     try:
         rows = await memory_store.recent_group_messages(
@@ -712,19 +780,31 @@ async def run_auto_chat(
         rows = [
             row for row in rows if (parsed := _row_created_at(row)) is not None and parsed >= cutoff
         ]
-    if not rows:
+    if is_batch:
+        rows = [
+            row
+            for row in rows
+            if row.id not in {it.row_id for it in items if it.row_id is not None}
+        ]
+    if not rows and not is_batch:
         _metric("prefilter", "no_context")
         return
-    plusone = plusone_triggered(rows, raw_text, sender_user_id=event.user_id) and (
-        raw_text not in _recent_replies(group_id)
-    )
+    if is_batch:
+        plusone_text = batch_plusone_text(items, rows)
+        plusone = plusone_text is not None and plusone_text not in _recent_replies(group_id)
+    else:
+        plusone = plusone_triggered(rows, raw_text, sender_user_id=event.user_id) and (
+            raw_text not in _recent_replies(group_id)
+        )
+        plusone_text = raw_text
     if static == "too_short" and not plusone:
         _metric("prefilter", "too_short")
         return
 
     bot_recently = state.recently_spoke(group_id, settings.auto_chat_cooldown_seconds)
+    detection_rows = [*rows, *_batch_as_rows(items, group_id)] if is_batch else rows
     if detect_negative_feedback(
-        rows, persona=persona, settings=settings, bot_recently_spoke=bot_recently
+        detection_rows, persona=persona, settings=settings, bot_recently_spoke=bot_recently
     ):
         state.set_backoff(group_id, settings.auto_chat_negative_backoff_seconds)
         _metric("prefilter", "backoff")
@@ -746,7 +826,7 @@ async def run_auto_chat(
         _metric("prefilter", "limit")
         return
 
-    category = classify_trigger(raw_text, settings=settings)
+    category = classify_trigger(trigger_text, settings=settings)
     tracer = get_tracer()
     reply = None  # plusone 分支直接采用原文；其余路径由生成产出
     if category is TriggerCategory.NICKNAMED:
@@ -754,7 +834,7 @@ async def run_auto_chat(
     elif category is TriggerCategory.YOU_PLURAL:
         _metric("prefilter", "you_plural")
     elif plusone:
-        reply = raw_text
+        reply = plusone_text
         _metric("prefilter", "plusone")
     elif hot:
         _metric("prefilter", "hot_reply")
@@ -770,7 +850,9 @@ async def run_auto_chat(
         try:
             content = await complete(
                 system_prompt=GATE_SYSTEM_PROMPT,
-                user_prompt=build_gate_user_prompt(rows),
+                user_prompt=build_gate_user_prompt(
+                    rows, batch_rows=_batch_as_rows(items, group_id) if is_batch else ()
+                ),
                 settings=settings,
                 client=client,
                 model=settings.router_model,
@@ -819,7 +901,11 @@ async def run_auto_chat(
                 return await complete(
                     system_prompt=casual_system_prompt(persona),
                     user_prompt=(
-                        build_casual_user_prompt(rows, recent_replies=_recent_replies(group_id))
+                        build_casual_user_prompt(
+                            rows,
+                            recent_replies=_recent_replies(group_id),
+                            batch_rows=_batch_as_rows(items, group_id) if is_batch else (),
+                        )
                         + f"\n风格要求：{style_directive(rng)}"
                     ),
                     settings=settings,
@@ -856,11 +942,15 @@ async def run_auto_chat(
         if _has_id_artifact(reply):
             _metric("generate", "artifact")
             return
-        issue = _reply_issue(reply, raw_text, _recent_replies(group_id))
+        issue = _reply_issue(reply, trigger_text, _recent_replies(group_id))
         if issue is not None:
             retry_model = settings.auto_chat_reply_model or settings.ai_model
             retry_prompt = (
-                build_casual_user_prompt(rows, recent_replies=_recent_replies(group_id))
+                build_casual_user_prompt(
+                    rows,
+                    recent_replies=_recent_replies(group_id),
+                    batch_rows=_batch_as_rows(items, group_id) if is_batch else (),
+                )
                 + f"\n风格要求：{style_directive(rng)}"
                 + "\n重写要求：你刚才的回复被拒绝（"
                 + ("几乎复述了别人的原话" if issue == "echo" else "和自己最近的话重复")
@@ -880,7 +970,9 @@ async def run_auto_chat(
                 ).strip()
             except Exception:
                 reply = ""
-            issue = _reply_issue(reply, raw_text, _recent_replies(group_id)) if reply else "empty"
+            issue = (
+                _reply_issue(reply, trigger_text, _recent_replies(group_id)) if reply else "empty"
+            )
             if issue is not None:
                 _metric("generate", "repeat")
                 return
@@ -926,8 +1018,8 @@ async def run_auto_chat(
     _record_tune_entry(
         settings,
         path=path_label,
-        trigger=raw_text,
-        context_rows=rows,
+        trigger=trigger_text,
+        context_rows=[*rows, *_batch_as_rows(items, group_id)] if is_batch else rows,
         reply_parts=parts,
         group_id=group_id,
     )
