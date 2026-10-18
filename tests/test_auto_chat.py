@@ -26,6 +26,7 @@ from qq_bot.services.auto_chat import (
     static_prefilter,
     style_directive,
     plusone_triggered,
+    _ARTIFACT_RE,
     _BATCH_SECTION_HEADER,
     _has_id_artifact,
     _strip_excl_and_emoji_punct,
@@ -1026,6 +1027,15 @@ class TestIdArtifact:
     def test_normal_text_clean(self) -> None:
         assert _has_id_artifact("开加速器？我试试") is False
         assert _has_id_artifact("524 超时了") is False
+
+
+# ---- 引用令牌伪影防线（S10-HUMAN-P0-06 H4）----
+
+
+def test_artifact_regex_catches_reference_token() -> None:
+    assert "u\\d{5,}" in _ARTIFACT_RE.pattern
+    assert _has_id_artifact("引用 u1654321 说得对") is True
+    assert _has_id_artifact("你来u一下这个") is False
 
 
 class TestExclAndEmojiPunct:

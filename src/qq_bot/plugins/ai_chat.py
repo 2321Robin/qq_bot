@@ -132,6 +132,31 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                 )
 
             raw_text = event.get_message().extract_plain_text().strip()
+
+            # 引用接线（S10-HUMAN-P0-06 H4）：先登记本条消息供后续引用回查，
+            # 再解析 reply 段。引用自己 → quoted_self 必回旁路（不渲染标记）；
+            # 引用他人 → 渲染 u{id} 标记（只进本地 chat 存储，渲染层由
+            # memory_prompt 替换为匿名别名，绝不出现在日志/指标/发送文本）。
+            quoted_self = False
+            quoted_ref = None
+            if settings.auto_chat_quote_reply_enabled:
+                from qq_bot.services.quote_reference import (
+                    parse_reply_reference,
+                    render_quoted_raw_text,
+                    shared_quote_lru,
+                )
+
+                lru = shared_quote_lru()
+                lru.remember(event.message_id, event.user_id, raw_text)
+                quoted_ref = parse_reply_reference(
+                    event.get_message(), self_id=event.self_id, lru=lru
+                )
+                if quoted_ref is not None and quoted_ref.ref_user_id == int(event.self_id):
+                    quoted_self = True
+                    quoted_ref = None  # self 引用必回，但不渲染标记
+                if quoted_ref is not None:
+                    raw_text = render_quoted_raw_text(raw_text, quoted_ref)
+
             prompt = extract_ai_prompt(raw_text, prefix=settings.ai_prefix)
 
             mentioned_self = _mentions_self(event)
@@ -166,6 +191,7 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                                 memory_store=memory_store,
                                 http_client=http_client,
                                 row_id=stored_row_id,
+                                quoted_self=quoted_self,
                             )
                 return
 
@@ -474,8 +500,8 @@ async def _maybe_auto_reply(
 
     入口分流（S10-HUMAN-P0 H1）：点名/引用/"你们"旁路直达管道（等不了话尾）；
     其余普通消息在 `auto_chat_collect_enabled` 时先进收集窗口，静默到期后
-    整批交付，防抢答。`quoted_self` 本任务先落参数与透传（Task 6 才有真实
-    来源，调用处恒为 False）。"""
+    整批交付，防抢答。`quoted_self` 来自 handler 的 reply 段解析
+    （S10-HUMAN-P0-06）：引用机器人自己的消息必回，走 QUOTED 旁路。"""
     load_persona(settings)  # 前置校验：人设配置可解析（坏配置早失败）
 
     quota_check, send = _build_auto_chat_hooks(event, settings)

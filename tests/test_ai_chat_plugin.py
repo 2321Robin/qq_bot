@@ -9,7 +9,7 @@ from prometheus_client import REGISTRY
 from qq_bot.config import BotSettings
 from qq_bot.plugins import ai_chat as ai_chat_plugin
 from qq_bot.runtime import RuntimeStateError
-from qq_bot.services import roco_knowledge
+from qq_bot.services import quote_reference, roco_knowledge
 from qq_bot.services.chat_memory import ChatMemoryRow
 
 
@@ -25,11 +25,13 @@ class FakeEvent:
         to_me: bool = False,
         self_id: int = 2880000001,
         user_id: int | None = None,
+        message_id: int = 1,
     ):
         self.text = text
         self.segments = segments or []
         self.to_me = to_me
         self.self_id = self_id
+        self.message_id = message_id
         if user_id is not None:
             self.user_id = user_id
 
@@ -98,6 +100,13 @@ async def _cancel_leftover_tasks():
     for t in pending:
         t.cancel()
     await asyncio.gather(*pending, return_exceptions=True)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_shared_quote_lru(monkeypatch: pytest.MonkeyPatch) -> None:
+    """引用接线（S10-HUMAN-P0-06）使用进程级共享 LRU 单例；每个用例前重置，
+    避免跨用例的消息登记残留影响引用解析结果。"""
+    monkeypatch.setattr(quote_reference, "_SHARED_LRU", None)
 
 
 def memory_row(
@@ -2267,3 +2276,140 @@ async def test_send_multi_parts_bursts_then_finishes_last(
     # 前面的碎片走裸 API 连发；最后一段走 finish
     assert fake_bot.sent == [(1001, "哈哈"), (1001, "玩啊")]
     assert "你好，" in str(exc_info.value.message)
+
+
+# ---- 引用接线（S10-HUMAN-P0-06）：事件层渲染 + quoted 必回 ----
+
+
+class FakeReplySegment:
+    type = "reply"
+
+    def __init__(self, data: dict):
+        self.data = data
+
+
+@pytest.mark.asyncio
+async def test_quoted_self_message_bypasses_collector_and_replies_directly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """引用机器人自己的消息（H4 quoted 必回）：设 quoted_self 旁路直连管道，
+    不进收集窗口，也不渲染引用标记（存储与管道输入都不带 u{id}）。"""
+    captured: dict = {}
+
+    async def fake_run_auto_chat(**kwargs):
+        captured.update(kwargs)
+
+    written: list[dict] = []
+
+    class RecordingStore(EmptyMemoryStore):
+        async def add_message(self, **kwargs) -> int:
+            written.append(kwargs)
+            return 321
+
+    monkeypatch.setattr(ai_chat_plugin, "run_auto_chat", fake_run_auto_chat)
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", auto_chat_enabled=True),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: RecordingStore())
+
+    def _no_collector():
+        raise AssertionError("quoted-self message must bypass the collector")
+
+    monkeypatch.setattr(ai_chat_plugin, "_get_auto_chat_collector", _no_collector)
+    monkeypatch.setattr(ai_chat_plugin, "_PENDING_AUTO_HOOKS", {})
+
+    before = _auto_chat_metric("collect", "bypass")
+    event = FakeEvent(
+        "随便聊聊",
+        segments=[FakeReplySegment({"id": 7, "qq": 2880000001, "text": "机器人之前的话"})],
+    )
+    await ai_chat_plugin.handle_ai_chat(event)  # type: ignore[arg-type]
+
+    assert captured["raw_text"] == "随便聊聊"  # self 引用不渲染标记
+    assert _auto_chat_metric("collect", "bypass") == before + 1
+    assert written[0]["message_text"] == "随便聊聊"  # 存储同样无标记
+
+
+@pytest.mark.asyncio
+async def test_quoted_other_user_renders_marker_into_pipeline_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """引用他人（H4 事件层渲染）：reply 段扩展字段解析后渲染 u{id} 标记进
+    原始文本（只进本地存储/管道输入），且不触发 quoted 旁路。"""
+    submitted: list[object] = []
+
+    class FakeCollector:
+        async def submit(self, group_id: int, item: object) -> None:
+            submitted.append(item)
+
+        def pending_count(self) -> int:
+            return len(submitted)
+
+    class RecordingStore(EmptyMemoryStore):
+        async def add_message(self, **kwargs) -> int:
+            return 654
+
+    auto_calls: list = []
+
+    async def fake_run_auto_chat(**kwargs):
+        auto_calls.append(kwargs)
+
+    monkeypatch.setattr(ai_chat_plugin, "run_auto_chat", fake_run_auto_chat)
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", auto_chat_enabled=True),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: RecordingStore())
+    monkeypatch.setattr(ai_chat_plugin, "_get_auto_chat_collector", lambda: FakeCollector())
+    monkeypatch.setattr(ai_chat_plugin, "_PENDING_AUTO_HOOKS", {})
+
+    event = FakeEvent("冲", segments=[FakeReplySegment({"id": 8, "qq": 12345, "text": "上分"})])
+    await ai_chat_plugin.handle_ai_chat(event)  # type: ignore[arg-type]
+
+    assert len(submitted) == 1
+    assert submitted[0].raw_text == "回复 [引用 u12345:上分]：冲"
+    assert auto_calls == []  # 普通引用不走旁路
+
+
+@pytest.mark.asyncio
+async def test_quote_reply_disabled_ignores_reply_segments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """开关关闭：reply 段被完全忽略，引用自己也不旁路（接线前行为）。"""
+    submitted: list[object] = []
+
+    class FakeCollector:
+        async def submit(self, group_id: int, item: object) -> None:
+            submitted.append(item)
+
+        def pending_count(self) -> int:
+            return len(submitted)
+
+    class RecordingStore(EmptyMemoryStore):
+        async def add_message(self, **kwargs) -> int:
+            return 999
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(
+            allowed_group_ids="1001",
+            auto_chat_enabled=True,
+            auto_chat_quote_reply_enabled=False,
+        ),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: RecordingStore())
+    monkeypatch.setattr(ai_chat_plugin, "_get_auto_chat_collector", lambda: FakeCollector())
+    monkeypatch.setattr(ai_chat_plugin, "_PENDING_AUTO_HOOKS", {})
+
+    event = FakeEvent(
+        "随便聊聊",
+        segments=[FakeReplySegment({"id": 9, "qq": 2880000001, "text": "机器人之前的话"})],
+    )
+    await ai_chat_plugin.handle_ai_chat(event)  # type: ignore[arg-type]
+
+    assert len(submitted) == 1
+    assert submitted[0].raw_text == "随便聊聊"  # 未渲染、未旁路

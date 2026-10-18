@@ -19,9 +19,10 @@ class FakeEvent:
     user_id = 2001
     self_id = 2880000001
 
-    def __init__(self, text: str, *, to_me: bool = False):
+    def __init__(self, text: str, *, to_me: bool = False, message_id: int = 1):
         self.text = text
         self.to_me = to_me
+        self.message_id = message_id
 
     def get_message(self) -> "FakeEvent":
         return self

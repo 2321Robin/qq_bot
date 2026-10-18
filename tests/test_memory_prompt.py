@@ -4,6 +4,7 @@ from qq_bot.services.memory_prompt import (
     extract_at_user_ids,
     format_chat_context,
     parse_memory_reference,
+    substitute_reference_tokens,
 )
 
 
@@ -165,3 +166,22 @@ def test_format_chat_context_aliases_raw_user_ids() -> None:
 
 def test_format_chat_context_reports_empty_history() -> None:
     assert format_chat_context([]) == "没有找到相关历史聊天记录。"
+
+
+# ---- 引用令牌匿名替换（S10-HUMAN-P0-06 H4）----
+
+
+def test_reference_token_replaced_with_alias() -> None:
+    alias = {1654321: "用户B"}
+    assert (
+        substitute_reference_tokens("回复 [引用 u1654321:上分]：冲", alias)
+        == "回复 [引用 用户B:上分]：冲"
+    )
+
+
+def test_unknown_reference_token_becomes_anon() -> None:
+    assert substitute_reference_tokens("[引用 u9:xx]", {1: "用户A"}) == "[引用 用户?:xx]"
+
+
+def test_plain_text_untouched() -> None:
+    assert substitute_reference_tokens("来u一下", {}) == "来u一下"

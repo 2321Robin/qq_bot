@@ -59,3 +59,32 @@ def test_missing_both_sources_returns_none():
 def test_render_marker_format():
     ref = QuoteReference(ref_user_id=42, ref_text="原文")
     assert render_quoted_raw_text("真的假的", ref) == "回复 [引用 u42:原文]：真的假的"
+
+
+# ---- 渲染→匿名替换的组合行为（S10-HUMAN-P0-06）----
+
+
+def test_render_then_substitute_roundtrip():
+    from datetime import UTC, datetime
+
+    from qq_bot.services.chat_memory import ChatMemoryRow
+    from qq_bot.services.memory_prompt import build_user_aliases, substitute_reference_tokens
+
+    def _row(text: str, user_id: int, row_id: int) -> ChatMemoryRow:
+        return ChatMemoryRow(
+            id=row_id,
+            group_id=1001,
+            user_id=user_id,
+            message_text=text,
+            created_at=datetime.now(UTC).isoformat(),
+            is_ai_prompt=False,
+            ai_reply=None,
+        )
+
+    ref = QuoteReference(ref_user_id=1654321, ref_text="上分")
+    raw = render_quoted_raw_text("真的假的", ref)
+    rows = [_row(raw, user_id=3001, row_id=1), _row("占位", user_id=1654321, row_id=2)]
+    alias = build_user_aliases(rows)
+    line = substitute_reference_tokens(f"用户A：{raw}", alias)
+    assert "u1654321" not in line
+    assert "用户B" in line

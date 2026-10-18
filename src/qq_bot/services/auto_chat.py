@@ -467,7 +467,8 @@ def split_casual_reply(text: str, *, max_parts: int = 3) -> list[str]:
 _PUNCT_NORM_RE = re.compile(r"[\s，,、；;。.!！?？~～…\"'「」『』（）()·]+")
 
 
-_ARTIFACT_RE = re.compile(r"用户\d{4,}|(?<!\d)\d{5,11}(?!\d)")
+# 引用令牌 u{id}（S10-HUMAN-P0-06）也算伪影：万一漏进回复文本，重写兜底
+_ARTIFACT_RE = re.compile(r"用户\d{4,}|u\d{5,}|(?<!\d)\d{5,11}(?!\d)")
 _EMOJI_RE = "[🀀-🫿☀-➿⬀-⯿️]"
 
 
