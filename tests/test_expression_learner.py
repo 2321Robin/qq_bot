@@ -1,5 +1,7 @@
 import json
 
+from prometheus_client import REGISTRY
+
 from qq_bot.services.chat_memory import ChatMemoryRow, JargonRow
 from qq_bot.services.expression_learner import run_learning_round, split_slots, validate_expression
 
@@ -251,6 +253,48 @@ async def test_round_review_call_raises_rejects_all_and_stores_nothing():
     assert summary.rejected_review == 2
     assert summary.stored == 0 and summary.duplicated == 0
     assert mem.stored == []
+
+
+def _expression_metric(stage: str, result: str) -> float:
+    """与 test_ai_chat_plugin._auto_chat_metric 同一套 REGISTRY 采样手法。"""
+    return (
+        REGISTRY.get_sample_value("qq_bot_expression_total", {"stage": stage, "result": result})
+        or 0.0
+    )
+
+
+async def test_round_validate_kept_metric_is_batch_granular():
+    """validate/kept 为批粒度（本批至少一条候选跨过校验 → 一次），
+    与候选粒度的 validate/rejected 并存（「本批表达式中 kept/rejected 多少」）。"""
+    mem = FakeMemory(["那新活动吗", "确实"])
+
+    async def complete(**kwargs):
+        system = kwargs["system_prompt"]
+        if "表达分析器" in system:
+            return _extract_payload(
+                expressions=[
+                    {"template": "那{对象}吗", "evidence_quote": "那新活动吗"},  # 通过校验
+                    {
+                        "template": "那{对象}杀我",
+                        "evidence_quote": "那新活动杀我",
+                    },  # fixed_content 拒
+                ],
+                jargon=[],
+            )
+        if "表达审核器" in system:
+            return _review_payload(accept_indexes={0}, count=1)
+        raise AssertionError("本用例不应触发黑话释义调用")
+
+    kept_before = _expression_metric("validate", "kept")
+    rejected_before = _expression_metric("validate", "rejected")
+
+    summary = await run_learning_round(
+        group_id=1, memory_store=mem, settings=_settings(), complete=complete, quota=None
+    )
+
+    assert summary.expressions_extracted == 1 and summary.rejected_validation == 1
+    assert _expression_metric("validate", "kept") == kept_before + 1
+    assert _expression_metric("validate", "rejected") == rejected_before + 1
 
 
 class TestSplitSlots:

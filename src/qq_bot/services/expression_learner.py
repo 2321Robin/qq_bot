@@ -402,6 +402,9 @@ async def _process_batch(
     summary.expressions_extracted += len(candidates)
 
     if candidates:
+        # 批粒度 kept：本批至少有一条候选跨过确定性校验才记一次
+        # （rejected 是候选粒度的，「本批表达式中 kept/rejected 多少」）
+        metrics.EXPRESSION_TOTAL.labels("validate", "kept").inc()
         decisions = await _review_candidates(
             batch=batch,
             candidates=candidates,
@@ -438,7 +441,8 @@ async def _process_batch(
         try:
             outcome = await memory_store.upsert_jargon(group_id=group_id, term=term)
         except Exception:
-            metrics.JARGON_TOTAL.labels("store", "error").inc()
+            # 非 spec 标签集（store 只有 new|hit）：静默跳过，
+            # jargon_new/jargon_hit 均不递增，摘要如实反映未入库
             continue
         if outcome == "new":
             summary.jargon_new += 1
@@ -454,7 +458,7 @@ async def _process_batch(
         try:
             await memory_store.upsert_jargon(group_id=group_id, term=term)
         except Exception:
-            metrics.JARGON_TOTAL.labels("store", "error").inc()
+            # 同上：命中计数本就不在 spec 标签集内，失败即跳过
             continue
         summary.jargon_hit += 1
         metrics.JARGON_TOTAL.labels("store", "hit").inc()
