@@ -393,6 +393,16 @@ class BotSettings(BaseSettings):
     auto_chat_tune_log_enabled: bool = (
         True  # 记录自主回复上文+回复到 data/auto_chat_tune.jsonl 供复盘
     )
+    # P1（S10-HUMAN-P1）：表达学习 + 黑话词库（默认关）
+    expression_learn_enabled: bool = False
+    expression_min_active: int = 10
+    expression_inject_max: int = 5
+    expression_learn_daily_limit: int = 30
+    expression_learn_batch_messages: int = 20
+    expression_learn_max_batches: int = 5
+    expression_learn_lookback_days: int = 7
+    jargon_confirm_hits: int = 4
+    jargon_inject_max: int = 10
 
     model_config = SettingsConfigDict(
         env_file=".env",
