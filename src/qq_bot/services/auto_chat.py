@@ -747,7 +747,6 @@ async def run_auto_chat(
             BatchItem(raw_text=raw_text, sender_user_id=event.user_id, created_at=datetime.now(UTC))
         ]
     )
-    trigger_text = items[-1].raw_text
 
     if is_batch:
         items = [
@@ -759,6 +758,9 @@ async def run_auto_chat(
     elif event.user_id in settings.auto_chat_ignored_user_id_list:
         _metric("prefilter", "ignored")
         return
+    # 触发消息 = 过滤后批次最后一条（忽略名单可能移除末条，S10-HUMAN-P0-03 回归）；
+    # 单消息路径恒等于 raw_text，与历史版本逐行等价。
+    trigger_text = items[-1].raw_text if is_batch else raw_text
     static = "pass"
     if not is_batch:
         static = static_prefilter(raw_text, settings=settings)

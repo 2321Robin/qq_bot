@@ -26,6 +26,7 @@ from qq_bot.services.auto_chat import (
     static_prefilter,
     style_directive,
     plusone_triggered,
+    _BATCH_SECTION_HEADER,
     _has_id_artifact,
     _strip_excl_and_emoji_punct,
 )
@@ -1257,10 +1258,33 @@ class TestBatchPipeline:
         assert h.sent == ["冲冲冲"]
 
     async def test_batch_negative_feedback_sets_backoff(self) -> None:
-        h = Harness(["小洛闭嘴"], _run_settings())
+        # 记忆行不含负反馈词与人名：负反馈只能经由批次文本行进入检测（隔离批次路径）
+        h = Harness(["随便聊聊"], _run_settings())
         h.state.acquire(1001, settings=h.settings)  # bot 刚发言 → recent+负反馈词 → 退避
         now = datetime.now(UTC)
         items = [BatchItem(raw_text="小洛你闭嘴", sender_user_id=3001, created_at=now, row_id=99)]
         await _run_batch(h, items)
         assert h.state.in_backoff(1001) is True
         assert h.sent == []
+
+    async def test_batch_trigger_recomputed_after_ignored_filter(self) -> None:
+        # 回归（S10-HUMAN-P0-03）：批次末条发送者被忽略名单移除后，触发文本必须
+        # 重算为过滤后批次末条。旧实现取过滤前末条（含人名 → 点名旁路，绕过门控）。
+        h = Harness(
+            ["随便聊聊"],
+            _run_settings(auto_chat_ignored_user_ids="3999", auto_chat_sample_rate=1.0),
+        )
+        now = datetime.now(UTC)
+        items = [
+            BatchItem(raw_text="开黑吗", sender_user_id=3001, created_at=now, row_id=999),
+            BatchItem(raw_text="小洛你别理他们", sender_user_id=3999, created_at=now, row_id=998),
+        ]
+        await _run_batch(h, items)
+        gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
+        assert len(gate_calls) == 1  # 到达门控：未因含人名的被过滤末条走点名旁路
+        assert h.sent  # 门控 should_reply=true → 有发言
+        for c in h.completions:
+            assert "你别理他们" not in c["user_prompt"]  # 被忽略项文本不进任何 prompt
+        lines = gate_calls[0]["user_prompt"].splitlines()
+        batch_lines = lines[lines.index(_BATCH_SECTION_HEADER) + 1 :]
+        assert batch_lines[-1].endswith("开黑吗")  # 批次段末行 = 过滤后幸存项
