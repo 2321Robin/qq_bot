@@ -27,6 +27,7 @@ from qq_bot.observability.tracing import get_tracer
 from qq_bot.services.chat_memory import ChatMemoryRow
 from qq_bot.services.memory_prompt import build_user_aliases
 from qq_bot.services.memory_prompt import render_rows_with_aliases as _render_rows
+from qq_bot.services.memory_prompt import substitute_reference_tokens
 from qq_bot.services.persona import (
     Persona,
     casual_system_prompt,
@@ -339,12 +340,14 @@ def render_batch_rows(batch_rows: Sequence[ChatMemoryRow], alias: dict[int, str]
             group.append(batch_rows[j])
             j += 1
         name = alias.get(batch_rows[i].user_id, "用户?")
+        # 引用标记里的 u{id} 同样匿名化（防裸 QQ 号经批次段落进模型 prompt）
         if len(group) > 1:
             lines.append(
-                f"{name}（连发{len(group)}条）：" + " / ".join(r.message_text for r in group)
+                f"{name}（连发{len(group)}条）："
+                + " / ".join(substitute_reference_tokens(r.message_text, alias) for r in group)
             )
         else:
-            lines.append(f"{name}：{group[0].message_text}")
+            lines.append(f"{name}：{substitute_reference_tokens(group[0].message_text, alias)}")
         i = j
     return lines
 
@@ -741,12 +744,15 @@ async def run_auto_chat(
     _cold_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     _request_completion: Any = None,
     batch: Sequence[BatchItem] | None = None,
+    quoted_self: bool = False,
 ) -> None:
     """Full pipeline for one non-addressed group message (spec 一/二/三/四节).
 
     ``batch``（S10-HUMAN-P0）传入收集器预筛后的批次项时走批次路径：跳过
     static_prefilter（收集器已逐条预筛），批次文本作为最后一条触发上下文；
     ``batch=None`` 时为单消息路径，行为与历史版本逐行等价。
+    ``quoted_self``（spec §5.3）标记引用机器人的消息：分类为 QUOTED，
+    跳过采样与决策门（必回旁路）。
 
     ``_request_completion`` is a test seam defaulting to the real
     ``request_completion``; production callers never pass it. Send and quota
@@ -850,11 +856,13 @@ async def run_auto_chat(
         _metric("prefilter", "limit")
         return
 
-    category = classify_trigger(trigger_text, settings=settings)
+    category = classify_trigger(trigger_text, settings=settings, quoted_self=quoted_self)
     tracer = get_tracer()
     reply = None  # plusone 分支直接采用原文；其余路径由生成产出
     if category is TriggerCategory.NICKNAMED:
         _metric("prefilter", "nicknamed")
+    elif category is TriggerCategory.QUOTED:
+        _metric("prefilter", "quoted")
     elif category is TriggerCategory.YOU_PLURAL:
         _metric("prefilter", "you_plural")
     elif plusone:
@@ -1003,9 +1011,13 @@ async def run_auto_chat(
     if any(word in reply for word in settings.auto_chat_sensitive_word_list):
         _metric("generate", "filtered")
         return
-    # 错别字注入（S10-HUMAN-P0 H3）：敏感词过滤先于注入；+1 跟发保持原文不动
+    # 错别字注入（S10-HUMAN-P0 H3）：敏感词过滤先于注入；+1 跟发保持原文不动。
+    # 注入后再过一次敏感词检查：换位可拼出内置敏感词（"支枪"→"枪支"）。
     if not plusone:
         reply, typo_applied = maybe_apply_typo(reply, rate=settings.auto_chat_typo_rate, rng=rng)
+        if typo_applied and any(word in reply for word in settings.auto_chat_sensitive_word_list):
+            _metric("generate", "filtered")
+            return
     else:
         typo_applied = False
     if quota_check is not None and not await quota_check():
@@ -1036,6 +1048,8 @@ async def run_auto_chat(
     path_label = (
         "nicknamed"
         if category is TriggerCategory.NICKNAMED
+        else "quoted"
+        if category is TriggerCategory.QUOTED
         else "you_plural"
         if category is TriggerCategory.YOU_PLURAL
         else "plusone"

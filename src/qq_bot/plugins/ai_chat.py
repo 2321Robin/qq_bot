@@ -538,6 +538,7 @@ async def _maybe_auto_reply(
             send=send,
             quota_check=quota_check,
             client=http_client,
+            quoted_self=quoted_self,
         )
         return
     if bypass:
@@ -550,6 +551,7 @@ async def _maybe_auto_reply(
             send=send,
             quota_check=quota_check,
             client=http_client,
+            quoted_self=quoted_self,
         )
         return
     collector = _get_auto_chat_collector()

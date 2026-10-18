@@ -48,3 +48,11 @@ def test_sensitive_table_never_produces_new_words():
 
     for a, b in _TYPO_PAIRS:
         assert len(a) == 1 and len(b) == 1
+
+
+def test_swap_path_transposes_first_adjacent_pair_when_no_map_chars():
+    # 换位路径（此前未覆盖）："一支枪都不留" 无映射表内字（eligible 为空），
+    # 6 个核心字满足换位条件；rng 恒 0.0 → 取第一对相邻不同字（"一""支"）换位。
+    text, applied = maybe_apply_typo("一支枪都不留", rate=1.0, rng=lambda: 0.0)
+    assert applied is True
+    assert text == "支一枪都不留"

@@ -303,6 +303,38 @@ class TestBatchRendering:
         prompt = build_casual_user_prompt(rows, batch_rows=batch)
         assert "用户A（连发2条）：在吗 / 来一把" in prompt
 
+    def test_batch_row_substitutes_reference_token_with_alias(self) -> None:
+        rows = [
+            _row("上分", user_id=1654321, row_id=1),
+            _row("回复 [引用 u1654321:上分]：冲", user_id=2002, row_id=2),
+        ]
+        lines = render_batch_rows(rows, build_user_aliases(rows))
+        assert lines == ["用户A：上分", "用户B：回复 [引用 用户A:上分]：冲"]
+
+    def test_batch_row_unknown_quoted_id_renders_placeholder(self) -> None:
+        rows = [_row("回复 [引用 u9999999:上分]：冲", user_id=2001, row_id=1)]
+        lines = render_batch_rows(rows, build_user_aliases(rows))
+        assert lines == ["用户A：回复 [引用 用户?:上分]：冲"]
+
+    def test_streak_row_substitutes_reference_token(self) -> None:
+        base = datetime(2026, 10, 18, 12, 0, tzinfo=UTC)
+        rows = [
+            _row(
+                "回复 [引用 u1654321:上分]：冲",
+                user_id=2002,
+                row_id=1,
+                created_at=base.isoformat(),
+            ),
+            _row(
+                "再来一把",
+                user_id=2002,
+                row_id=2,
+                created_at=(base + timedelta(seconds=1)).isoformat(),
+            ),
+        ]
+        lines = render_batch_rows(rows, build_user_aliases(rows))
+        assert lines == ["用户A（连发2条）：回复 [引用 用户?:上分]：冲 / 再来一把"]
+
 
 class TestGateParsing:
     def test_valid_output_parses(self) -> None:
@@ -447,7 +479,9 @@ class Harness:
         return fake_request_completion
 
 
-async def _run(h: Harness, raw_text: str = "一起去打新活动吗", _completion=None) -> None:
+async def _run(
+    h: Harness, raw_text: str = "一起去打新活动吗", _completion=None, quoted_self: bool = False
+) -> None:
     await run_auto_chat(
         event=FakeEvent(),
         raw_text=raw_text,
@@ -460,6 +494,7 @@ async def _run(h: Harness, raw_text: str = "一起去打新活动吗", _completi
         sleeper=h.sleeper,
         _cold_sleep=h.instant_cold_sleep,
         _request_completion=_completion or h.completion(),
+        quoted_self=quoted_self,
     )
 
 
@@ -546,6 +581,17 @@ async def test_sampling_reject_without_gate_call() -> None:
 
 
 @pytest.mark.asyncio
+async def test_quoted_self_ordinary_text_skips_sampling_and_gate() -> None:
+    """引用机器人必回（spec §5.3）：QUOTED 触发在管道内跳过采样与决策门，
+    默认低采样率下普通文本也必须直达生成。"""
+    h = Harness(["在吗", "确实"], _run_settings(auto_chat_sample_rate=0.05))
+    h.rng_value = 0.9  # ≥ 0.05：若 QUOTED 分支缺失，ORDINARY 会被采样丢弃
+    await _run(h, raw_text="确实", quoted_self=True)
+    assert h.sent
+    assert [c for c in h.completions if "决策器" in c["system_prompt"]] == []
+
+
+@pytest.mark.asyncio
 async def test_negative_feedback_sets_backoff_and_blocks() -> None:
     h = Harness(["小洛你闭嘴啊"], _run_settings())
     await _run(h, raw_text="随便")
@@ -560,6 +606,17 @@ async def test_sensitive_reply_dropped_silently() -> None:
     await _run(h)
     assert h.sent == []
     assert h.state.recently_spoke(1001, 300.0) is True  # 冷却已被占用（保守）
+
+
+@pytest.mark.asyncio
+async def test_typo_swap_sensitive_result_filtered() -> None:
+    """错别字换位可能拼出敏感词（"支枪"换位 → "枪支"）：注入后再过一次
+    敏感词检查，命中即放弃整条回复。"""
+    h = Harness(["聊会"], _run_settings(auto_chat_typo_rate=1.0))
+    h.casual_content = "一支枪都不留"
+    h.rng_value = 0.35  # 换位取第 2 对相邻字（int(0.35×5)=1）→ "支枪" → "枪支"
+    await _run(h)
+    assert h.sent == []
 
 
 @pytest.mark.asyncio
