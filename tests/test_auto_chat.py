@@ -1489,3 +1489,84 @@ class TestLearningInjection:
         for c in h.completions:
             assert "本群表达参考" not in c["user_prompt"]
             assert "本群黑话参考" not in c["user_prompt"]
+
+    async def test_retry_path_reuses_same_expression_sample(self) -> None:
+        """重写重试不是新的一轮群聊：表达样本整轮只采一次，首次与重试两条
+        prompt 都带齐表达/黑话两节，发送成功后按原样本 id 回写一次。
+        （S10-HUMAN-P1-04 回归：曾按生成次数采样 → 重试 prompt 丢参考。）"""
+        h = Harness(
+            ["随便聊聊"],
+            _run_settings(
+                expression_learn_enabled=True, expression_min_active=1, auto_chat_sample_rate=1.0
+            ),
+        )
+        # 首次生成复述触发句 → _reply_issue 命中 echo → 重写一次；重写内容换说法
+        casual_seq = iter(["一起去打新活动吗", "换个说法，这活动我不去"])
+
+        def completion():
+            async def fake(**kwargs) -> str:
+                h.completions.append(kwargs)  # 与 Harness.completion 一致地留痕
+                if "决策器" in kwargs["system_prompt"]:
+                    return h.gate_content
+                return next(casual_seq)
+
+            return fake
+
+        class CountingMemory(FakeMemory):
+            def __init__(self, texts):
+                super().__init__(texts)
+                self.samples = 0
+                self.gen_prompts: list[str] = []
+
+            async def sample_expressions(self, *, group_id, limit, threshold, rng=None):
+                self.samples += 1
+                from qq_bot.services.chat_memory import ExpressionRow
+
+                return [
+                    ExpressionRow(
+                        id=7,
+                        group_id=group_id,
+                        template="{对象}吗",
+                        slot_count=1,
+                        evidence_row_id=None,
+                        evidence_digest="",
+                        status="active",
+                        count=3,
+                        manual=0,
+                        created_at="",
+                        last_used_at=None,
+                    )
+                ]
+
+            async def list_jargon(self, *, group_id, status, limit=10):
+                from qq_bot.services.chat_memory import JargonRow
+
+                return [
+                    JargonRow(
+                        id=2,
+                        group_id=group_id,
+                        term="咸鱼翻车",
+                        definition="搞砸了",
+                        status="confirmed",
+                        hits=5,
+                        manual=0,
+                        first_seen_at="",
+                        last_seen_at="",
+                        confirmed_at=None,
+                    )
+                ]
+
+            async def touch_expressions(self, ids, *, now=None):
+                self.touched = list(ids)
+                return len(ids)
+
+        mem = CountingMemory(h.memory.texts)
+        h.memory = mem
+        await _run(h, "一起去打新活动吗", _completion=completion())
+        assert mem.samples == 1  # 每轮只采样一次（重试复用）
+        gen_calls = [c for c in h.completions if "决策器" not in c["system_prompt"]]
+        assert len(gen_calls) == 2  # 首次 + 重写
+        for call in gen_calls:
+            assert "本群表达参考" in call["user_prompt"]
+            assert "本群黑话参考" in call["user_prompt"]
+        assert mem.touched == [7]  # 发送成功后回写一次
