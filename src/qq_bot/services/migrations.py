@@ -157,6 +157,51 @@ MIGRATIONS: tuple[Migration, ...] = (
             """,
         ),
     ),
+    Migration(
+        version=4,
+        name="expression_jargon",
+        statements=(
+            """
+            CREATE TABLE IF NOT EXISTS expressions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL,
+                template TEXT NOT NULL,
+                slot_count INTEGER NOT NULL DEFAULT 0,
+                evidence_row_id INTEGER,
+                evidence_digest TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'active',
+                count INTEGER NOT NULL DEFAULT 0,
+                manual INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                last_used_at TEXT,
+                UNIQUE (group_id, template)
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_expressions_group_status
+            ON expressions (group_id, status)
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS jargon (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL,
+                term TEXT NOT NULL,
+                definition TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'unconfirmed',
+                hits INTEGER NOT NULL DEFAULT 1,
+                manual INTEGER NOT NULL DEFAULT 0,
+                first_seen_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                confirmed_at TEXT,
+                UNIQUE (group_id, term)
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_jargon_group_status
+            ON jargon (group_id, status)
+            """,
+        ),
+    ),
 )
 
 SUPPORTED_SCHEMA_VERSION = max(migration.version for migration in MIGRATIONS)

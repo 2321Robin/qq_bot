@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import aiosqlite
 
@@ -53,6 +54,35 @@ class UserPreferenceRow:
     preference: str
     created_at: str
     expires_at: str | None
+
+
+@dataclass(frozen=True)
+class ExpressionRow:
+    id: int
+    group_id: int
+    template: str
+    slot_count: int
+    evidence_row_id: int | None
+    evidence_digest: str
+    status: str
+    count: int
+    manual: int
+    created_at: str
+    last_used_at: str | None
+
+
+@dataclass(frozen=True)
+class JargonRow:
+    id: int
+    group_id: int
+    term: str
+    definition: str
+    status: str
+    hits: int
+    manual: int
+    first_seen_at: str
+    last_seen_at: str
+    confirmed_at: str | None
 
 
 class RepositoryClosedError(RuntimeError):
@@ -444,6 +474,266 @@ class ChatMemoryRepository:
         await connection.commit()
         return affected
 
+    # -- expression learning + jargon vocabulary (S10-HUMAN-P1-01) ------------
+
+    async def messages_since(
+        self, *, group_id: int, days: int, now: datetime | None = None
+    ) -> list[ChatMemoryRow]:
+        """All group messages within the trailing ``days`` window, oldest
+        first; ``ai_reply`` reads back as ``''`` when stored NULL."""
+        connection = self._require_open()
+        await self._cleanup(connection, now)
+        cutoff = self._to_utc_iso((now or datetime.now(UTC)) - timedelta(days=days))
+        cursor = await connection.execute(
+            """
+            SELECT id, group_id, user_id, message_text, created_at, is_ai_prompt,
+                   COALESCE(ai_reply, '')
+            FROM chat_messages
+            WHERE group_id = ? AND created_at >= ?
+            ORDER BY created_at ASC
+            """,
+            (group_id, cutoff),
+        )
+        rows = await cursor.fetchall()
+        return [ChatMemoryRepository._row_from_sqlite(row) for row in rows]
+
+    async def distinct_group_ids(self, *, days: int, now: datetime | None = None) -> list[int]:
+        """Group ids with at least one message in the trailing ``days``
+        window, ascending."""
+        connection = self._require_open()
+        await self._cleanup(connection, now)
+        cutoff = self._to_utc_iso((now or datetime.now(UTC)) - timedelta(days=days))
+        cursor = await connection.execute(
+            """
+            SELECT DISTINCT group_id FROM chat_messages
+            WHERE created_at >= ?
+            ORDER BY group_id
+            """,
+            (cutoff,),
+        )
+        return [int(row[0]) for row in await cursor.fetchall()]
+
+    async def upsert_expression(
+        self,
+        *,
+        group_id: int,
+        template: str,
+        slot_count: int,
+        evidence_row_id: int | None,
+        evidence_digest: str,
+        now: datetime | None = None,
+    ) -> str:
+        """Create the expression with count 1, or bump an existing one
+        (count + 1; new evidence kept only when provided). Returns
+        ``"created"`` or ``"bumped"``."""
+        connection = self._require_open()
+        timestamp = self._to_utc_iso(now or datetime.now(UTC))
+        cursor = await connection.execute(
+            "SELECT id FROM expressions WHERE group_id = ? AND template = ?",
+            (group_id, template),
+        )
+        row = await cursor.fetchone()
+        if row is not None:
+            await connection.execute(
+                "UPDATE expressions SET count = count + 1, "
+                "evidence_row_id = COALESCE(?, evidence_row_id) WHERE id = ?",
+                (evidence_row_id, int(row[0])),
+            )
+            await connection.commit()
+            return "bumped"
+        await connection.execute(
+            """
+            INSERT INTO expressions (
+                group_id, template, slot_count, evidence_row_id, evidence_digest,
+                status, count, manual, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, 'active', 1, 0, ?)
+            """,
+            (group_id, template, slot_count, evidence_row_id, evidence_digest, timestamp),
+        )
+        await connection.commit()
+        return "created"
+
+    async def list_active_expressions(self, *, group_id: int) -> list[ExpressionRow]:
+        connection = self._require_open()
+        cursor = await connection.execute(
+            """
+            SELECT id, group_id, template, slot_count, evidence_row_id, evidence_digest,
+                   status, count, manual, created_at, last_used_at
+            FROM expressions
+            WHERE group_id = ? AND status = 'active'
+            ORDER BY id ASC
+            """,
+            (group_id,),
+        )
+        rows = await cursor.fetchall()
+        return [ChatMemoryRepository._expression_row_from_sqlite(row) for row in rows]
+
+    async def sample_expressions(
+        self,
+        *,
+        group_id: int,
+        limit: int,
+        threshold: int,
+        rng: Callable[[], float] | None = None,
+    ) -> list[ExpressionRow]:
+        """Count-weighted sampling without replacement (Efraimidis–Spirakis:
+        ``key = rng() ** (1 / max(count, 1))``, keep the ``limit`` largest
+        keys). Returns ``[]`` while the active pool is below ``threshold``. A
+        constant ``rng`` degenerates to keeping the pool's stable order."""
+        pool = await self.list_active_expressions(group_id=group_id)
+        if len(pool) < threshold:
+            return []
+        draw = rng if rng is not None else random.random
+        keyed = sorted(pool, key=lambda row: draw() ** (1 / max(row.count, 1)), reverse=True)
+        return keyed[:limit]
+
+    async def touch_expressions(
+        self, expression_ids: Sequence[int], *, now: datetime | None = None
+    ) -> int:
+        """Bump ``count`` and stamp ``last_used_at`` for the given ids;
+        returns how many rows were updated."""
+        ids = [int(expression_id) for expression_id in expression_ids]
+        if not ids:
+            return 0
+        connection = self._require_open()
+        timestamp = self._to_utc_iso(now or datetime.now(UTC))
+        placeholders = ",".join("?" for _ in ids)
+        cursor = await connection.execute(
+            f"UPDATE expressions SET count = count + 1, last_used_at = ? "
+            f"WHERE id IN ({placeholders})",
+            (timestamp, *ids),
+        )
+        await connection.commit()
+        return cursor.rowcount
+
+    async def disable_expression(self, *, expression_id: int) -> bool:
+        """Deactivate one expression; False when it is already disabled or
+        does not exist."""
+        connection = self._require_open()
+        cursor = await connection.execute(
+            "UPDATE expressions SET status = 'disabled' WHERE id = ? AND status = 'active'",
+            (expression_id,),
+        )
+        await connection.commit()
+        return cursor.rowcount > 0
+
+    async def upsert_jargon(self, *, group_id: int, term: str, now: datetime | None = None) -> str:
+        """Record one sighting of a term: ``"new"`` inserts it unconfirmed
+        with hits 1; ``"hit"`` bumps hits on an existing term. A disabled term
+        reports ``"hit"`` without counting or changing its status."""
+        connection = self._require_open()
+        timestamp = self._to_utc_iso(now or datetime.now(UTC))
+        cursor = await connection.execute(
+            "SELECT status FROM jargon WHERE group_id = ? AND term = ?",
+            (group_id, term),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            await connection.execute(
+                """
+                INSERT INTO jargon (
+                    group_id, term, definition, status, hits, manual,
+                    first_seen_at, last_seen_at
+                )
+                VALUES (?, ?, '', 'unconfirmed', 1, 0, ?, ?)
+                """,
+                (group_id, term, timestamp, timestamp),
+            )
+            await connection.commit()
+            return "new"
+        if str(row[0]) != "disabled":
+            await connection.execute(
+                "UPDATE jargon SET hits = hits + 1, last_seen_at = ? "
+                "WHERE group_id = ? AND term = ?",
+                (timestamp, group_id, term),
+            )
+            await connection.commit()
+        return "hit"
+
+    async def list_jargon(self, *, group_id: int, status: str, limit: int = 10) -> list[JargonRow]:
+        connection = self._require_open()
+        cursor = await connection.execute(
+            """
+            SELECT id, group_id, term, definition, status, hits, manual,
+                   first_seen_at, last_seen_at, confirmed_at
+            FROM jargon
+            WHERE group_id = ? AND status = ?
+            ORDER BY hits DESC, id ASC
+            LIMIT ?
+            """,
+            (group_id, status, limit),
+        )
+        rows = await cursor.fetchall()
+        return [ChatMemoryRepository._jargon_row_from_sqlite(row) for row in rows]
+
+    async def get_jargon(self, *, group_id: int, term: str) -> JargonRow | None:
+        connection = self._require_open()
+        cursor = await connection.execute(
+            """
+            SELECT id, group_id, term, definition, status, hits, manual,
+                   first_seen_at, last_seen_at, confirmed_at
+            FROM jargon
+            WHERE group_id = ? AND term = ?
+            """,
+            (group_id, term),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return ChatMemoryRepository._jargon_row_from_sqlite(row)
+
+    async def confirm_jargon(
+        self,
+        *,
+        group_id: int,
+        term: str,
+        definition: str,
+        manual: bool = False,
+        now: datetime | None = None,
+    ) -> bool:
+        """Attach a definition and confirm; never overrides a manual entry
+        (``manual = 0`` guard). Returns whether a row was updated."""
+        connection = self._require_open()
+        timestamp = self._to_utc_iso(now or datetime.now(UTC))
+        cursor = await connection.execute(
+            """
+            UPDATE jargon
+            SET status = 'confirmed', definition = ?, confirmed_at = ?, manual = ?
+            WHERE group_id = ? AND term = ? AND manual = 0
+            """,
+            (definition, timestamp, int(manual), group_id, term),
+        )
+        await connection.commit()
+        return cursor.rowcount > 0
+
+    async def override_jargon(
+        self, *, group_id: int, term: str, definition: str, now: datetime | None = None
+    ) -> bool:
+        """Manual correction: confirm with ``manual = 1``, regardless of the
+        row's current state. Returns whether a row was updated."""
+        connection = self._require_open()
+        timestamp = self._to_utc_iso(now or datetime.now(UTC))
+        cursor = await connection.execute(
+            """
+            UPDATE jargon
+            SET status = 'confirmed', definition = ?, manual = 1, confirmed_at = ?
+            WHERE group_id = ? AND term = ?
+            """,
+            (definition, timestamp, group_id, term),
+        )
+        await connection.commit()
+        return cursor.rowcount > 0
+
+    async def disable_jargon(self, *, group_id: int, term: str) -> bool:
+        connection = self._require_open()
+        cursor = await connection.execute(
+            "UPDATE jargon SET status = 'disabled' WHERE group_id = ? AND term = ?",
+            (group_id, term),
+        )
+        await connection.commit()
+        return cursor.rowcount > 0
+
     async def _cleanup(self, connection: aiosqlite.Connection, now: datetime | None) -> None:
         cutoff = self._to_utc_iso((now or datetime.now(UTC)) - timedelta(days=self.retention_days))
         await connection.execute("DELETE FROM chat_messages WHERE created_at < ?", (cutoff,))
@@ -493,4 +783,35 @@ class ChatMemoryRepository:
             created_at=str(row[4]),
             is_ai_prompt=bool(row[5]),
             ai_reply=str(row[6]),
+        )
+
+    @staticmethod
+    def _expression_row_from_sqlite(row: aiosqlite.Row | tuple[Any, ...]) -> ExpressionRow:
+        return ExpressionRow(
+            id=int(row[0]),
+            group_id=int(row[1]),
+            template=str(row[2]),
+            slot_count=int(row[3]),
+            evidence_row_id=int(row[4]) if row[4] is not None else None,
+            evidence_digest=str(row[5]),
+            status=str(row[6]),
+            count=int(row[7]),
+            manual=int(row[8]),
+            created_at=str(row[9]),
+            last_used_at=str(row[10]) if row[10] is not None else None,
+        )
+
+    @staticmethod
+    def _jargon_row_from_sqlite(row: aiosqlite.Row | tuple[Any, ...]) -> JargonRow:
+        return JargonRow(
+            id=int(row[0]),
+            group_id=int(row[1]),
+            term=str(row[2]),
+            definition=str(row[3]),
+            status=str(row[4]),
+            hits=int(row[5]),
+            manual=int(row[6]),
+            first_seen_at=str(row[7]),
+            last_seen_at=str(row[8]),
+            confirmed_at=str(row[9]) if row[9] is not None else None,
         )
