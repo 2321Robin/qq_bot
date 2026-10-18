@@ -19,6 +19,7 @@ from qq_bot.services.auto_chat import (
     classify_trigger,
     detect_negative_feedback,
     parse_gate_output,
+    render_batch_rows,
     run_auto_chat,
     schedule_cold_check,
     split_casual_reply,
@@ -29,6 +30,7 @@ from qq_bot.services.auto_chat import (
     _strip_excl_and_emoji_punct,
 )
 from qq_bot.services.chat_memory import ChatMemoryRow
+from qq_bot.services.memory_prompt import build_user_aliases
 from qq_bot.services.persona import Persona
 
 
@@ -246,6 +248,57 @@ class TestPrompts:
         prompt = build_casual_user_prompt(rows)
         assert "用户A：今天好累" in prompt
         assert "接" in prompt
+
+
+class TestBatchRendering:
+    def test_consecutive_same_sender_merged_as_streak(self) -> None:
+        base = datetime(2026, 10, 18, 12, 0, tzinfo=UTC)
+        rows = [
+            _row("开黑吗", user_id=2001, row_id=1, created_at=base.isoformat()),
+            _row(
+                "开黑吗",
+                user_id=2001,
+                row_id=2,
+                created_at=(base + timedelta(seconds=1)).isoformat(),
+            ),
+            _row(
+                "来啊", user_id=2002, row_id=3, created_at=(base + timedelta(seconds=2)).isoformat()
+            ),
+        ]
+        alias = build_user_aliases(rows)
+        lines = render_batch_rows(rows, alias)
+        assert lines[0] == "用户A（连发2条）：开黑吗 / 开黑吗"
+        assert lines[1] == "用户B：来啊"
+
+    def test_gap_over_three_seconds_not_merged(self) -> None:
+        base = datetime(2026, 10, 18, 12, 0, tzinfo=UTC)
+        rows = [
+            _row("先走", user_id=2001, row_id=1, created_at=base.isoformat()),
+            _row(
+                "等等我",
+                user_id=2001,
+                row_id=2,
+                created_at=(base + timedelta(seconds=4)).isoformat(),
+            ),
+        ]
+        lines = render_batch_rows(rows, build_user_aliases(rows))
+        assert lines == ["用户A：先走", "用户A：等等我"]
+
+    def test_gate_prompt_appends_batch_section(self) -> None:
+        rows = [_row("早", user_id=2001, row_id=1)]
+        batch = [_row("打副本去吗", user_id=2002, row_id=2)]
+        prompt = build_gate_user_prompt(rows, batch_rows=batch)
+        assert "连续发生" in prompt
+        assert "用户B：打副本去吗" in prompt
+
+    def test_casual_prompt_batch_rows_alias_consistent(self) -> None:
+        rows = [_row("在吗", user_id=2001, row_id=1)]
+        batch = [
+            _row("在吗", user_id=2001, row_id=1),
+            _row("来一把", user_id=2001, row_id=2),
+        ]
+        prompt = build_casual_user_prompt(rows, batch_rows=batch)
+        assert "用户A（连发2条）：在吗 / 来一把" in prompt
 
 
 class TestGateParsing:

@@ -25,6 +25,7 @@ from qq_bot.observability import metrics, record_error
 from qq_bot.observability.logging import current_request_id
 from qq_bot.observability.tracing import get_tracer
 from qq_bot.services.chat_memory import ChatMemoryRow
+from qq_bot.services.memory_prompt import build_user_aliases
 from qq_bot.services.memory_prompt import render_rows_with_aliases as _render_rows
 from qq_bot.services.persona import (
     Persona,
@@ -187,6 +188,7 @@ GATE_SYSTEM_PROMPT = (
     "消息列表中的“机器人：”行表示机器人参与过该话题；"
     "若最新消息里的“你”可能指机器人（尤其紧跟机器人发言之后），视为 addressed，倾向回复。"
     "不要输出任何其他字段。"
+    "“连发N条”表示同一人的连续短消息，视为一段完整发言。"
 )
 
 _GATE_REASONS = frozenset({"addressed", "question_answerable", "banter", "none"})
@@ -272,18 +274,63 @@ def classify_trigger(
 # 实测泄露问题）已上收到 memory_prompt；保留 `_render_rows` 名字以兼容
 # 既有调用点与测试。别名按每次调用重建，无跨请求状态。
 
+_BATCH_STREAK_GAP_SECONDS = 3.0
 
-def build_gate_user_prompt(rows: Sequence[ChatMemoryRow]) -> str:
+
+def render_batch_rows(batch_rows: Sequence[ChatMemoryRow], alias: dict[int, str]) -> list[str]:
+    """批次段落渲染：同人相邻（间隔 < 3s）合并为连发行，其余逐行。"""
+    lines: list[str] = []
+    i = 0
+    while i < len(batch_rows):
+        group = [batch_rows[i]]
+        j = i + 1
+        while j < len(batch_rows):
+            prev_at = _row_created_at(batch_rows[j - 1])
+            cur_at = _row_created_at(batch_rows[j])
+            if batch_rows[j].user_id != batch_rows[i].user_id or prev_at is None or cur_at is None:
+                break
+            if (cur_at - prev_at).total_seconds() >= _BATCH_STREAK_GAP_SECONDS:
+                break
+            group.append(batch_rows[j])
+            j += 1
+        name = alias.get(batch_rows[i].user_id, "用户?")
+        if len(group) > 1:
+            lines.append(
+                f"{name}（连发{len(group)}条）：" + " / ".join(r.message_text for r in group)
+            )
+        else:
+            lines.append(f"{name}：{group[0].message_text}")
+        i = j
+    return lines
+
+
+_BATCH_SECTION_HEADER = (
+    "以下消息是刚刚连续发生的对话（同一个人的相邻消息为连发），主要回应最后一条："
+)
+
+
+def build_gate_user_prompt(
+    rows: Sequence[ChatMemoryRow], *, batch_rows: Sequence[ChatMemoryRow] = ()
+) -> str:
     lines = ["最近群消息（最后一条是最新消息）："]
     lines.extend(_render_rows(rows))
+    if batch_rows:
+        lines.append(_BATCH_SECTION_HEADER)
+        lines.extend(render_batch_rows(batch_rows, build_user_aliases([*rows, *batch_rows])))
     return "\n".join(lines)
 
 
 def build_casual_user_prompt(
-    rows: Sequence[ChatMemoryRow], recent_replies: Sequence[str] = ()
+    rows: Sequence[ChatMemoryRow],
+    recent_replies: Sequence[str] = (),
+    *,
+    batch_rows: Sequence[ChatMemoryRow] = (),
 ) -> str:
     lines = ["最近群消息（最后一条是最新消息）："]
     lines.extend(_render_rows(rows))
+    if batch_rows:
+        lines.append(_BATCH_SECTION_HEADER)
+        lines.extend(render_batch_rows(batch_rows, build_user_aliases([*rows, *batch_rows])))
     if recent_replies:
         lines.append("你最近发过的消息（换着花样说，禁止重复这些句式和用词）：")
         lines.extend(f"- {text}" for text in recent_replies)
