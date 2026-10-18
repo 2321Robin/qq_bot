@@ -25,6 +25,7 @@ from qq_bot.services.auto_chat import (
     split_casual_reply,
     static_prefilter,
     style_directive,
+    typing_intervals,
     plusone_triggered,
     _ARTIFACT_RE,
     _BATCH_SECTION_HEADER,
@@ -1003,6 +1004,35 @@ class TestSplitCasualReply:
 
     def test_period_and_semicolon_also_split(self) -> None:
         assert split_casual_reply("冲。好；走") == ["冲", "好", "走"]
+
+
+class TestTypingIntervals:
+    def test_interval_scales_with_visible_length(self) -> None:
+        # 间隔数 = len(parts)-1，故用 3 段取 2 个间隔；长段重复到超过
+        # 封顶字数（(4.0-0.5)/0.035 = 100 字）才能断言封顶在 4.0
+        parts = ["短", "这一条明显长得多需要更多打字时间" * 10, "收尾"]
+        ivs = typing_intervals(parts, base=0.5, per_char=0.035, max_seconds=4.0, rng=lambda: 0.5)
+        assert ivs[0] < ivs[1]
+        # rng=0.5 → 抖动因子 1.0；长句封顶在 4.0
+        assert ivs[1] == pytest.approx(4.0)
+
+    def test_single_part_has_no_interval(self) -> None:
+        assert (
+            typing_intervals(["一句"], base=0.5, per_char=0.035, max_seconds=4.0, rng=lambda: 0.5)
+            == []
+        )
+
+    def test_jitter_bounds(self) -> None:
+        parts = ["ab", "cd"]
+        lo = typing_intervals(parts, base=1.0, per_char=0.0, max_seconds=4.0, rng=lambda: 0.0)
+        hi = typing_intervals(parts, base=1.0, per_char=0.0, max_seconds=4.0, rng=lambda: 1.0)
+        assert lo[0] == pytest.approx(0.8)  # 1.0 × 0.8
+        assert hi[0] == pytest.approx(1.2)  # 1.0 × 1.2
+
+    def test_whitespace_not_counted(self) -> None:
+        parts = ["a b c", "x"]
+        ivs = typing_intervals(parts, base=0.0, per_char=0.1, max_seconds=10.0, rng=lambda: 0.5)
+        assert ivs[0] == pytest.approx(0.3)  # 去空白后 3 字
 
 
 @pytest.mark.asyncio

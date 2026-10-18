@@ -464,6 +464,24 @@ def split_casual_reply(text: str, *, max_parts: int = 3) -> list[str]:
     return merged
 
 
+def typing_intervals(
+    parts: Sequence[str],
+    *,
+    base: float,
+    per_char: float,
+    max_seconds: float,
+    rng: Callable[[], float],
+) -> list[float]:
+    """碎片间打字间隔（S10-HUMAN-P0 H2，Tulpa 协议公式）：
+    min(base + per_char×上一碎片去空白字数, max) × 抖动(0.8~1.2)。"""
+    intervals: list[float] = []
+    for prev in parts[:-1]:
+        visible = len(re.sub(r"\s+", "", prev))
+        delay = min(base + per_char * visible, max_seconds) * (0.8 + 0.4 * rng())
+        intervals.append(max(delay, 0.0))
+    return intervals
+
+
 _PUNCT_NORM_RE = re.compile(r"[\s，,、；;。.!！?？~～…\"'「」『』（）()·]+")
 
 

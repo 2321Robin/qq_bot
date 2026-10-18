@@ -31,6 +31,7 @@ from qq_bot.services.auto_chat import (
     schedule_cold_check,
     shared_state,
     static_prefilter,
+    typing_intervals,
 )
 from qq_bot.services.auto_chat_collector import AutoChatCollector, CollectedBatch
 from qq_bot.services.chat_memory import ChatMemoryRepository
@@ -468,7 +469,17 @@ def _build_auto_chat_hooks(
                     ),
                 )
                 return
-            for part in parts[:-1]:
+            if settings.auto_chat_typing_enabled:
+                intervals = typing_intervals(
+                    parts,
+                    base=settings.auto_chat_typing_base_seconds,
+                    per_char=settings.auto_chat_typing_per_char,
+                    max_seconds=settings.auto_chat_typing_max_seconds,
+                    rng=random.random,
+                )
+            else:
+                intervals = [random.uniform(0.6, 1.4) for _ in parts[:-1]]
+            for index, part in enumerate(parts[:-1]):
                 try:
                     await bot.send_group_msg(
                         group_id=event.group_id,
@@ -478,7 +489,7 @@ def _build_auto_chat_hooks(
                     )
                 except Exception:
                     pass  # 插话碎片丢失可接受；也不把消息内容写进日志（隐私白名单）
-                await asyncio.sleep(random.uniform(0.6, 1.4))
+                await asyncio.sleep(intervals[index])
             await finish_with_send_errors_logged(
                 ai_chat,
                 replace_named_mentions(parts[-1], settings.named_mention_replacement_map),
