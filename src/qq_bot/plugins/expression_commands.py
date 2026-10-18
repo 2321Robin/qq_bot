@@ -188,7 +188,9 @@ async def handle_expression(event: GroupMessageEvent, args: Message = CommandArg
             lines.append(f"#{row.id} {row.template} ×{row.count}")
         await finish_with_send_errors_logged(expr_command, "\n".join(lines))
     if sub == "禁用":
-        if len(parts) < 2 or not parts[1].isdigit():
+        # isdecimal 而非 isdigit：isdigit 放行 "²"/"⑤" 等字符，int() 随即抛
+        # ValueError 逃出 handler；isdecimal 只认十进制数字，int() 必能解析。
+        if len(parts) < 2 or not parts[1].isdecimal():
             await finish_with_send_errors_logged(
                 expr_command, "用法：/表达 禁用 <id>（编号见 /表达 列表）"
             )

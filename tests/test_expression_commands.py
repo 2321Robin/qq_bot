@@ -587,6 +587,21 @@ async def test_expression_disable_requires_id(
     assert "用法" in matcher.finished[0]
 
 
+async def test_expression_disable_unicode_digit_id_shows_usage(
+    monkeypatch: pytest.MonkeyPatch, admin_settings: BotSettings, repo: SpyRepository, matcher
+) -> None:
+    """isdecimal 而非 isdigit（Fix Round 2）："²"/"⑤" 之类能被 isdigit 放行，
+    int() 却解析不了，ValueError 会逃出 handler（管理员只看到沉默）；
+    isdecimal 只认十进制数字，走用法提示且不动仓库。"""
+    _patch_matchers(monkeypatch, matcher)
+
+    await _drive(plugin.handle_expression(FakeEvent(), _args("禁用 ²")))  # type: ignore[arg-type]
+
+    assert matcher.finished == ["用法：/表达 禁用 <id>（编号见 /表达 列表）"]
+    assert repo.disabled_expression_ids == []
+    assert repo.list_active_calls == []
+
+
 # ---------------------------------------------------------------------------
 # 只读命令不受总开关限制 / 运行时未就绪的兜底（Fix Round 1）
 # ---------------------------------------------------------------------------
