@@ -381,6 +381,7 @@ class BotSettings(BaseSettings):
     auto_chat_typing_base_seconds: float = 0.5
     auto_chat_typing_per_char: float = 0.035
     auto_chat_typing_max_seconds: float = 4.0
+    auto_chat_typo_rate: float = 0.0  # H3：错别字注入概率（0=关；灰度建议 0.03）
     auto_chat_sensitive_words: str = ""  # 追加词（逗号分隔），与内置表合并
     auto_chat_negative_words: str = ""  # 追加词（逗号分隔），与内置表合并
     auto_chat_ignored_user_ids: str = ""  # 自主插话忽略的发送者（可放其他机器人号）

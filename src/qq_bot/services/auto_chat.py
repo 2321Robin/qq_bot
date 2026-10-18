@@ -34,6 +34,7 @@ from qq_bot.services.persona import (
     mentions_persona,
 )
 from qq_bot.services.reliability import classify_exception
+from qq_bot.services.typo_injector import maybe_apply_typo
 
 
 def _default_bucket_clock() -> datetime:
@@ -552,6 +553,7 @@ def _record_tune_entry(
     context_rows: Sequence[ChatMemoryRow],
     reply_parts: Sequence[str],
     group_id: int,
+    typo_applied: bool = False,
 ) -> None:
     """调优记录：上文与回复内容落 JSONL（仅本地 data/，不进日志/指标），
     供部署者复盘哪些回复好、哪些差。失败绝不影响主流程。"""
@@ -572,6 +574,7 @@ def _record_tune_entry(
                 for row in context_rows
             ],
             "reply": list(reply_parts),
+            "typo_applied": typo_applied,
         }
         log_path = Path(_TUNE_LOG_PATH)
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1000,6 +1003,11 @@ async def run_auto_chat(
     if any(word in reply for word in settings.auto_chat_sensitive_word_list):
         _metric("generate", "filtered")
         return
+    # 错别字注入（S10-HUMAN-P0 H3）：敏感词过滤先于注入；+1 跟发保持原文不动
+    if not plusone:
+        reply, typo_applied = maybe_apply_typo(reply, rate=settings.auto_chat_typo_rate, rng=rng)
+    else:
+        typo_applied = False
     if quota_check is not None and not await quota_check():
         _metric("send", "quota_denied")
         return
@@ -1043,6 +1051,7 @@ async def run_auto_chat(
         context_rows=[*rows, *_batch_as_rows(items, group_id)] if is_batch else rows,
         reply_parts=parts,
         group_id=group_id,
+        typo_applied=typo_applied,
     )
     await send(parts)
     _metric("send", "ok")  # 已移交发送器；发送失败由 onebot_send 的 SEND_RESULTS 计数

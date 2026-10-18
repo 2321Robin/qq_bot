@@ -1145,6 +1145,19 @@ class TestTuneLog:
         m._TUNE_LOG_PATH = str(tmp_path / "off.jsonl")
         assert True  # _run_settings 默认 enabled=False，其余用例已验证不写
 
+    @pytest.mark.asyncio
+    async def test_tune_entry_records_typo_field(self, tmp_path, monkeypatch) -> None:
+        from qq_bot.services import auto_chat as m
+
+        tune = tmp_path / "tune.jsonl"
+        monkeypatch.setattr(m, "_TUNE_LOG_PATH", str(tune))
+        h = Harness(["随便聊聊"], _run_settings(auto_chat_tune_log_enabled=True))
+        await _run(h, "随便聊聊")
+        import json as _json
+
+        entry = _json.loads(tune.read_text(encoding="utf-8").splitlines()[0])
+        assert entry["typo_applied"] is False
+
 
 # ---- 二期修复 S7-AUTO-P2-12：反回声 + 自去重 ----
 
