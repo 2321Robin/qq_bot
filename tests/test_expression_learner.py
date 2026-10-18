@@ -3,7 +3,12 @@ import json
 from prometheus_client import REGISTRY
 
 from qq_bot.services.chat_memory import ChatMemoryRow, JargonRow
-from qq_bot.services.expression_learner import run_learning_round, split_slots, validate_expression
+from qq_bot.services.expression_learner import (
+    _process_batch,
+    run_learning_round,
+    split_slots,
+    validate_expression,
+)
 
 
 class FakeQuota:
@@ -371,3 +376,65 @@ class TestValidateExpression:
             False,
             "empty",
         )
+
+
+class _BotReplyPollutionMemory(FakeMemory):
+    """messages_since 返回的行里，机器人自己的回复写在 ``ai_reply`` 列
+    （人类行的附带回复），``message_text`` 仍是人类自己的话。"""
+
+    async def messages_since(self, *, group_id, days, now=None):
+        from datetime import UTC, datetime, timedelta
+
+        from qq_bot.services.chat_memory import ChatMemoryRow
+
+        return [
+            ChatMemoryRow(
+                id=i + 1,
+                group_id=group_id,
+                user_id=2001 + i,
+                message_text=t,
+                created_at=(datetime.now(UTC) - timedelta(hours=2)).isoformat(),
+                is_ai_prompt=False,
+                # 机器人说过的话只在 ai_reply 列，绝不作为消息行正文出现
+                ai_reply="那新活动吗" if i == 0 else "",
+            )
+            for i, t in enumerate(self.texts)
+        ]
+
+
+async def test_bot_reply_text_is_never_learnable_evidence():
+    """自我污染回归（reviewer 已复核关闭，此处锁死行为）。
+
+    机器人的回复只存在于 ``ai_reply`` 列，从不作为 ``message_text`` 行；
+    因此以机器人回复为 evidence_quote 的候选模板必须被拒——证据原文不在
+    任何一条人类消息正文里（``_resolve_evidence_row`` 找不到行 →
+    validate/rejected），本批零入库。"""
+    mem = _BotReplyPollutionMemory(["随便聊聊", "确实"])
+    settings = _settings()
+
+    async def complete(**kwargs):
+        system = kwargs["system_prompt"]
+        if "表达分析器" in system:
+            # 提取器错把机器人回复当群友句式引用（正是要防的情形）
+            return _extract_payload(
+                expressions=[{"template": "那{对象}吗", "evidence_quote": "那新活动吗"}],
+                jargon=[],
+            )
+        raise AssertionError("候选未过校验 → 不应有自检调用")
+
+    summary = await run_learning_round(
+        group_id=1, memory_store=mem, settings=settings, complete=complete, quota=None
+    )
+    assert summary.stored == 0
+    assert summary.rejected_validation == 1
+    assert mem.stored == []
+
+
+def test_run_learning_round_has_no_rng_parameter():
+    """学习轮不抽样：``rng`` 曾作为死参数穿过 _process_batch /
+    run_learning_round（Task 3 预留，Task 4 后抽样落在 run_auto_chat），
+    此处锁死签名不再长回来。"""
+    import inspect
+
+    assert "rng" not in inspect.signature(run_learning_round).parameters
+    assert "rng" not in inspect.signature(_process_batch).parameters

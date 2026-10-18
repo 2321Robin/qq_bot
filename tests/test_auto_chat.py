@@ -1490,6 +1490,111 @@ class TestLearningInjection:
             assert "本群表达参考" not in c["user_prompt"]
             assert "本群黑话参考" not in c["user_prompt"]
 
+
+def _expression_metric(stage: str, result: str) -> float:
+    """与 test_expression_learner._expression_metric 同一套 REGISTRY 采样手法。"""
+    from prometheus_client import REGISTRY
+
+    return (
+        REGISTRY.get_sample_value("qq_bot_expression_total", {"stage": stage, "result": result})
+        or 0.0
+    )
+
+
+class _SampleMemory(FakeMemory):
+    """sample_expressions 返回预设样本（可空）；其余沿用 FakeMemory。"""
+
+    def __init__(self, texts: list[str], rows: list):
+        super().__init__(texts)
+        self._rows = rows
+        self.touched: list[int] = []
+
+    async def sample_expressions(self, *, group_id, limit, threshold, rng=None):
+        from qq_bot.services.chat_memory import ExpressionRow
+
+        if not self._rows:
+            return []
+        return [
+            ExpressionRow(
+                id=7,
+                group_id=group_id,
+                template=row,
+                slot_count=1,
+                evidence_row_id=None,
+                evidence_digest="",
+                status="active",
+                count=3,
+                manual=0,
+                created_at="",
+                last_used_at=None,
+            )
+            for row in self._rows
+        ]
+
+    async def touch_expressions(self, ids, *, now=None):
+        self.touched = list(ids)
+        return len(ids)
+
+
+class TestLearningInjectionMetrics:
+    """spec 观测节的 inject 标签：ok / skip_insufficient / skip_disabled。"""
+
+    async def test_inject_ok_metric_on_non_empty_sample(self) -> None:
+        h = Harness(
+            ["随便聊聊"],
+            _run_settings(
+                expression_learn_enabled=True, expression_min_active=1, auto_chat_sample_rate=1.0
+            ),
+        )
+        h.memory = _SampleMemory(["随便聊聊"], ["{对象}吗"])
+        before = _expression_metric("inject", "ok")
+        await _run(h, "随便聊聊")
+        assert h.sent  # 真的发出去了：本轮回合算一次成功注入
+        assert _expression_metric("inject", "ok") == before + 1
+
+    async def test_inject_skip_insufficient_metric_on_empty_sample(self) -> None:
+        # 活跃池未过阈值：sample_expressions 返回 []（非异常）
+        h = Harness(
+            ["随便聊聊"],
+            _run_settings(
+                expression_learn_enabled=True, expression_min_active=10, auto_chat_sample_rate=1.0
+            ),
+        )
+        h.memory = _SampleMemory(["随便聊聊"], [])
+        before = _expression_metric("inject", "skip_insufficient")
+        await _run(h, "随便聊聊")
+        assert _expression_metric("inject", "skip_insufficient") == before + 1
+
+    async def test_inject_skip_disabled_metric_when_feature_off(self) -> None:
+        h = Harness(
+            ["随便聊聊"], _run_settings(expression_learn_enabled=False, auto_chat_sample_rate=1.0)
+        )
+        before = _expression_metric("inject", "skip_disabled")
+        await _run(h, "随便聊聊")
+        assert _expression_metric("inject", "skip_disabled") == before + 1
+
+    async def test_inject_store_error_is_silent_no_inject_label(self) -> None:
+        # 存储调用失败 → 静默返回空样本：inject 三标签都不动（fail-soft 路径）
+        h = Harness(
+            ["随便聊聊"],
+            _run_settings(
+                expression_learn_enabled=True, expression_min_active=1, auto_chat_sample_rate=1.0
+            ),
+        )
+
+        class BoomMemory(FakeMemory):
+            async def sample_expressions(self, *, group_id, limit, threshold, rng=None):
+                raise RuntimeError("store down")
+
+        h.memory = BoomMemory(["随便聊聊"])
+        ok_before = _expression_metric("inject", "ok")
+        ins_before = _expression_metric("inject", "skip_insufficient")
+        dis_before = _expression_metric("inject", "skip_disabled")
+        await _run(h, "随便聊聊")
+        assert _expression_metric("inject", "ok") == ok_before
+        assert _expression_metric("inject", "skip_insufficient") == ins_before
+        assert _expression_metric("inject", "skip_disabled") == dis_before
+
     async def test_retry_path_reuses_same_expression_sample(self) -> None:
         """重写重试不是新的一轮群聊：表达样本整轮只采一次，首次与重试两条
         prompt 都带齐表达/黑话两节，发送成功后按原样本 id 回写一次。

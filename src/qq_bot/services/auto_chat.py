@@ -768,11 +768,19 @@ async def _expression_sample(
     memory_store: Any, group_id: int, *, settings: BotSettings
 ) -> tuple[Any, ...]:
     """学习到的活跃表达行样本（S10-HUMAN-P1-04）。关闭或任何失败（含存储
-    未实现该方法）都返回空。调用方按 ``r.template`` 渲染参考、``r.id`` 回写。"""
+    未实现该方法）都返回空。调用方按 ``r.template`` 渲染参考、``r.id`` 回写。
+
+    观测（spec 观测节）：``inject/ok``（样本非空 → 本轮生成有参考可用）、
+    ``inject/skip_insufficient``（活跃池未过阈值 → 空样本）、
+    ``inject/skip_disabled``（功能关闭）。三者都记在 helper 里而不是 run_auto_chat
+    顶层：helper 只在生成路径被调用一次（每轮回复至多一条），不会在决策门、
+    点名旁路等路径上被反复触发，指标是「每次生成尝试的注入结局」这一诚实信号。
+    存储异常（fail-soft）不贴任何 inject 标签——那不是规格里的 skip 理由。"""
     if not settings.expression_learn_enabled:
+        metrics.EXPRESSION_TOTAL.labels("inject", "skip_disabled").inc()
         return ()
     try:
-        return tuple(
+        sample = tuple(
             await memory_store.sample_expressions(
                 group_id=group_id,
                 limit=settings.expression_inject_max,
@@ -781,6 +789,8 @@ async def _expression_sample(
         )
     except Exception:
         return ()
+    metrics.EXPRESSION_TOTAL.labels("inject", "ok" if sample else "skip_insufficient").inc()
+    return sample
 
 
 async def run_auto_chat(

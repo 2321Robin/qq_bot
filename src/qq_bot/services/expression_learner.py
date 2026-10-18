@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import random
 import re
 from dataclasses import dataclass
 
@@ -350,7 +349,6 @@ async def _process_batch(
     settings: BotSettings,
     complete,
     quota,
-    rng,
     summary: RoundSummary,
     client=None,
 ) -> RoundSummary:
@@ -418,6 +416,7 @@ async def _process_batch(
                 summary.rejected_review += 1
                 continue
             _, slot_count = split_slots(template)
+            # evidence_row_id 仅供人工审计回溯（无任何程序化读取方）
             try:
                 outcome = await memory_store.upsert_expression(
                     group_id=group_id,
@@ -494,12 +493,11 @@ async def run_learning_round(
     settings: BotSettings,
     complete,
     quota=None,
-    rng=random.random,
     now=None,
 ) -> RoundSummary:
     """一轮学习：配额预检 → 取材 → 切批 → 逐批学习 → 刷新 gauge。
-    ``complete`` 是 ai_client.request_completion（生产）或测试替身；
-    ``rng`` 仅为接口预留（本任务抽样未接），随 Task 4 注入链路启用。"""
+    ``complete`` 是 ai_client.request_completion（生产）或测试替身。
+    学习轮不抽样：表达样本由运行时的 run_auto_chat 负责。"""
     s = RoundSummary(status="ok")
     if not settings.expression_learn_enabled:
         return RoundSummary(status="disabled")
@@ -533,7 +531,6 @@ async def run_learning_round(
             settings=settings,
             complete=complete,
             quota=quota,
-            rng=rng,
             summary=s,
             client=None,
         )

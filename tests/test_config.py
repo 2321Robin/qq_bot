@@ -216,6 +216,31 @@ def test_chat_memory_settings_validate_positive_limits() -> None:
         BotSettings(chat_memory_max_results=0)
 
 
+def test_expression_learn_batch_settings_are_exposed() -> None:
+    settings = BotSettings(
+        expression_learn_batch_messages=20,
+        expression_learn_max_batches=5,
+        expression_learn_lookback_days=7,
+    )
+    assert settings.expression_learn_batch_messages == 20
+    assert settings.expression_learn_max_batches == 5
+    assert settings.expression_learn_lookback_days == 7
+
+
+def test_expression_learn_batch_settings_reject_zero_and_negative() -> None:
+    """0 或负值的批大小/批数不能「静默扫全量」：
+    ``[-0:]`` 等于整个列表，``range(0, len, 0)`` 直接抛 ZeroDivisionError，
+    两者都不是 operator 想要的语义——一律按配置错误拒绝。"""
+    with pytest.raises(ValidationError, match="expression_learn_batch_messages"):
+        BotSettings(expression_learn_batch_messages=0)
+    with pytest.raises(ValidationError, match="expression_learn_batch_messages"):
+        BotSettings(expression_learn_batch_messages=-1)
+    with pytest.raises(ValidationError, match="expression_learn_max_batches"):
+        BotSettings(expression_learn_max_batches=0)
+    with pytest.raises(ValidationError, match="expression_learn_max_batches"):
+        BotSettings(expression_learn_max_batches=-3)
+
+
 def test_reliability_settings_defaults() -> None:
     settings = BotSettings()
     assert settings.ai_max_attempts == 2

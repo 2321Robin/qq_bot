@@ -721,6 +721,14 @@ class BotSettings(BaseSettings):
             raise ValueError("ai_briefing_max_items must be between 1 and 20")
         return value
 
+    @field_validator("expression_learn_batch_messages", "expression_learn_max_batches")
+    @classmethod
+    def validate_expression_learn_batch_fields(cls, value: int) -> int:
+        # 0/负值会静默改变语义（max_batches=0 → [-0:] 扫全量批），按配置错误拒绝
+        if value < 1:
+            raise ValueError("expression learn batch fields must be greater than 0")
+        return value
+
     @field_validator("ai_briefing_detail_chars")
     @classmethod
     def validate_ai_briefing_detail_chars(cls, value: int) -> int:
