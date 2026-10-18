@@ -8,6 +8,7 @@ fast-path too; state is process-local and lost on restart by design."""
 from __future__ import annotations
 
 import asyncio
+import enum
 import json
 import random
 import re
@@ -238,6 +239,33 @@ def detect_negative_feedback(
     if bot_recently_spoke and any(any(w in t for w in negative_words) for t in texts):
         return True
     return any(any(w in t for w in negative_words) and mentions_persona(t, persona) for t in texts)
+
+
+class TriggerCategory(enum.Enum):
+    """触发分类（S10-HUMAN-P0）：收集器旁路判断与管道内采样决策共用。"""
+
+    NICKNAMED = "nicknamed"
+    QUOTED = "quoted"
+    YOU_PLURAL = "you_plural"
+    YOU_TO_GATE = "you_to_gate"
+    ORDINARY = "ordinary"
+
+
+def classify_trigger(
+    raw_text: str, *, settings: BotSettings, quoted_self: bool = False
+) -> TriggerCategory:
+    """纯函数：点名 > 引用必回 > "你们" > 含"你" > 普通。热聊依赖进程状态，
+    不在此判定（管道内处理）。"""
+    persona = load_persona(settings)
+    if mentions_persona(raw_text, persona):
+        return TriggerCategory.NICKNAMED
+    if quoted_self:
+        return TriggerCategory.QUOTED
+    if settings.auto_chat_you_plural_reply and "你们" in raw_text:
+        return TriggerCategory.YOU_PLURAL
+    if "你" in raw_text:
+        return TriggerCategory.YOU_TO_GATE
+    return TriggerCategory.ORDINARY
 
 
 # 上下文渲染的匿名别名（用户A/B/C…，防止原始 QQ 号进入模型 prompt，
@@ -671,14 +699,12 @@ async def run_auto_chat(
         _metric("prefilter", "limit")
         return
 
-    named = mentions_persona(raw_text, persona)
-    you_plural = settings.auto_chat_you_plural_reply and "你们" in raw_text
-    you_ref = "你" in raw_text
+    category = classify_trigger(raw_text, settings=settings)
     tracer = get_tracer()
     reply = None  # plusone 分支直接采用原文；其余路径由生成产出
-    if named:
+    if category is TriggerCategory.NICKNAMED:
         _metric("prefilter", "nicknamed")
-    elif you_plural:
+    elif category is TriggerCategory.YOU_PLURAL:
         _metric("prefilter", "you_plural")
     elif plusone:
         reply = raw_text
@@ -686,10 +712,10 @@ async def run_auto_chat(
     elif hot:
         _metric("prefilter", "hot_reply")
     else:
-        if not you_ref and rng() >= settings.auto_chat_sample_rate:
+        if category is not TriggerCategory.YOU_TO_GATE and rng() >= settings.auto_chat_sample_rate:
             _metric("prefilter", "sampled_out")
             return
-        if you_ref:
+        if category is TriggerCategory.YOU_TO_GATE:
             _metric("prefilter", "you_to_gate")
         else:
             _metric("prefilter", "passed")
@@ -841,9 +867,9 @@ async def run_auto_chat(
     parts = [reply] if plusone else split_casual_reply(reply)
     path_label = (
         "nicknamed"
-        if named
+        if category is TriggerCategory.NICKNAMED
         else "you_plural"
-        if you_plural
+        if category is TriggerCategory.YOU_PLURAL
         else "plusone"
         if plusone
         else "hot_reply"

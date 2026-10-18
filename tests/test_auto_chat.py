@@ -12,9 +12,11 @@ from qq_bot.services.auto_chat import (
     COLD_FALLBACK_MESSAGES,
     GATE_SYSTEM_PROMPT,
     GateDecision,
+    TriggerCategory,
     build_casual_user_prompt,
     build_cold_user_prompt,
     build_gate_user_prompt,
+    classify_trigger,
     detect_negative_feedback,
     parse_gate_output,
     run_auto_chat,
@@ -1097,3 +1099,39 @@ class TestAntiEcho:
 
         await _run(h, raw_text="破防了？称号自己领的还赖账", _completion=completion())
         assert h.sent == []
+
+
+# ---- S10-HUMAN-P0-01：触发分类共享纯函数 ----
+
+
+class TestClassifyTrigger:
+    def test_nicknamed_by_name_or_alias(self) -> None:
+        settings = _run_settings(persona_name="小洛", persona_aliases="洛宝")
+        assert classify_trigger("小洛你在吗", settings=settings) is TriggerCategory.NICKNAMED
+        assert classify_trigger("洛宝出来玩", settings=settings) is TriggerCategory.NICKNAMED
+
+    def test_quoted_self_beats_everything_after_named(self) -> None:
+        settings = _run_settings(persona_name="小洛")
+        assert (
+            classify_trigger("你们看这个", settings=settings, quoted_self=True)
+            is TriggerCategory.QUOTED
+        )
+        assert (
+            classify_trigger("小洛看看", settings=settings, quoted_self=True)
+            is TriggerCategory.NICKNAMED
+        )
+
+    def test_you_plural_before_you_ref(self) -> None:
+        settings = _run_settings(persona_name="小洛")
+        assert classify_trigger("你们去哪", settings=settings) is TriggerCategory.YOU_PLURAL
+        assert classify_trigger("你说呢", settings=settings) is TriggerCategory.YOU_TO_GATE
+
+    def test_you_plural_switch_off_falls_through(self) -> None:
+        settings = _run_settings(persona_name="小洛", auto_chat_you_plural_reply=False)
+        assert classify_trigger("你们去哪", settings=settings) is TriggerCategory.YOU_TO_GATE
+
+    def test_ordinary(self) -> None:
+        assert (
+            classify_trigger("今天好累啊", settings=_run_settings(persona_name="小洛"))
+            is TriggerCategory.ORDINARY
+        )
