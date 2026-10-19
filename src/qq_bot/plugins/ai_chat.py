@@ -26,6 +26,7 @@ from qq_bot.services.ai_client import AIReplyError, request_ai_reply
 from qq_bot.services.auto_chat import (
     BatchItem,
     TriggerCategory,
+    activity_weight,
     classify_trigger,
     run_auto_chat,
     schedule_cold_check,
@@ -133,6 +134,16 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                 )
 
             raw_text = event.get_message().extract_plain_text().strip()
+
+            # 群兴趣度计分（S10-HUMAN-P2 H7）：放在 ignored 检查之后、prompt 分支
+            # 之前，普通消息与被 @ 问答两条路径共用同一入口，每条消息只记一次。
+            # 权重来自纯函数 activity_weight（含"你/你们"/疑问加权），boost 取配置
+            # 项使部署者可调；state 本身不依赖 settings。不计消息内容，仅浮点热度。
+            shared_state().note_activity(
+                event.group_id,
+                weight=activity_weight(raw_text, settings=settings),
+                boost=settings.auto_chat_interest_boost,
+            )
 
             # 引用接线（S10-HUMAN-P0-06 H4 + Fix Round 1）：先登记本条消息供
             # 后续引用回查，再解析 reply 段。引用自己 → quoted_self 必回旁路

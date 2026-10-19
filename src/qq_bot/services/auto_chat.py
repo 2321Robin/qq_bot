@@ -22,7 +22,7 @@ from typing import Any, Awaitable, Callable, Sequence
 
 from qq_bot.config import BotSettings
 from qq_bot.observability import metrics, record_error
-from qq_bot.observability.logging import current_request_id
+from qq_bot.observability.logging import current_request_id, hash_id
 from qq_bot.observability.tracing import get_tracer
 from qq_bot.services.chat_memory import ChatMemoryRow
 from qq_bot.services.memory_prompt import build_user_aliases
@@ -40,6 +40,15 @@ from qq_bot.services.typo_injector import maybe_apply_typo
 
 def _default_bucket_clock() -> datetime:
     return datetime.now(UTC)
+
+
+# 群兴趣度（S10-HUMAN-P2 H7）：每条计分消息的 boost 默认值。作为模块常量而非
+# 构造参数——AutoChatState 不依赖 BotSettings（热路径保持配置无关），部署者通过
+# `auto_chat_interest_boost` 调值，由 ai_chat handler 在调用处注入。
+_INTEREST_BOOST_FIXED = 0.02
+
+# 兴趣度惰性衰减的清理阈值：折算后低于此值视为归零并清键（状态字典不随安静群增长）
+_INTEREST_DECAY_FLOOR = 1e-6
 
 
 class AutoChatState:
@@ -62,6 +71,9 @@ class AutoChatState:
         self._hot_until: dict[int, float] = {}
         self._hot_streak: dict[int, int] = {}
         self._cold_daily: dict[tuple[int, str], int] = {}
+        # 群兴趣度（S10-HUMAN-P2 H7）：每群 [0,1] 浮点 + 上次 boost 的单调时刻
+        self._interest: dict[int, float] = {}
+        self._interest_at: dict[int, float] = {}
 
     def lock(self, group_id: int) -> asyncio.Lock:
         return self._locks.setdefault(group_id, asyncio.Lock())
@@ -174,6 +186,53 @@ class AutoChatState:
     def note_cold_reply(self, group_id: int, *, settings: BotSettings) -> None:
         day_key = self._bucket_clock().strftime("%Y-%m-%d")
         self._cold_daily[(group_id, day_key)] = self._cold_daily.get((group_id, day_key), 0) + 1
+
+    # ---- 群兴趣度（S10-HUMAN-P2 H7）----
+
+    def note_activity(
+        self, group_id: int, *, weight: float = 1.0, boost: float | None = None
+    ) -> None:
+        """记一条群聊热度。先按半衰期折算存量，再加 `boost × weight`，钳 [0,1]。
+
+        `boost` 省略时用模块常量 `_INTEREST_BOOST_FIXED`；调用方（ai_chat
+        handler）显式传 `settings.auto_chat_interest_boost` 使配置项生效，
+        同时 state 本身不依赖 BotSettings。负 weight 被夹为 0（绝不降温）。"""
+        current = self.interest_raw(group_id)
+        applied = _INTEREST_BOOST_FIXED if boost is None else boost
+        self._interest[group_id] = min(1.0, current + applied * max(weight, 0.0))
+        self._interest_at[group_id] = self._clock()
+
+    def interest_of(self, group_id: int, *, settings: BotSettings) -> float:
+        return self.interest_raw(group_id, settings=settings)
+
+    def interest_raw(self, group_id: int, *, settings: BotSettings | None = None) -> float:
+        """惰性半衰衰减后的兴趣度。读路径会把折算值写回 `_interest`（有意为之：
+        保持字典只存当前值，安静群自动清键），因此这是幂等但非纯读的操作。
+
+        `settings is None` 时（note 路径的存量折算）不做时间衰减——那里只需要
+        把存量按半衰期折小后再叠 boost，配置由读取方（interest_of）提供。衰减
+        数学不随 `auto_chat_interest_enabled` 开关变化：开关只门控管道消费
+        （采样乘数/冷却乘数/高热进热聊/gauge），状态本身始终如实记账。"""
+        current = self._interest.get(group_id, 0.0)
+        last = self._interest_at.get(group_id)
+        if current <= 0.0 or last is None:
+            return current
+        if settings is None:
+            return current
+        elapsed = self._clock() - last
+        if elapsed <= 0:
+            return current
+        half_life = settings.auto_chat_interest_half_life
+        if half_life <= 0:
+            return current
+        decayed = current * (0.5 ** (elapsed / half_life))
+        if decayed < _INTEREST_DECAY_FLOOR:
+            self._interest.pop(group_id, None)
+            self._interest_at.pop(group_id, None)
+            return 0.0
+        self._interest[group_id] = decayed
+        self._interest_at[group_id] = self._clock()
+        return decayed
 
 
 # ---- 纯函数层：预筛 / 负反馈 / prompt 构建 / 决策门解析（S7-AUTO-05）----
@@ -314,6 +373,23 @@ def classify_trigger(
     if "你" in raw_text:
         return TriggerCategory.YOU_TO_GATE
     return TriggerCategory.ORDINARY
+
+
+_ACTIVITY_WEIGHT_CAP = 4.0
+
+
+def activity_weight(raw_text: str, *, settings: BotSettings) -> float:
+    """群聊热度权重（S10-HUMAN-P2 H7）：点名对象/第二人称/疑问加权。
+
+    含"你/你们" ×2、疑问性质（`_is_questionish`）×2，可叠加（"你…吗" ×4），
+    封顶 `_ACTIVITY_WEIGHT_CAP`。纯函数：同文本同设置恒定，无状态读取。
+    `settings` 入参为与 `classify_trigger` 等同族签名保持一致（当前不使用）。"""
+    weight = 1.0
+    if "你" in raw_text:
+        weight += 2.0
+    if _is_questionish(raw_text):
+        weight += 2.0
+    return min(weight, _ACTIVITY_WEIGHT_CAP)
 
 
 # 上下文渲染的匿名别名（用户A/B/C…，防止原始 QQ 号进入模型 prompt，
@@ -909,10 +985,29 @@ async def run_auto_chat(
         _metric("prefilter", "backoff")
         return
     hot = state.hot_active(group_id, settings=settings)
+    # 兴趣度自动进热聊（S10-HUMAN-P2 H7）：高热群且当前不在热聊窗口时，按热聊
+    # 路径处理本轮（跳过采样与门）并刷新窗口。note_reply 的 "hot_exit_limit"
+    # 返回值此处有意忽略——新 streak=1 绝不可能触及 50 条兜底，streak 兜底由
+    # 后续正常发言路径自然处理。
+    if not hot and settings.auto_chat_interest_enabled:
+        if (
+            state.interest_of(group_id, settings=settings)
+            >= settings.auto_chat_interest_hot_threshold
+        ):
+            state.note_reply(group_id, settings=settings)  # 刷新热聊窗口即进入
+            hot = True
+            _metric("prefilter", "interest_hot")
+    # 冷却乘数（H7）：非热聊期按热度缩放冷却，钳不低于热聊冷却；热聊期沿用
+    # 热聊冷却（豁免语义不变）。
+    cooldown_override: float | None = None
+    if settings.auto_chat_interest_enabled and not hot:
+        interest = state.interest_of(group_id, settings=settings)
+        scaled = settings.auto_chat_cooldown_seconds * (1.2 - 0.7 * interest)
+        cooldown_override = max(settings.auto_chat_hot_cooldown_seconds, scaled)
     limit = state.limit_reason(
         group_id,
         settings=settings,
-        cooldown_seconds=(settings.auto_chat_hot_cooldown_seconds if hot else None),
+        cooldown_seconds=(settings.auto_chat_hot_cooldown_seconds if hot else cooldown_override),
         skip_hourly=hot,
     )
     if limit == "cooldown":
@@ -941,8 +1036,18 @@ async def run_auto_chat(
     elif hot:
         _metric("prefilter", "hot_reply")
     else:
-        if category is not TriggerCategory.YOU_TO_GATE and rng() >= settings.auto_chat_sample_rate:
-            _metric("prefilter", "sampled_out")
+        # 采样乘数（S10-HUMAN-P2 H7）：热度越高有效采样率越高；开关关闭时与
+        # 现状逐行等价（乘数 1、标签仍为 sampled_out）。gauge 每轮更新一次。
+        effective_rate = settings.auto_chat_sample_rate
+        if settings.auto_chat_interest_enabled:
+            interest = state.interest_of(group_id, settings=settings)
+            effective_rate = min(1.0, effective_rate * (0.5 + 2.5 * interest))
+            metrics.AUTO_CHAT_INTEREST.labels(hash_id(group_id, kind="group")).set(interest)
+        if category is not TriggerCategory.YOU_TO_GATE and rng() >= effective_rate:
+            _metric(
+                "prefilter",
+                "interest_low" if settings.auto_chat_interest_enabled else "sampled_out",
+            )
             return
         if category is TriggerCategory.YOU_TO_GATE:
             _metric("prefilter", "you_to_gate")
@@ -993,7 +1098,9 @@ async def run_auto_chat(
         if state.acquire(
             group_id,
             settings=settings,
-            cooldown_seconds=(settings.auto_chat_hot_cooldown_seconds if hot else None),
+            cooldown_seconds=(
+                settings.auto_chat_hot_cooldown_seconds if hot else cooldown_override
+            ),
             skip_hourly=hot,
         ):
             _metric("prefilter", "limit")

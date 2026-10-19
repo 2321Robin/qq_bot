@@ -231,6 +231,20 @@ _define(
     "Active expression templates per group",
     ["group_hash"],
 )
+_define(
+    "AUTO_CHAT_INTEREST",
+    Gauge,
+    "qq_bot_auto_chat_interest",
+    "Current group chat interest level",
+    ["group_hash"],
+)
+_define(
+    "AUTO_CHAT_REACTIONS",
+    Counter,
+    "qq_bot_auto_chat_reactions_total",
+    "Auto chat reaction outcomes",
+    ["result"],
+)
 
 
 def set_metrics_enabled(enabled: bool) -> None:
