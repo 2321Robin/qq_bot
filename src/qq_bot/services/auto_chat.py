@@ -22,7 +22,7 @@ from typing import Any, Awaitable, Callable, Sequence
 
 from qq_bot.config import BotSettings
 from qq_bot.observability import metrics, record_error
-from qq_bot.observability.logging import current_request_id, hash_id
+from qq_bot.observability.logging import current_request_id, get_logger, hash_id
 from qq_bot.observability.tracing import get_tracer
 from qq_bot.services.chat_memory import ChatMemoryRow
 from qq_bot.services.memory_prompt import build_user_aliases
@@ -36,6 +36,8 @@ from qq_bot.services.persona import (
 )
 from qq_bot.services.reliability import classify_exception
 from qq_bot.services.typo_injector import maybe_apply_typo
+
+logger = get_logger("qq_bot.auto_chat")
 
 
 def _default_bucket_clock() -> datetime:
@@ -224,14 +226,23 @@ class AutoChatState:
     # ---- 群兴趣度（S10-HUMAN-P2 H7）----
 
     def note_activity(
-        self, group_id: int, *, weight: float = 1.0, boost: float | None = None
+        self,
+        group_id: int,
+        *,
+        weight: float = 1.0,
+        boost: float | None = None,
+        half_life: float | None = None,
     ) -> None:
-        """记一条群聊热度。先按半衰期折算存量，再加 `boost × weight`，钳 [0,1]。
+        """记一条群聊热度。先按半衰期折叠存量，再加 `boost × weight`，钳 [0,1]。
 
-        `boost` 省略时用模块常量 `_INTEREST_BOOST_FIXED`；调用方（ai_chat
-        handler）显式传 `settings.auto_chat_interest_boost` 使配置项生效，
-        同时 state 本身不依赖 BotSettings。负 weight 被夹为 0（绝不降温）。"""
-        current = self.interest_raw(group_id)
+        `boost` 省略时用模块常量 `_INTEREST_BOOST_FIXED`；`half_life` 省略时
+        不做存量折叠（默认 None，直接操作 state 的单测保持累加语义），调用方
+        （ai_chat handler）显式传 `settings.auto_chat_interest_half_life` 与
+        `settings.auto_chat_interest_boost` 使配置生效，state 本身不依赖
+        BotSettings。负 weight 被夹为 0（绝不降温）。不折叠会导致活跃消息流中
+        衰减永不生效（每次 note 都把 `_interest_at` 重置为现在），存量按纯
+        累加器高估——因此生产调用方必须传 half_life。"""
+        current = self.interest_raw(group_id, half_life=half_life)
         applied = _INTEREST_BOOST_FIXED if boost is None else boost
         self._interest[group_id] = max(0.0, min(1.0, current + applied * max(weight, 0.0)))
         self._interest_at[group_id] = self._clock()
@@ -239,24 +250,31 @@ class AutoChatState:
     def interest_of(self, group_id: int, *, settings: BotSettings) -> float:
         return self.interest_raw(group_id, settings=settings)
 
-    def interest_raw(self, group_id: int, *, settings: BotSettings | None = None) -> float:
+    def interest_raw(
+        self,
+        group_id: int,
+        *,
+        settings: BotSettings | None = None,
+        half_life: float | None = None,
+    ) -> float:
         """惰性半衰衰减后的兴趣度。读路径会把折算值写回 `_interest`（有意为之：
         保持字典只存当前值，安静群自动清键），因此这是幂等但非纯读的操作。
 
-        `settings is None` 时（note 路径的存量折算）不做时间衰减——那里只需要
-        把存量按半衰期折小后再叠 boost，配置由读取方（interest_of）提供。衰减
-        数学不随 `auto_chat_interest_enabled` 开关变化：开关只门控管道消费
-        （采样乘数/冷却乘数/高热进热聊/gauge），状态本身始终如实记账。"""
+        `half_life` 显式传入时优先生效；否则回落 `settings.auto_chat_interest_half_life`。
+        两者都缺省时（默认 None 的 note 路径旧签名）不做时间衰减——衰减数学
+        不随 `auto_chat_interest_enabled` 开关变化：开关只门控管道消费（采样
+        乘数/冷却乘数/高热进热聊/gauge），状态本身始终如实记账。"""
         current = self._interest.get(group_id, 0.0)
         last = self._interest_at.get(group_id)
         if current <= 0.0 or last is None:
             return current
-        if settings is None:
-            return current
+        if half_life is None:
+            if settings is None:
+                return current
+            half_life = settings.auto_chat_interest_half_life
         elapsed = self._clock() - last
         if elapsed <= 0:
             return current
-        half_life = settings.auto_chat_interest_half_life
         if half_life <= 0:
             return current
         decayed = current * (0.5 ** (elapsed / half_life))
@@ -284,9 +302,17 @@ GATE_SYSTEM_PROMPT = (
     "若最新消息里的“你”可能指机器人（尤其紧跟机器人发言之后），视为 addressed，倾向回复。"
     "不要输出任何其他字段。"
     "“连发N条”表示同一人的连续短消息，视为一段完整发言。"
+)
+
+# react 指令（S10-HUMAN-P2 H9，Final Fix）：不进系统提示词——通道关闭/不可用
+# 的部署不为永不出现的表情列表付 token；仅当本轮 reaction_available 时与
+# 「可用表情 ID」列表合并成一个条件块拼进 user prompt（同进同出）。模型未被
+# 告知 react 时不会自发输出 action=react，解析层对未知 action 也回落 reply
+# （fail-closed 双保险）。
+_GATE_REACT_INSTRUCTION = (
     "当回应只是轻量情绪反应（赞同、好笑、无语、安慰等）且不值得打字时，"
     '可输出 "action": "react" 并在 "emoji_id" 给出下方可用表情 ID 之一；'
-    '其他情况一律 "action": "reply"。可用表情 ID 见用户消息末尾列表，列表为空时不得 react。'
+    '其他情况一律 "action": "reply"。'
 )
 
 _GATE_REASONS = frozenset({"addressed", "question_answerable", "banter", "none"})
@@ -610,14 +636,17 @@ def _reset_reaction_streak() -> None:
 def _note_reaction_result(ok: bool) -> str:
     """登记一次贴表情发送结局（H9 降级状态机），返回 AUTO_CHAT_REACTIONS 标签：
     成功清零计 `"ok"`；失败累计，第 3 次连续失败起置禁用并计 `"unsupported"`，
-    其间计 `"failed"`（偶发单次失败不触发禁用，spec Q2）。"""
+    其间计 `"failed"`（偶发单次失败不触发禁用，spec Q2）。翻转禁用那一刻发
+    一条固定文案 warning（只报事实，不携带 message_id/消息内容），且只发一次。"""
     global _REACTION_FAIL_STREAK, _REACTION_UNSUPPORTED
     if ok:
         _REACTION_FAIL_STREAK = 0
         return "ok"
     _REACTION_FAIL_STREAK += 1
     if _REACTION_FAIL_STREAK >= 3:
-        _REACTION_UNSUPPORTED = True
+        if not _REACTION_UNSUPPORTED:
+            _REACTION_UNSUPPORTED = True
+            logger.warning("auto chat reaction channel disabled after consecutive failures")
         return "unsupported"
     return "failed"
 
@@ -1160,14 +1189,17 @@ async def run_auto_chat(
         else:
             _metric("prefilter", "passed")
         gate_span = tracer.start_span("auto.gate", trace_id=current_request_id())
-        # 可用表情 ID 提示（H9）：仅在通道本轮真的可用时告知模型——开关关、
-        # 白名单空、无回调/触发消息（收集器批次交付路径）或已判 unsupported
-        # 时都不提示；空列表时 GATE_SYSTEM_PROMPT 已禁止 react。
+        # react 指令 + 可用表情 ID 提示（H9，Final Fix）：整个条件块仅在通道
+        # 本轮真的可用时进 user prompt——react 回调不在、无触发消息 id（收集器
+        # 批次交付路径）、开关关、白名单空或已判 unsupported 时整块缺席；系统
+        # 提示词不含 react 文案（不可用部署不为此付 token）。白名单非空已由
+        # reaction_available 保证，无需再提示"列表为空时不得 react"。
         reaction_hint = ""
         if reaction_available:
             ids = "、".join(sorted(settings.auto_chat_reaction_id_list))
             reaction_hint = (
-                f"\n可用表情 ID：{ids}（仅当 action=react 时选一个；不适合就 action=reply）"
+                f"\n{_GATE_REACT_INSTRUCTION}\n"
+                f"可用表情 ID：{ids}（仅当 action=react 时选一个；不适合就 action=reply）"
             )
         try:
             content = await complete(

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
 
 from collections import deque
@@ -889,6 +890,12 @@ class TestPromptBotVisibility:
         assert "机器人" in GATE_SYSTEM_PROMPT
         assert "你" in GATE_SYSTEM_PROMPT
         assert "视为 addressed，倾向回复" in GATE_SYSTEM_PROMPT
+
+    def test_gate_system_prompt_has_no_react_clause(self) -> None:
+        """Final Fix：react 指令不进系统提示词——通道关闭的部署不为永不出现的
+        表情列表付 token；指令与「可用表情 ID」同块，仅在 reaction_available
+        时进 user prompt（见 TestGateEmojiHintGating）。"""
+        assert "react" not in GATE_SYSTEM_PROMPT
 
 
 # ---- 二期：冷场反应（S7-AUTO-P2-05）----
@@ -1834,6 +1841,31 @@ class TestInterest:
         assert state.interest_of(1, settings=settings) == 0.0
         assert state._interest[1] == 0.0
 
+    def test_note_activity_folds_half_life_before_boost(self) -> None:
+        """判别 pin（Final Fix）：显式传 half_life 时先按半衰期折叠存量再加 boost。
+        50 条 ×0.02=1.0，静默恰一个半衰期后再记一条 → 0.5+0.02=0.52，
+        而非无折叠累加的 1.02→钳 1.0（活跃消息流中衰减永不生效的旧缺陷）。"""
+        clock = FakeClock()
+        state = AutoChatState(clock=clock)
+        settings = _settings()
+        for _ in range(50):
+            state.note_activity(1, weight=1.0, half_life=600.0)
+        assert state.interest_of(1, settings=settings) == 1.0
+        clock.advance(600)  # 恰好一个半衰期
+        state.note_activity(1, weight=1.0, half_life=600.0)
+        assert state.interest_of(1, settings=settings) == pytest.approx(0.52, abs=1e-9)
+
+    def test_note_activity_without_half_life_keeps_no_fold(self) -> None:
+        """省略 half_life（默认 None）保持旧语义：直接操作 state 的既有单测
+        （时间推进后 note 仍按未折算存量累加）不受影响，折叠由调用方显式启用。"""
+        clock = FakeClock()
+        state = AutoChatState(clock=clock)
+        settings = _settings()
+        state.note_activity(1, weight=1.0)
+        clock.advance(600)
+        state.note_activity(1, weight=1.0)
+        assert state.interest_of(1, settings=settings) == pytest.approx(0.04, abs=1e-9)
+
     def test_cooldown_multiplier_clamped_to_hot_floor(self) -> None:
         """冷却乘数在 interest=1 时不低于热聊冷却（30s）：300×0.5=150 > 30。
         安静群 interest=0 → 300×1.2=360s（比原冷却更长，乘数只可能更活跃）。"""
@@ -2263,6 +2295,38 @@ class TestReactionPath:
             m._reset_reaction_streak()
 
 
+class TestReactionUnsupportedLog:
+    """Final Fix：3 连败翻转 `_REACTION_UNSUPPORTED` 的那一刻发一条 warning
+    （固定文案，无 message_id、无消息内容），且整个进程生命周期只发一次。"""
+
+    def test_warning_fires_exactly_once_on_third_failure(self, caplog) -> None:
+        from qq_bot.services import auto_chat as m
+
+        m._reset_reaction_streak()  # 测试隔离：进程级降级态
+        try:
+            with caplog.at_level(logging.WARNING, logger="qq_bot.auto_chat"):
+                assert m._note_reaction_result(False) == "failed"
+                assert m._note_reaction_result(False) == "failed"
+                assert m._note_reaction_result(False) == "unsupported"
+                # 已禁用后再次登记失败（防御路径）不得重复告警
+                assert m._note_reaction_result(False) == "unsupported"
+            disabled = [
+                r
+                for r in caplog.records
+                if r.levelno == logging.WARNING
+                and r.name == "qq_bot.auto_chat"
+                and "reaction channel disabled" in r.getMessage()
+            ]
+            assert len(disabled) == 1
+            # 固定文案：只有事实，不携带 message_id 或任何消息内容
+            assert (
+                disabled[0].getMessage()
+                == "auto chat reaction channel disabled after consecutive failures"
+            )
+        finally:
+            m._reset_reaction_streak()
+
+
 class TestGateEmojiHintGating:
     """决策门"可用表情 ID"提示行的准入（Fix Round 1 / Minor 7）：提示必须与
     本轮贴表情通道的真实可用性一致——react 回调在、有触发消息 id、开关与白
@@ -2289,6 +2353,9 @@ class TestGateEmojiHintGating:
 
         await _run(h, "随便聊聊", react=react)
         assert "可用表情 ID：128、4" in self._gate_prompt(h)
+        # react 指令（原系统提示词段落）与 ID 列表同块进 user prompt
+        assert "action=react" in self._gate_prompt(h)
+        assert "不值得打字" in self._gate_prompt(h)
 
     async def test_hint_absent_on_batch_path(self) -> None:
         """react=None + trigger_message_id=None（收集器批次交付路径的接线形态）：
@@ -2355,3 +2422,5 @@ class TestGateEmojiHintGating:
         )
         assert h.sent  # 回落文本生成
         assert "可用表情 ID" not in self._gate_prompt(h)
+        # react 指令与列表同块：通道不可用时整块缺席，不残留半截指令
+        assert "action=react" not in self._gate_prompt(h)

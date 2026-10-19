@@ -2187,8 +2187,8 @@ async def test_addressed_reply_registers_note_and_cold_check(
             calls["note"] += 1
             return ""
 
-        def note_activity(self, group_id, *, weight=1.0, boost=None):
-            calls["activity"].append((group_id, weight, boost))
+        def note_activity(self, group_id, *, weight=1.0, boost=None, half_life=None):
+            calls["activity"].append((group_id, weight, boost, half_life))
 
     async def fake_request_ai_reply(
         prompt, *, settings, client=None, search_context="", chat_context="", roco_context=""
@@ -2221,10 +2221,12 @@ async def test_addressed_reply_registers_note_and_cold_check(
     # 群兴趣度计分（H7）：被 @ 问答路径同入口记一次，weight 由纯函数算出，
     # boost 显式取自 settings.auto_chat_interest_boost
     assert len(calls["activity"]) == 1
-    group_id, weight, boost = calls["activity"][0]
+    group_id, weight, boost, half_life = calls["activity"][0]
     assert group_id == 1001
     assert weight == 3.0  # "ai 你好" 含"你"（+2），非疑问尾
     assert boost == BotSettings().auto_chat_interest_boost
+    # 存量折叠接线（Final Fix）：handler 显式传半衰期配置，note 前先折算
+    assert half_life == BotSettings().auto_chat_interest_half_life
 
 
 # ---- 二期收尾：send 闭包吞掉 finish 控制流异常（S7-AUTO-P2-07）----
