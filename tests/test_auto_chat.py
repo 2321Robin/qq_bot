@@ -499,6 +499,22 @@ async def _run(
     )
 
 
+def _varying_reply(h: Harness, *replies: str):
+    """生成/冷场回复各不相同：`_RECENT_REPLIES` 会拒绝同文复读，多轮场景
+    需要不同文本才能各自发出去。"""
+    queue = iter(replies)
+
+    async def fake_request_completion(**kwargs) -> str:
+        h.completions.append(kwargs)
+        if "决策器" in kwargs["system_prompt"]:
+            return h.gate_content
+        if "没有人回应" in kwargs["system_prompt"] or "没有人回应" in kwargs.get("user_prompt", ""):
+            return next(queue, h.cold_content)
+        return next(queue, h.casual_content)
+
+    return fake_request_completion
+
+
 @pytest.mark.asyncio
 async def test_happy_path_gate_pass_send_with_delay() -> None:
     h = Harness(["在吗", "新活动开了"], _run_settings())
@@ -1794,6 +1810,15 @@ class TestInterest:
             state.note_activity(1, weight=1.0, boost=0.1)
         assert state.interest_of(1, settings=settings) == pytest.approx(1.0, abs=1e-9)
 
+    def test_note_activity_negative_boost_clamped_to_zero(self) -> None:
+        """负 boost（配置或显式 kwarg）不得写入负兴趣度。"""
+        clock = FakeClock()
+        state = AutoChatState(clock=clock)
+        settings = _settings()
+        state.note_activity(1, weight=1.0, boost=-0.5)
+        assert state.interest_of(1, settings=settings) == 0.0
+        assert state._interest[1] == 0.0
+
     def test_cooldown_multiplier_clamped_to_hot_floor(self) -> None:
         """冷却乘数在 interest=1 时不低于热聊冷却（30s）：300×0.5=150 > 30。
         安静群 interest=0 → 300×1.2=360s（比原冷却更长，乘数只可能更活跃）。"""
@@ -1804,7 +1829,7 @@ class TestInterest:
 
     def test_sampling_multiplier_bounds(self) -> None:
         """乘数率 = min(1, rate × (0.5 + 2.5 × interest))：interest 0 → 0.5×，
-        interest 1 → 3.0×（brief 注释写 3.5 是笔误：0.5+2.5×1=3.0），钳 1。"""
+        interest 1 → 3.0×（0.5+2.5×1），钳 1。"""
         assert min(1.0, 0.2 * (0.5 + 2.5 * 0.0)) == pytest.approx(0.1)
         assert min(1.0, 0.2 * (0.5 + 2.5 * 0.5)) == pytest.approx(0.35)
         assert min(1.0, 0.2 * (0.5 + 2.5 * 1.0)) == pytest.approx(0.6)
@@ -1813,18 +1838,39 @@ class TestInterest:
 
 @pytest.mark.asyncio
 async def test_interest_raises_sampling_effective_rate() -> None:
+    """interest=0.6 → 乘数率 = 0.2×(0.5+2.5×0.6) = 0.4：rng 0.35 通过采样。
+    阈值 0.75 高于 0.6，确保走的是采样路径而非高热自动进热聊。"""
     state = AutoChatState(clock=FakeClock())
-    for _ in range(100):
-        state.note_activity(1001, weight=1.0)  # interest=1
+    for _ in range(30):
+        state.note_activity(1001, weight=1.0)  # interest=0.6 < 阈值 0.75
     settings = _run_settings(
         auto_chat_sample_rate=0.2,
         auto_chat_interest_enabled=True,
+        auto_chat_interest_hot_threshold=0.75,
         auto_chat_cooldown_seconds=0.0,
     )
     h = Harness(["随便聊聊"], settings, state=state)
-    h.rng_value = 0.65  # <0.7（乘数率 min(1, 0.2×3.5)）但 >=0.2（原采样率）
+    h.rng_value = 0.35  # < 0.4（乘数率）但 >= 0.2（原采样率）
+    hot_before = _metric_value("prefilter", "interest_hot")
     await _run(h, "随便聊聊")
     assert h.sent  # 热度让它通过采样
+    # 未走高热自动进热聊（阈值 0.75 > 0.6），确系采样路径放行。
+    assert _metric_value("prefilter", "interest_hot") == hot_before
+
+    # 负对照：同一热度下关闭兴趣开关 → 采样率回到 0.2，rng 0.35 被采掉。
+    control_state = AutoChatState(clock=FakeClock())
+    for _ in range(30):
+        control_state.note_activity(1001, weight=1.0)
+    disabled = _run_settings(
+        auto_chat_sample_rate=0.2,
+        auto_chat_interest_enabled=False,
+        auto_chat_interest_hot_threshold=0.75,
+        auto_chat_cooldown_seconds=0.0,
+    )
+    control = Harness(["随便聊聊"], disabled, state=control_state)
+    control.rng_value = 0.35
+    await _run(control, "随便聊聊")
+    assert control.sent == []
 
 
 @pytest.mark.asyncio
@@ -1906,7 +1952,7 @@ async def test_interest_below_threshold_stays_cold() -> None:
 
 @pytest.mark.asyncio
 async def test_interest_gauge_updated_per_run() -> None:
-    # 阈值设高以避免高热自动进热聊：热聊路径跳过采样块，gauge 只在采样块更新
+    # 阈值设高以避免高热自动进热聊；gauge 在热聊判定后统一更新（本轮 interest=0.5）
     state = AutoChatState(clock=FakeClock())
     for _ in range(25):  # interest = 0.5
         state.note_activity(1001, weight=1.0)
@@ -1928,7 +1974,43 @@ async def test_interest_gauge_not_touched_when_disabled() -> None:
     before = _interest_gauge(1001)
     await _run(h, "随便聊聊")
     assert h.sent
-    assert _interest_gauge(1001) == before  # 关闭时采样块不写 gauge
+    assert _interest_gauge(1001) == before  # 关闭时不写 gauge
+
+
+@pytest.mark.asyncio
+async def test_interest_gauge_updated_on_bypass_paths() -> None:
+    """gauge 在热聊判定后统一更新：高热自动进热聊（跳过采样块）与非热聊的
+    昵称/引用旁路都不会让 gauge 停留在过期值。"""
+    # 场景一：interest=1 ≥ 阈值 0.75 → 高热自动进热聊，整轮跳过采样块。
+    state = AutoChatState(clock=FakeClock())
+    for _ in range(100):
+        state.note_activity(1001, weight=1.0)
+    settings = _run_settings(
+        auto_chat_sample_rate=0.0,
+        auto_chat_interest_enabled=True,
+        auto_chat_interest_hot_threshold=0.75,
+        auto_chat_cold_daily_limit=0,
+    )
+    h = Harness(["随便聊聊"], settings, state=state)
+    await _run(h, "随便聊聊", _completion=_varying_reply(h, "高热回复"))
+    assert h.sent
+    assert _interest_gauge(1001) == pytest.approx(1.0)
+
+    # 场景二：interest=0.6 < 阈值，昵称旁路跳过采样块。
+    state = AutoChatState(clock=FakeClock())
+    for _ in range(30):
+        state.note_activity(1001, weight=1.0)
+    settings = _run_settings(
+        auto_chat_sample_rate=0.0,
+        auto_chat_interest_enabled=True,
+        auto_chat_interest_hot_threshold=0.75,
+        auto_chat_cold_daily_limit=0,
+    )
+    h = Harness(["有人在吗", "喊小洛"], settings, state=state)
+    await _run(h, "小洛 在吗", _completion=_varying_reply(h, "昵称回复"))
+    assert h.sent
+    assert [c for c in h.completions if "决策器" in c["system_prompt"]] == []
+    assert _interest_gauge(1001) == pytest.approx(0.6)
 
 
 @pytest.mark.asyncio

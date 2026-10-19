@@ -199,7 +199,7 @@ class AutoChatState:
         同时 state 本身不依赖 BotSettings。负 weight 被夹为 0（绝不降温）。"""
         current = self.interest_raw(group_id)
         applied = _INTEREST_BOOST_FIXED if boost is None else boost
-        self._interest[group_id] = min(1.0, current + applied * max(weight, 0.0))
+        self._interest[group_id] = max(0.0, min(1.0, current + applied * max(weight, 0.0)))
         self._interest_at[group_id] = self._clock()
 
     def interest_of(self, group_id: int, *, settings: BotSettings) -> float:
@@ -985,23 +985,25 @@ async def run_auto_chat(
         _metric("prefilter", "backoff")
         return
     hot = state.hot_active(group_id, settings=settings)
-    # 兴趣度自动进热聊（S10-HUMAN-P2 H7）：高热群且当前不在热聊窗口时，按热聊
-    # 路径处理本轮（跳过采样与门）并刷新窗口。note_reply 的 "hot_exit_limit"
-    # 返回值此处有意忽略——新 streak=1 绝不可能触及 50 条兜底，streak 兜底由
-    # 后续正常发言路径自然处理。
-    if not hot and settings.auto_chat_interest_enabled:
-        if (
-            state.interest_of(group_id, settings=settings)
-            >= settings.auto_chat_interest_hot_threshold
-        ):
+    # 兴趣度只在本轮算一次，供自动进热聊/冷却乘数/采样乘数/gauge 复用。
+    interest = 0.0
+    if settings.auto_chat_interest_enabled:
+        interest = state.interest_of(group_id, settings=settings)
+        # 兴趣度自动进热聊（S10-HUMAN-P2 H7）：高热群且当前不在热聊窗口时，按热聊
+        # 路径处理本轮（跳过采样与门）并刷新窗口。note_reply 的 "hot_exit_limit"
+        # 返回值此处有意忽略——新 streak=1 绝不可能触及 50 条兜底，streak 兜底由
+        # 后续正常发言路径自然处理。
+        if not hot and interest >= settings.auto_chat_interest_hot_threshold:
             state.note_reply(group_id, settings=settings)  # 刷新热聊窗口即进入
             hot = True
             _metric("prefilter", "interest_hot")
+        # gauge 每轮更新一次（含 NICKNAMED/QUOTED/热聊等旁路路径），避免只走
+        # 旁路的群长期保留过期值；关闭时与 HEAD 一致不写 gauge。
+        metrics.AUTO_CHAT_INTEREST.labels(hash_id(group_id, kind="group")).set(interest)
     # 冷却乘数（H7）：非热聊期按热度缩放冷却，钳不低于热聊冷却；热聊期沿用
     # 热聊冷却（豁免语义不变）。
     cooldown_override: float | None = None
     if settings.auto_chat_interest_enabled and not hot:
-        interest = state.interest_of(group_id, settings=settings)
         scaled = settings.auto_chat_cooldown_seconds * (1.2 - 0.7 * interest)
         cooldown_override = max(settings.auto_chat_hot_cooldown_seconds, scaled)
     limit = state.limit_reason(
@@ -1037,12 +1039,10 @@ async def run_auto_chat(
         _metric("prefilter", "hot_reply")
     else:
         # 采样乘数（S10-HUMAN-P2 H7）：热度越高有效采样率越高；开关关闭时与
-        # 现状逐行等价（乘数 1、标签仍为 sampled_out）。gauge 每轮更新一次。
+        # 现状逐行等价（乘数 1、标签仍为 sampled_out）。
         effective_rate = settings.auto_chat_sample_rate
         if settings.auto_chat_interest_enabled:
-            interest = state.interest_of(group_id, settings=settings)
             effective_rate = min(1.0, effective_rate * (0.5 + 2.5 * interest))
-            metrics.AUTO_CHAT_INTEREST.labels(hash_id(group_id, kind="group")).set(interest)
         if category is not TriggerCategory.YOU_TO_GATE and rng() >= effective_rate:
             _metric(
                 "prefilter",
