@@ -387,6 +387,11 @@ class BotSettings(BaseSettings):
     auto_chat_interest_boost: float = 0.02
     auto_chat_interest_half_life: float = 600.0
     auto_chat_interest_hot_threshold: float = 0.75
+    # P2（S10-HUMAN-P2）H9：贴表情反应——决策门 action=react 时对触发消息贴表情
+    auto_chat_reaction_enabled: bool = False  # H9：贴表情反应通道
+    auto_chat_reaction_daily_limit: int = 10
+    auto_chat_reaction_cooldown_seconds: float = 60.0
+    auto_chat_reaction_whitelist: str = ""  # 逗号分隔表情 id；空 = react 回落回复
     auto_chat_sensitive_words: str = ""  # 追加词（逗号分隔），与内置表合并
     auto_chat_negative_words: str = ""  # 追加词（逗号分隔），与内置表合并
     auto_chat_ignored_user_ids: str = ""  # 自主插话忽略的发送者（可放其他机器人号）
@@ -832,6 +837,14 @@ class BotSettings(BaseSettings):
             word.strip() for word in self.auto_chat_negative_words.split(",") if word.strip()
         )
         return BUILTIN_NEGATIVE_WORDS + extra
+
+    @property
+    def auto_chat_reaction_id_list(self) -> tuple[str, ...]:
+        """贴表情白名单（S10-HUMAN-P2 H9）：逗号分隔的表情 id 去空白集合。
+        空元组 = 通道未配置表情，react 意图一律回落文本回复。"""
+        return tuple(
+            item.strip() for item in self.auto_chat_reaction_whitelist.split(",") if item.strip()
+        )
 
     @property
     def scheduled_group_id_list(self) -> list[int]:

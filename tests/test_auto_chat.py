@@ -374,6 +374,8 @@ def test_auto_chat_counter_registered() -> None:
 
 
 class FakeEvent:
+    message_id = 1  # H9 贴表情：单消息路径的触发 message_id（NoneBot v11 int）
+
     def __init__(self, group_id: int = 1001, user_id: int = 2001):
         self.group_id = group_id
         self.user_id = user_id
@@ -481,7 +483,11 @@ class Harness:
 
 
 async def _run(
-    h: Harness, raw_text: str = "一起去打新活动吗", _completion=None, quoted_self: bool = False
+    h: Harness,
+    raw_text: str = "一起去打新活动吗",
+    _completion=None,
+    quoted_self: bool = False,
+    react=None,
 ) -> None:
     await run_auto_chat(
         event=FakeEvent(),
@@ -496,6 +502,8 @@ async def _run(
         _cold_sleep=h.instant_cold_sleep,
         _request_completion=_completion or h.completion(),
         quoted_self=quoted_self,
+        react=react,
+        trigger_message_id=FakeEvent.message_id,
     )
 
 
@@ -2087,3 +2095,148 @@ async def test_interest_zero_multiplies_cooldown_upward() -> None:
     clock.advance(60.0)  # 累计 370s > 360s
     await _run(h, "第三句", _completion=varying())
     assert len(h.sent) == 2
+
+
+# ---- 贴表情反应（S10-HUMAN-P2 H9）：决策门 action/react 路径/限额/降级 ----
+
+
+class TestGateActionParsing:
+    def test_default_action_reply(self) -> None:
+        d = parse_gate_output('{"should_reply": true, "reason": "banter", "confidence": 0.9}')
+        assert d is not None and d.action == "reply" and d.emoji_id == ""
+
+    def test_react_with_emoji(self) -> None:
+        d = parse_gate_output(
+            '{"should_reply": true, "reason": "banter", "confidence": 0.9,'
+            ' "action": "react", "emoji_id": "128"}'
+        )
+        assert d is not None and d.action == "react" and d.emoji_id == "128"
+
+    def test_invalid_action_falls_back_to_reply(self) -> None:
+        d = parse_gate_output(
+            '{"should_reply": true, "reason": "banter", "confidence": 0.9, "action": "dance"}'
+        )
+        assert d is not None and d.action == "reply"
+
+    def test_non_string_emoji_id_becomes_empty(self) -> None:
+        d = parse_gate_output(
+            '{"should_reply": true, "reason": "banter", "confidence": 0.9,'
+            ' "action": "react", "emoji_id": 128}'
+        )
+        assert d is not None and d.action == "react" and d.emoji_id == ""
+
+    def test_garbage_still_none(self) -> None:
+        assert parse_gate_output("不是json") is None
+
+
+def _react_gate_content(emoji_id: str = "128") -> str:
+    return (
+        '{"should_reply": true, "reason": "banter", "confidence": 0.9,'
+        f' "action": "react", "emoji_id": "{emoji_id}"}}'
+    )
+
+
+class TestReactionPath:
+    async def test_react_skips_generation_and_hot_and_cold(self) -> None:
+        settings = _run_settings(
+            auto_chat_sample_rate=1.0,
+            auto_chat_reaction_enabled=True,
+            auto_chat_reaction_whitelist="128",
+            auto_chat_cooldown_seconds=0.0,
+        )
+        state = AutoChatState(clock=FakeClock())
+        h = Harness(["随便聊聊"], settings, state=state)
+        h.gate_content = _react_gate_content("128")
+        reactions: list[tuple[int, str]] = []
+
+        async def react(message_id: int, emoji_id: str) -> bool:
+            reactions.append((message_id, emoji_id))
+            return True
+
+        await _run(h, "随便聊聊", react=react)
+        assert reactions == [(1, "128")]  # message_id 来自 Harness 默认（见下）
+        assert h.sent == []  # 不发文本
+        assert not h.completions or all(
+            "决策器" in c["system_prompt"] for c in h.completions
+        )  # 无生成调用
+        assert state.hot_active(1001, settings=settings) is False  # 不进热聊
+        assert h.state._hot_streak.get(1001, 0) == 0
+
+    async def test_react_emoji_not_in_whitelist_falls_back_to_reply(self) -> None:
+        settings = _run_settings(
+            auto_chat_sample_rate=1.0,
+            auto_chat_reaction_enabled=True,
+            auto_chat_reaction_whitelist="4",
+            auto_chat_cooldown_seconds=0.0,
+        )
+        h = Harness(["随便聊聊"], settings)
+        h.gate_content = _react_gate_content("999")
+
+        async def react(message_id: int, emoji_id: str) -> bool:
+            raise AssertionError("react 不应被调用")
+
+        await _run(h, "随便聊聊", react=react)
+        assert h.sent  # 回落文本生成
+
+    async def test_react_disabled_channel_falls_back(self) -> None:
+        settings = _run_settings(auto_chat_sample_rate=1.0, auto_chat_cooldown_seconds=0.0)
+        h = Harness(["随便聊聊"], settings)
+        h.gate_content = _react_gate_content("128")
+
+        async def react(message_id: int, emoji_id: str) -> bool:
+            raise AssertionError("react 不应被调用")
+
+        await _run(h, "随便聊聊", react=react)
+        assert h.sent
+
+    async def test_react_daily_limit_and_cooldown(self) -> None:
+        settings = _run_settings(
+            auto_chat_sample_rate=1.0,
+            auto_chat_reaction_enabled=True,
+            auto_chat_reaction_whitelist="128",
+            auto_chat_cooldown_seconds=0.0,
+            auto_chat_reaction_daily_limit=1,
+            auto_chat_reaction_cooldown_seconds=60,
+        )
+        clock = FakeClock()
+        state = AutoChatState(clock=clock)
+        h = Harness(["随便聊聊"], settings, state=state)
+        h.gate_content = _react_gate_content("128")
+        calls = {"n": 0}
+
+        async def react(message_id: int, emoji_id: str) -> bool:
+            calls["n"] += 1
+            return True
+
+        await _run(h, "随便聊聊", react=react)
+        assert calls["n"] == 1
+        # 第二次：日上限 → 回落文本（不再 react）
+        h2 = Harness(["随便聊聊"], settings, state=state)
+        h2.gate_content = h.gate_content
+        await _run(h2, "随便聊聊", react=react)
+        assert calls["n"] == 1
+        assert h2.sent
+
+    async def test_three_failures_disable_channel_then_fallback(self) -> None:
+        from qq_bot.services import auto_chat as m
+
+        m._reset_reaction_streak()  # 测试隔离
+        settings = _run_settings(
+            auto_chat_sample_rate=1.0,
+            auto_chat_reaction_enabled=True,
+            auto_chat_reaction_whitelist="128",
+            auto_chat_cooldown_seconds=0.0,
+        )
+        h = Harness(["随便聊聊"], settings)
+        h.gate_content = _react_gate_content("128")
+
+        async def failing_react(message_id: int, emoji_id: str) -> bool:
+            return False
+
+        for _ in range(3):
+            await _run(h, "随便聊聊", react=failing_react)
+        assert m.reaction_unsupported() is True
+        # 第 4 次：react 不再尝试，直接文本
+        h.sent.clear()
+        await _run(h, "随便聊聊", react=failing_react)
+        assert h.sent

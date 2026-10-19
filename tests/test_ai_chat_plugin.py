@@ -2028,9 +2028,10 @@ async def test_auto_chat_collect_route_stashes_hooks_and_submits_batch_item(
     assert item.sender_user_id == 2001
     assert item.row_id == 777
     assert 1001 in ai_chat_plugin._PENDING_AUTO_HOOKS
-    quota_check, send = ai_chat_plugin._PENDING_AUTO_HOOKS[1001]
+    quota_check, send, react = ai_chat_plugin._PENDING_AUTO_HOOKS[1001]
     assert callable(quota_check)
     assert callable(send)
+    assert callable(react)
 
 
 @pytest.mark.asyncio
@@ -2237,7 +2238,7 @@ async def test_auto_chat_send_hook_swallows_finished_exception(
     否则调用方的后续逻辑（如 run_auto_chat 的 send/ok 指标）永远不会执行。"""
     event = FakeEvent("随便聊聊")
     settings = BotSettings(allowed_group_ids="1001", ai_api_key="secret")
-    _, send = ai_chat_plugin._build_auto_chat_hooks(event, settings)
+    _, send, _react = ai_chat_plugin._build_auto_chat_hooks(event, settings)
 
     async def fake_finish(matcher, message):
         raise FinishedException()
@@ -2273,7 +2274,7 @@ async def test_send_multi_parts_bursts_then_finishes_last(
         ai_api_key="secret",
         named_mention_replacements="@小洛=2880000001",
     )
-    _, send = ai_chat_plugin._build_auto_chat_hooks(event, settings)
+    _, send, _react = ai_chat_plugin._build_auto_chat_hooks(event, settings)
 
     monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: fake_bot)
     monkeypatch.setattr(ai_chat_plugin, "finish_with_send_errors_logged", fake_finish)

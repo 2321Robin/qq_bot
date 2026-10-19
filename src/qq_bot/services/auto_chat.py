@@ -74,6 +74,9 @@ class AutoChatState:
         # 群兴趣度（S10-HUMAN-P2 H7）：每群 [0,1] 浮点 + 上次 boost 的单调时刻
         self._interest: dict[int, float] = {}
         self._interest_at: dict[int, float] = {}
+        # 贴表情反应（S10-HUMAN-P2 H9）：独立冷却时刻 + 每日计数（进程内存态）
+        self._last_reaction: dict[int, float] = {}
+        self._reaction_daily: dict[tuple[int, str], int] = {}
 
     def lock(self, group_id: int) -> asyncio.Lock:
         return self._locks.setdefault(group_id, asyncio.Lock())
@@ -187,6 +190,37 @@ class AutoChatState:
         day_key = self._bucket_clock().strftime("%Y-%m-%d")
         self._cold_daily[(group_id, day_key)] = self._cold_daily.get((group_id, day_key), 0) + 1
 
+    # ---- 贴表情反应限额（S10-HUMAN-P2 H9）----
+
+    def reaction_limit_reason(
+        self, group_id: int, *, settings: BotSettings, cooldown_seconds: float | None = None
+    ) -> str:
+        """`""` 在限额内，否则 `cooldown`|`daily_limit`。与文本回复完全独立计数
+        （react 不占 _last_sent/_hourly/_daily，反之亦然）。"""
+        cooldown = (
+            cooldown_seconds
+            if cooldown_seconds is not None
+            else settings.auto_chat_reaction_cooldown_seconds
+        )
+        last = self._last_reaction.get(group_id)
+        if last is not None and self._clock() - last < cooldown:
+            return "cooldown"
+        day_key = self._bucket_clock().strftime("%Y-%m-%d")
+        if (
+            self._reaction_daily.get((group_id, day_key), 0)
+            >= settings.auto_chat_reaction_daily_limit
+        ):
+            return "daily_limit"
+        return ""
+
+    def note_reaction(self, group_id: int) -> None:
+        """登记一次成功贴表情：刷新 react 独立冷却并累计当日计数。"""
+        self._last_reaction[group_id] = self._clock()
+        day_key = self._bucket_clock().strftime("%Y-%m-%d")
+        self._reaction_daily[(group_id, day_key)] = (
+            self._reaction_daily.get((group_id, day_key), 0) + 1
+        )
+
     # ---- 群兴趣度（S10-HUMAN-P2 H7）----
 
     def note_activity(
@@ -250,6 +284,9 @@ GATE_SYSTEM_PROMPT = (
     "若最新消息里的“你”可能指机器人（尤其紧跟机器人发言之后），视为 addressed，倾向回复。"
     "不要输出任何其他字段。"
     "“连发N条”表示同一人的连续短消息，视为一段完整发言。"
+    "当回应只是轻量情绪反应（赞同、好笑、无语、安慰等）且不值得打字时，"
+    '可输出 "action": "react" 并在 "emoji_id" 给出下方可用表情 ID 之一；'
+    '其他情况一律 "action": "reply"。可用表情 ID 见用户消息末尾列表，列表为空时不得 react。'
 )
 
 _GATE_REASONS = frozenset({"addressed", "question_answerable", "banter", "none"})
@@ -271,6 +308,10 @@ class GateDecision:
     should_reply: bool
     reason: str
     confidence: float
+    # S10-HUMAN-P2 H9：贴表情反应。action=react 时本轮只贴表情不生成文本；
+    # emoji_id 必须是调用方白名单内的字符串（解析层只做类型归一）。
+    action: str = "reply"
+    emoji_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -510,7 +551,20 @@ def parse_gate_output(content: str | None) -> GateDecision | None:
         return None
     if not 0.0 <= confidence <= 1.0:
         return None
-    return GateDecision(should_reply=should_reply, reason=reason, confidence=confidence)
+    # H9：action 仅接受 reply/react（未知值回落 reply，fail-closed 不变）；
+    # emoji_id 只接受字符串（模型给数字等一律视为不可用）。
+    action = payload.get("action", "reply")
+    if action not in ("reply", "react"):
+        action = "reply"
+    emoji_raw = payload.get("emoji_id", "")
+    emoji_id = emoji_raw.strip() if isinstance(emoji_raw, str) else ""
+    return GateDecision(
+        should_reply=should_reply,
+        reason=reason,
+        confidence=confidence,
+        action=action,
+        emoji_id=emoji_id,
+    )
 
 
 # ---- 编排：run_auto_chat（S7-AUTO-06）----
@@ -533,6 +587,40 @@ _STYLE_DIRECTIVES: tuple[str, ...] = (
 # 每群最近自主发言（不含被 @ 问答），注入 prompt 让模型避开自己的旧句式
 _RECENT_REPLIES: dict[int, deque[str]] = {}
 _RECENT_REPLIES_MAX = 8
+
+# 贴表情反应降级（S10-HUMAN-P2 H9，spec Q2 方案 A）：同一 set_msg_emoji_like
+# 动作在同一进程内连续失败 ≥3 次 → 进程级禁用通道（协议不支持的 NapCat/端）。
+# 偶发单次失败只累计不触发；任何一次成功清零。禁用后 react 意图回落文本。
+_REACTION_FAIL_STREAK = 0
+_REACTION_UNSUPPORTED = False
+
+
+def reaction_unsupported() -> bool:
+    """贴表情通道是否已被判不支持（进程内，重启复位）。"""
+    return _REACTION_UNSUPPORTED
+
+
+def _reset_reaction_streak() -> None:
+    """复位降级状态。仅测试隔离用（_REACTION_* 为模块级进程态）。"""
+    global _REACTION_FAIL_STREAK, _REACTION_UNSUPPORTED
+    _REACTION_FAIL_STREAK = 0
+    _REACTION_UNSUPPORTED = False
+
+
+def _note_reaction_result(ok: bool) -> str:
+    """登记一次贴表情发送结局（H9 降级状态机），返回 AUTO_CHAT_REACTIONS 标签：
+    成功清零计 `"ok"`；失败累计，第 3 次连续失败起置禁用并计 `"unsupported"`，
+    其间计 `"failed"`（偶发单次失败不触发禁用，spec Q2）。"""
+    global _REACTION_FAIL_STREAK, _REACTION_UNSUPPORTED
+    if ok:
+        _REACTION_FAIL_STREAK = 0
+        return "ok"
+    _REACTION_FAIL_STREAK += 1
+    if _REACTION_FAIL_STREAK >= 3:
+        _REACTION_UNSUPPORTED = True
+        return "unsupported"
+    return "failed"
+
 
 # 调优记录（S7-AUTO-P2-11）：自主回复的上文与回复内容落 JSONL 供部署者复盘
 _TUNE_LOG_PATH = "data/auto_chat_tune.jsonl"
@@ -887,6 +975,8 @@ async def run_auto_chat(
     _request_completion: Any = None,
     batch: Sequence[BatchItem] | None = None,
     quoted_self: bool = False,
+    react: Callable[[int, str], Awaitable[bool]] | None = None,
+    trigger_message_id: int | None = None,
 ) -> None:
     """Full pipeline for one non-addressed group message (spec 一/二/三/四节).
 
@@ -895,6 +985,10 @@ async def run_auto_chat(
     ``batch=None`` 时为单消息路径，行为与历史版本逐行等价。
     ``quoted_self``（spec §5.3）标记引用机器人的消息：分类为 QUOTED，
     跳过采样与决策门（必回旁路）。
+
+    ``react``/``trigger_message_id``（S10-HUMAN-P2 H9）：贴表情回调与被反应的
+    触发消息 id。回调为 None 或无触发消息（收集器批次交付路径）时 react 通道
+    自然不可用，决策门即使给 action=react 也回落文本回复。
 
     ``_request_completion`` is a test seam defaulting to the real
     ``request_completion``; production callers never pass it. Send and quota
@@ -1054,6 +1148,14 @@ async def run_auto_chat(
         else:
             _metric("prefilter", "passed")
         gate_span = tracer.start_span("auto.gate", trace_id=current_request_id())
+        # 可用表情 ID 提示（H9）：仅在通道开启且白名单非空时告知模型——
+        # 空列表时 GATE_SYSTEM_PROMPT 已禁止 react，不必每次都在提示里强调。
+        reaction_hint = ""
+        if settings.auto_chat_reaction_enabled and settings.auto_chat_reaction_id_list:
+            ids = "、".join(sorted(settings.auto_chat_reaction_id_list))
+            reaction_hint = (
+                f"\n可用表情 ID：{ids}（仅当 action=react 时选一个；不适合就 action=reply）"
+            )
         try:
             content = await complete(
                 system_prompt=GATE_SYSTEM_PROMPT,
@@ -1061,7 +1163,8 @@ async def run_auto_chat(
                     rows,
                     batch_rows=_batch_as_rows(items, group_id) if is_batch else (),
                     jargon_refs=jargon_refs,
-                ),
+                )
+                + reaction_hint,
                 settings=settings,
                 client=client,
                 model=settings.router_model,
@@ -1090,6 +1193,42 @@ async def run_auto_chat(
             return
         tracer.end_span(gate_span)
         _metric("gate", "reply")
+
+        # ---- 贴表情反应通道（S10-HUMAN-P2 H9）----
+        # 进入条件 = "这轮真的打算贴表情"：门给 react 且所有前置闸门通过。
+        # 任一前置条件不满足（通道关/白名单空/emoji 不在白名单/已判
+        # unsupported/无回调或触发消息）都视为"未尝试"——自然落到下方文本路径。
+        if (
+            decision.action == "react"
+            and settings.auto_chat_reaction_enabled
+            and not _REACTION_UNSUPPORTED
+            and react is not None
+            and trigger_message_id is not None
+            and decision.emoji_id in settings.auto_chat_reaction_id_list
+        ):
+            _metric("gate", "react_intent")
+            if state.reaction_limit_reason(group_id, settings=settings):
+                # 反应限额（独立计数）已满 = 本轮"未尝试"发送：记指标后落到下方
+                # 文本路径（与"emoji 不在白名单"同族的前置未尝试条件，unsupported
+                # 之外的失败态都不静默丢轮）。限额判定先于 quota——不为一个不会
+                # 发出的表情消耗 quota 滑动窗口配额（文本路径自己会检一次）。
+                metrics.AUTO_CHAT_REACTIONS.labels("limit").inc()
+                _metric("prefilter", "reaction_limit")
+            else:
+                if quota_check is not None and not await quota_check():
+                    _metric("gate", "quota_denied")
+                    return
+                try:
+                    ok = await react(trigger_message_id, decision.emoji_id)
+                except Exception:
+                    ok = False
+                metrics.AUTO_CHAT_REACTIONS.labels(_note_reaction_result(ok)).inc()
+                if ok:
+                    state.note_reaction(group_id)
+                    _metric("gate", "react")
+                    return  # 不生成/不 note_reply/不冷场/不发文本
+                _metric("gate", "react_failed")
+                return  # 发送中失败即结束本轮：门已判定只值得贴表情，不强行生成文本
 
     if quota_check is not None and not await quota_check():
         _metric("gate", "quota_denied")

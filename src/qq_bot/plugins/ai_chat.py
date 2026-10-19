@@ -355,7 +355,8 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
             except Exception:
                 logger.exception("Chat memory reply update failed")
 
-        quota_check, send = _build_auto_chat_hooks(event, settings)
+        # 被 @ 问答路径不贴表情（用户在直接对话）：quota/send 用得上，react 不用
+        _quota_check, send, _unused_react = _build_auto_chat_hooks(event, settings)
         exit_flag = shared_state().note_reply(event.group_id, settings=settings)
         if exit_flag:
             metrics.AUTO_CHAT.labels("prefilter", "hot_exit_limit").inc()
@@ -367,7 +368,7 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                 settings=settings,
                 memory_store=memory_store,
                 send=send,
-                quota_check=quota_check,
+                quota_check=_quota_check,
                 client=http_client,
             )
 
@@ -450,8 +451,15 @@ def _connected_onebot_bot() -> OneBotV11Bot | None:
 
 def _build_auto_chat_hooks(
     event: GroupMessageEvent, settings: BotSettings
-) -> tuple[Callable[[], Awaitable[bool]], Callable[[str], Awaitable[None]]]:
-    """quota 准入与发送闭包（自主插话与被 @ 路径共用）。"""
+) -> tuple[
+    Callable[[], Awaitable[bool]],
+    Callable[[str], Awaitable[None]],
+    Callable[[int, str], Awaitable[bool]],
+]:
+    """quota 准入、发送与贴表情闭包（自主插话与被 @ 路径共用）。
+    react（S10-HUMAN-P2 H9）：对触发消息贴 OneBot v11 `set_msg_emoji_like`，
+    emoji_id 由决策门白名单过滤后传入；任何失败返回 False（由 auto_chat 的
+    连续失败降级逻辑处置），成功 True。"""
 
     async def quota_check() -> bool:
         try:
@@ -508,7 +516,24 @@ def _build_auto_chat_hooks(
         except FinishedException:
             pass  # matcher.finish 正常完成的控制流异常；吞掉让 ok 指标可执行
 
-    return quota_check, send
+    async def react(message_id: int, emoji_id: str) -> bool:
+        """贴表情反应（S10-HUMAN-P2 H9）：NapCat `set_msg_emoji_like`
+        （message_id int + emoji_id str）。协议不支持/超时/无连接 bot 一律
+        False——降级与限额记账在 auto_chat 服务层。"""
+        try:
+            bot = _connected_onebot_bot()
+            if bot is None:
+                return False
+            await bot.call_api(
+                "set_msg_emoji_like",
+                message_id=message_id,
+                emoji_id=emoji_id,
+            )
+            return True
+        except Exception:
+            return False
+
+    return quota_check, send, react
 
 
 async def _maybe_auto_reply(
@@ -530,7 +555,7 @@ async def _maybe_auto_reply(
     （S10-HUMAN-P0-06）：引用机器人自己的消息必回，走 QUOTED 旁路。"""
     load_persona(settings)  # 前置校验：人设配置可解析（坏配置早失败）
 
-    quota_check, send = _build_auto_chat_hooks(event, settings)
+    quota_check, send, react = _build_auto_chat_hooks(event, settings)
 
     category = classify_trigger(raw_text, settings=settings, quoted_self=quoted_self)
     bypass = category in (
@@ -550,6 +575,8 @@ async def _maybe_auto_reply(
             quota_check=quota_check,
             client=http_client,
             quoted_self=quoted_self,
+            react=react,
+            trigger_message_id=event.message_id,
         )
         return
     if bypass:
@@ -563,10 +590,12 @@ async def _maybe_auto_reply(
             quota_check=quota_check,
             client=http_client,
             quoted_self=quoted_self,
+            react=react,
+            trigger_message_id=event.message_id,
         )
         return
     collector = _get_auto_chat_collector()
-    _PENDING_AUTO_HOOKS.setdefault(event.group_id, (quota_check, send))
+    _PENDING_AUTO_HOOKS.setdefault(event.group_id, (quota_check, send, react))
     await collector.submit(
         event.group_id,
         BatchItem(
@@ -592,7 +621,7 @@ def _get_auto_chat_collector() -> AutoChatCollector:
 
         async def _deliver(group_id: int, batch: CollectedBatch) -> None:
             hooks = _PENDING_AUTO_HOOKS.pop(group_id, None)
-            quota_check, send = hooks if hooks else (None, None)
+            quota_check, send, react = hooks if hooks else (None, None, None)
             try:
                 memory_store = get_chat_repository()
                 http_client = get_http_client()
@@ -610,6 +639,10 @@ def _get_auto_chat_collector() -> AutoChatCollector:
                 send=send,
                 quota_check=quota_check,
                 client=http_client,
+                # 收集器批次交付路径不启用 react：一批消息没有单一触发
+                # message_id 语义，保持 react=None 让 react 分支自然短路。
+                react=None,
+                trigger_message_id=None,
             )
             # 交付后刷新 pending gauge（批次已出队，恢复到当前全局挂起数）
             metrics.AUTO_CHAT_PENDING.set(
