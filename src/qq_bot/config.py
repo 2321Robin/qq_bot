@@ -419,6 +419,13 @@ class BotSettings(BaseSettings):
     person_observe_max_chars: int = 100
     person_observe_min_messages: int = 4
     person_observe_lookback_days: int = 7
+    # P2（S10-HUMAN-P2 H10）：本地表情包库。素材由部署者手工导入
+    # （data/stickers/，不入公开仓库），机器人按清单描述挑图、不识图。
+    auto_chat_sticker_enabled: bool = False
+    auto_chat_sticker_dir: str = "data/stickers"
+    auto_chat_sticker_daily_limit: int = 5
+    auto_chat_sticker_cooldown_seconds: float = 120.0
+    auto_chat_sticker_max_candidates: int = 12
 
     model_config = SettingsConfigDict(
         env_file=".env",

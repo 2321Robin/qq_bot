@@ -71,3 +71,6 @@ evals/reports/*
 # Local live-eval run configuration (contains provider keys, never committed)
 evals/live-run/
 data/auto_chat_tune*.json*
+
+# Sticker library (S10-HUMAN-P2 H10): third-party meme images, never redistributed
+/data/stickers/

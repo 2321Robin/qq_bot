@@ -2,11 +2,12 @@ from datetime import UTC, datetime, timedelta
 import asyncio
 import random
 from types import SimpleNamespace
+from pathlib import Path
 from typing import Awaitable, Callable, Sequence
 
 from nonebot import get_bots, logger, on_message
 from nonebot.adapters.onebot.v11 import Bot as OneBotV11Bot
-from nonebot.adapters.onebot.v11 import GroupMessageEvent
+from nonebot.adapters.onebot.v11 import GroupMessageEvent, MessageSegment
 from nonebot.exception import FinishedException
 
 from qq_bot.agent.evidence import EvidenceStore, render_answer
@@ -45,6 +46,7 @@ from qq_bot.services.memory_prompt import (
 )
 from qq_bot.services.message_formatting import replace_named_mentions
 from qq_bot.services.onebot_send import finish_with_send_errors_logged
+from qq_bot.services.sticker_library import Sticker, StickerStore
 from qq_bot.services.prompt import extract_ai_prompt
 from qq_bot.services.quota import quota_scope
 from qq_bot.services.reliability import classify_exception
@@ -358,8 +360,8 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
             except Exception:
                 logger.exception("Chat memory reply update failed")
 
-        # 被 @ 问答路径不贴表情（用户在直接对话）：quota/send 用得上，react 不用
-        _quota_check, send, _unused_react = _build_auto_chat_hooks(event, settings)
+        # 被 @ 问答路径不贴表情也不发表情包（用户在直接对话）：quota/send 用得上
+        _quota_check, send, _unused_react, _unused_sticker = _build_auto_chat_hooks(event, settings)
         exit_flag = shared_state().note_reply(event.group_id, settings=settings)
         if exit_flag:
             metrics.AUTO_CHAT.labels("prefilter", "hot_exit_limit").inc()
@@ -458,11 +460,14 @@ def _build_auto_chat_hooks(
     Callable[[], Awaitable[bool]],
     Callable[[str], Awaitable[None]],
     Callable[[int, str], Awaitable[bool]],
+    Callable[[Sticker], Awaitable[bool]],
 ]:
-    """quota 准入、发送与贴表情闭包（自主插话与被 @ 路径共用）。
+    """quota 准入、发送、贴表情与发表情包闭包（自主插话与被 @ 路径共用）。
     react（S10-HUMAN-P2 H9）：对触发消息贴 OneBot v11 `set_msg_emoji_like`，
     emoji_id 由决策门白名单过滤后传入；任何失败返回 False（由 auto_chat 的
-    连续失败降级逻辑处置），成功 True。"""
+    连续失败降级逻辑处置），成功 True。
+    send_sticker（S10-HUMAN-P2 H10）：把库中条目对应的本地图片作为 image 段
+    发到本群；无 bot 连接/发送失败一律 False（降级与限额记账在服务层）。"""
 
     async def quota_check() -> bool:
         try:
@@ -536,7 +541,23 @@ def _build_auto_chat_hooks(
         except Exception:
             return False
 
-    return quota_check, send, react
+    async def send_sticker(sticker: Sticker) -> bool:
+        """发表情包（S10-HUMAN-P2 H10）：把本地图片作为 OneBot v11 image 段
+        发到本群（与 roco 宠物卡同一 `file:///` 绝对路径惯例）。无连接 bot、
+        协议错误、文件不可读一律 False（连续失败降级在服务层）。"""
+        try:
+            bot = _connected_onebot_bot()
+            if bot is None:
+                return False
+            await bot.send_group_msg(
+                group_id=event.group_id,
+                message=MessageSegment.image(f"file:///{sticker.path.resolve().as_posix()}"),
+            )
+            return True
+        except Exception:
+            return False
+
+    return quota_check, send, react, send_sticker
 
 
 async def _maybe_auto_reply(
@@ -558,7 +579,7 @@ async def _maybe_auto_reply(
     （S10-HUMAN-P0-06）：引用机器人自己的消息必回，走 QUOTED 旁路。"""
     load_persona(settings)  # 前置校验：人设配置可解析（坏配置早失败）
 
-    quota_check, send, react = _build_auto_chat_hooks(event, settings)
+    quota_check, send, react, send_sticker = _build_auto_chat_hooks(event, settings)
 
     category = classify_trigger(raw_text, settings=settings, quoted_self=quoted_self)
     bypass = category in (
@@ -580,6 +601,10 @@ async def _maybe_auto_reply(
             quoted_self=quoted_self,
             react=react,
             trigger_message_id=event.message_id,
+            sticker_library=_sticker_store().library
+            if settings.auto_chat_sticker_enabled
+            else None,
+            send_sticker=send_sticker if settings.auto_chat_sticker_enabled else None,
         )
         return
     if bypass:
@@ -595,10 +620,14 @@ async def _maybe_auto_reply(
             quoted_self=quoted_self,
             react=react,
             trigger_message_id=event.message_id,
+            sticker_library=_sticker_store().library
+            if settings.auto_chat_sticker_enabled
+            else None,
+            send_sticker=send_sticker if settings.auto_chat_sticker_enabled else None,
         )
         return
     collector = _get_auto_chat_collector()
-    _PENDING_AUTO_HOOKS.setdefault(event.group_id, (quota_check, send, react))
+    _PENDING_AUTO_HOOKS.setdefault(event.group_id, (quota_check, send, react, send_sticker))
     await collector.submit(
         event.group_id,
         BatchItem(
@@ -609,6 +638,26 @@ async def _maybe_auto_reply(
         ),
     )
     metrics.AUTO_CHAT_PENDING.set(collector.pending_count())
+
+
+_STICKER_STORE: StickerStore | None = None
+
+
+def _sticker_store() -> StickerStore:
+    """进程级表情包库单例：目录在首建时从当前 settings 固化；清单内容按
+    mtime 热重载（store.library 每次读都检查）。"""
+    global _STICKER_STORE
+    if _STICKER_STORE is None:
+        _STICKER_STORE = StickerStore(Path(get_settings().auto_chat_sticker_dir))
+    return _STICKER_STORE
+
+
+def _deliver_sticker_library():
+    """交付路径的表情包库快照：开关关时返回 None（prompt 不出现候选块）。"""
+    settings = get_settings()
+    if not settings.auto_chat_sticker_enabled:
+        return None
+    return _sticker_store().library
 
 
 _AUTO_CHAT_COLLECTOR: AutoChatCollector | None = None
@@ -624,7 +673,7 @@ def _get_auto_chat_collector() -> AutoChatCollector:
 
         async def _deliver(group_id: int, batch: CollectedBatch) -> None:
             hooks = _PENDING_AUTO_HOOKS.pop(group_id, None)
-            quota_check, send, react = hooks if hooks else (None, None, None)
+            quota_check, send, react, send_sticker = hooks if hooks else (None, None, None, None)
             try:
                 memory_store = get_chat_repository()
                 http_client = get_http_client()
@@ -646,6 +695,10 @@ def _get_auto_chat_collector() -> AutoChatCollector:
                 # message_id 语义，保持 react=None 让 react 分支自然短路。
                 react=None,
                 trigger_message_id=None,
+                # 表情包（H10）与 react 不同：挑一张群情绪图没有"回复某条
+                # 消息"的语义要求，批次路径同样可用——库非空且开关开即注入候选。
+                sticker_library=_deliver_sticker_library(),
+                send_sticker=send_sticker,
             )
             # 交付后刷新 pending gauge（批次已出队，恢复到当前全局挂起数）
             metrics.AUTO_CHAT_PENDING.set(

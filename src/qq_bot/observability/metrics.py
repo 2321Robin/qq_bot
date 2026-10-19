@@ -259,6 +259,13 @@ _define(
     "Active observation cards per group",
     ["group_hash"],
 )
+_define(
+    "AUTO_CHAT_STICKERS",
+    Counter,
+    "qq_bot_auto_chat_stickers_total",
+    "Auto chat sticker send outcomes",
+    ["result"],
+)
 
 
 def set_metrics_enabled(enabled: bool) -> None:

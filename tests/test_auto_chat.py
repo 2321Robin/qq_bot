@@ -3,11 +3,13 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from collections import deque
+from pathlib import Path
 
 import pytest
 
 from qq_bot.config import BotSettings
 from qq_bot.observability import metrics
+from qq_bot.services.sticker_library import Sticker, StickerLibrary
 from qq_bot.services.auto_chat import (
     AutoChatState,
     COLD_FALLBACK_MESSAGES,
@@ -489,6 +491,8 @@ async def _run(
     _completion=None,
     quoted_self: bool = False,
     react=None,
+    sticker_library=None,
+    send_sticker=None,
 ) -> None:
     await run_auto_chat(
         event=FakeEvent(),
@@ -505,6 +509,8 @@ async def _run(
         quoted_self=quoted_self,
         react=react,
         trigger_message_id=FakeEvent.message_id,
+        sticker_library=sticker_library,
+        send_sticker=send_sticker,
     )
 
 
@@ -2537,3 +2543,261 @@ class TestPersonObserveInjection:
         for prompt in casual_prompts:
             assert "爱打野" in prompt
         assert reads["n"] == 1
+
+
+def _sticker_library(*ids: str) -> StickerLibrary:
+    return StickerLibrary(
+        stickers=tuple(
+            Sticker(
+                id=sticker_id,
+                path=Path(f"/tmp/{sticker_id}.png"),
+                description=f"描述{sticker_id}",
+            )
+            for sticker_id in ids
+        )
+    )
+
+
+def _gate_prompt(h: Harness) -> str:
+    gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
+    assert gate_calls, "决策门未调用"
+    return gate_calls[-1]["user_prompt"]
+
+
+class TestStickerPath:
+    async def test_sticker_intent_sends_sticker_and_skips_text(self) -> None:
+        h = Harness(
+            ["在吗", "冲"],
+            _run_settings(auto_chat_sticker_enabled=True, auto_chat_sample_rate=1.0),
+        )
+        h.gate_content = '{"should_reply": true, "reason": "banter", "confidence": 0.9, "action": "sticker", "sticker_id": "cat_laugh"}'
+        h.memory = _ObserveMemory(["在吗", "冲"], observation=None)
+        sent_stickers: list[Sticker] = []
+
+        async def send_sticker(sticker: Sticker) -> bool:
+            sent_stickers.append(sticker)
+            return True
+
+        await _run(
+            h,
+            "随便聊聊",
+            react=None,
+            sticker_library=_sticker_library("cat_laugh"),
+            send_sticker=send_sticker,
+        )
+        assert [s.id for s in sent_stickers] == ["cat_laugh"]
+        assert h.sent == []  # 不生成文本
+
+    async def test_sticker_disabled_by_default_falls_back_to_text(self) -> None:
+        h = Harness(["在吗", "冲"], _run_settings())
+        h.gate_content = '{"should_reply": true, "reason": "banter", "confidence": 0.9, "action": "sticker", "sticker_id": "cat_laugh"}'
+        h.casual_content = "哈哈哈哈"
+
+        async def send_sticker(sticker: Sticker) -> bool:
+            raise AssertionError("开关关闭时不得发送表情包")
+
+        await _run(
+            h,
+            "随便聊聊",
+            react=None,
+            sticker_library=_sticker_library("cat_laugh"),
+            send_sticker=send_sticker,
+        )
+        assert h.sent == ["哈哈哈哈"]  # 回落文本
+        assert "可用表情包候选" not in _gate_prompt(h)
+
+    async def test_sticker_id_outside_library_falls_back_to_text(self) -> None:
+        h = Harness(["在吗", "冲"], _run_settings(auto_chat_sticker_enabled=True))
+        h.gate_content = '{"should_reply": true, "reason": "banter", "confidence": 0.9, "action": "sticker", "sticker_id": "not_in_library"}'
+        h.casual_content = "笑死"
+
+        async def send_sticker(sticker: Sticker) -> bool:
+            raise AssertionError("未知 id 不得发送")
+
+        await _run(
+            h,
+            "随便聊聊",
+            react=None,
+            sticker_library=_sticker_library("cat_laugh"),
+            send_sticker=send_sticker,
+        )
+        assert h.sent == ["笑死"]
+
+    async def test_sticker_daily_limit_falls_back_to_text(self) -> None:
+        h = Harness(
+            ["在吗", "冲"],
+            _run_settings(auto_chat_sticker_enabled=True, auto_chat_sticker_daily_limit=0),
+        )
+        h.gate_content = '{"should_reply": true, "reason": "banter", "confidence": 0.9, "action": "sticker", "sticker_id": "cat_laugh"}'
+        h.casual_content = "继续聊天"
+
+        async def send_sticker(sticker: Sticker) -> bool:
+            raise AssertionError("限额满时不得发送")
+
+        await _run(
+            h,
+            "随便聊聊",
+            react=None,
+            sticker_library=_sticker_library("cat_laugh"),
+            send_sticker=send_sticker,
+        )
+        assert h.sent == ["继续聊天"]
+
+    async def test_sticker_sensitive_trigger_is_filtered(self) -> None:
+        h = Harness(
+            ["在吗", "冲"],
+            _run_settings(auto_chat_sticker_enabled=True, auto_chat_sample_rate=1.0),
+        )
+        h.gate_content = '{"should_reply": true, "reason": "banter", "confidence": 0.9, "action": "sticker", "sticker_id": "cat_laugh"}'
+
+        async def send_sticker(sticker: Sticker) -> bool:
+            raise AssertionError("敏感触发文本不得发表情包")
+
+        await _run(
+            h,
+            "赌博一下",
+            react=None,
+            sticker_library=_sticker_library("cat_laugh"),
+            send_sticker=send_sticker,
+        )
+        assert h.sent == []
+
+    async def test_sticker_quota_denied_skips_send(self) -> None:
+        h = Harness(["在吗", "冲"], _run_settings(auto_chat_sticker_enabled=True))
+        h.quota_allowed = False
+        h.gate_content = '{"should_reply": true, "reason": "banter", "confidence": 0.9, "action": "sticker", "sticker_id": "cat_laugh"}'
+
+        async def send_sticker(sticker: Sticker) -> bool:
+            raise AssertionError("配额拒绝时不得发送")
+
+        await _run(
+            h,
+            "随便聊聊",
+            react=None,
+            sticker_library=_sticker_library("cat_laugh"),
+            send_sticker=send_sticker,
+        )
+        assert h.sent == []
+
+    async def test_sticker_success_does_not_note_reply_or_enter_hot(self) -> None:
+        h = Harness(["在吗", "冲"], _run_settings(auto_chat_sticker_enabled=True))
+        h.gate_content = '{"should_reply": true, "reason": "banter", "confidence": 0.9, "action": "sticker", "sticker_id": "cat_laugh"}'
+
+        async def send_sticker(sticker: Sticker) -> bool:
+            return True
+
+        await _run(
+            h,
+            "随便聊聊",
+            react=None,
+            sticker_library=_sticker_library("cat_laugh"),
+            send_sticker=send_sticker,
+        )
+        assert h.state.recently_spoke(1001, 300.0) is False
+        assert h.state.hot_active(1001, settings=h.settings) is False
+        assert h.slept == []  # 不进入文本发送延迟
+
+    async def test_sticker_failure_disables_after_three(self) -> None:
+        from qq_bot.services import auto_chat as m
+
+        m._reset_sticker_streak()  # 测试隔离：进程级降级态
+        try:
+            for attempt in range(3):
+                h = Harness(["在吗", "冲"], _run_settings(auto_chat_sticker_enabled=True))
+                h.gate_content = (
+                    '{"should_reply": true, "reason": "banter", "confidence": 0.9, '
+                    '"action": "sticker", "sticker_id": "cat_laugh"}'
+                )
+                h.casual_content = f"聊天{attempt}"
+
+                async def send_sticker(sticker: Sticker) -> bool:
+                    return False
+
+                await _run(
+                    h,
+                    "随便聊聊",
+                    react=None,
+                    sticker_library=_sticker_library("cat_laugh"),
+                    send_sticker=send_sticker,
+                )
+                assert h.sent == []  # 失败即结束本轮，不补文本
+            assert m.sticker_unsupported() is True
+        finally:
+            m._reset_sticker_streak()
+
+    async def test_candidates_block_only_when_channel_available(self) -> None:
+        h = Harness(["在吗", "冲"], _run_settings(auto_chat_sticker_enabled=True))
+        h.memory = _ObserveMemory(["在吗", "冲"], observation=None)
+
+        async def send_sticker(sticker: Sticker) -> bool:
+            return True
+
+        # 库非空 + 回调在 → 候选块进 prompt
+        await _run(
+            h,
+            "随便聊聊",
+            react=None,
+            sticker_library=_sticker_library("cat_laugh", "dog_question"),
+            send_sticker=send_sticker,
+        )
+        prompt = _gate_prompt(h)
+        assert "可用表情包候选" in prompt
+        assert "cat_laugh：描述cat_laugh" in prompt
+        assert "dog_question：描述dog_question" in prompt
+
+    async def test_candidates_absent_without_callback(self) -> None:
+        h = Harness(["在吗", "冲"], _run_settings(auto_chat_sticker_enabled=True))
+        h.memory = _ObserveMemory(["在吗", "冲"], observation=None)
+
+        await _run(
+            h,
+            "随便聊聊",
+            react=None,
+            sticker_library=_sticker_library("cat_laugh"),
+        )
+        assert "可用表情包候选" not in _gate_prompt(h)
+
+    async def test_empty_library_means_no_candidates(self) -> None:
+        h = Harness(["在吗", "冲"], _run_settings(auto_chat_sticker_enabled=True))
+        h.memory = _ObserveMemory(["在吗", "冲"], observation=None)
+
+        async def send_sticker(sticker: Sticker) -> bool:
+            raise AssertionError("空库不得发送")
+
+        await _run(
+            h,
+            "随便聊聊",
+            react=None,
+            sticker_library=StickerLibrary(stickers=()),
+            send_sticker=send_sticker,
+        )
+        assert "可用表情包候选" not in _gate_prompt(h)
+
+
+def test_gate_parse_accepts_sticker_action() -> None:
+    decision = parse_gate_output(
+        '{"should_reply": true, "reason": "banter", "confidence": 0.9, '
+        '"action": "sticker", "sticker_id": "cat_laugh"}'
+    )
+    assert decision is not None
+    assert decision.action == "sticker"
+    assert decision.sticker_id == "cat_laugh"
+
+
+def test_gate_parse_unknown_action_falls_back_to_reply() -> None:
+    decision = parse_gate_output(
+        '{"should_reply": true, "reason": "banter", "confidence": 0.9, "action": "wave"}'
+    )
+    assert decision is not None
+    assert decision.action == "reply"
+    assert decision.sticker_id == ""
+
+
+def test_gate_parse_sticker_id_must_be_string() -> None:
+    decision = parse_gate_output(
+        '{"should_reply": true, "reason": "banter", "confidence": 0.9, '
+        '"action": "sticker", "sticker_id": 42}'
+    )
+    assert decision is not None
+    assert decision.action == "sticker"
+    assert decision.sticker_id == ""

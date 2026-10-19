@@ -159,6 +159,11 @@ flowchart LR
   隐私硬边界：`/记忆关闭` 停止写入并清卡，`/记忆删除 全部` 连卡一起删，
   `/记忆查看` 展示关于自己的卡片；只存画像，不存消息原文。
 
+- **表情包库（H10）：** 决策门可判定"这轮值得回一张图"并从本地库按**文字描述**
+  挑图发出（`AUTO_CHAT_STICKER_*`，默认关）。库 = `data/stickers/manifest.json`
+  + 同目录图片，部署者手工导入、机器人不识图；mtime 变化热重载，坏清单保留旧库。
+  素材是第三方版权内容，**不入公开仓库**（见 `DATA_LICENSE.md`）。
+
 ### Agent 模式（阶段 2，`AGENT_ENABLED=true`）
 
 开启后自然语言提问先经 Router 分类为四类 route：`local_knowledge`（本地知识）、`web_search`（联网搜索）、`chat_memory`（群聊记忆）、`direct_chat`（普通对话）；低置信度或能力不足时直接澄清回复，不调用模型。Agent 初始注册 5 个 Tool：

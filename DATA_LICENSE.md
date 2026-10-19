@@ -88,12 +88,26 @@ images, icons, trademarks, or game content described below.
 | License boundary | **Unchanged.** Code stays MIT; the packaged game/wiki data stays private (sections 1–3). `download-roco-data` has **no built-in public URL** and refuses to run without an explicit `--base-url`; the help text states the data is not publicly redistributable |
 | Carrier | Not fixed by the command interface; see the carrier evaluation note in the README (stage 3, data pipeline section) |
 
+## 7. Sticker / meme images (auto-chat sticker library)
+
+| Field | Value |
+|---|---|
+| Source | Manually imported by the deployer into `data/stickers/` |
+| Origin | Third-party QQ/WeChat meme images (user-uploaded reaction stickers) |
+| License | Unknown — per-image; the images carry no license information |
+| Attribution required | Unknown; the deployer is responsible for any attribution |
+| Commercial use allowed | Not determinable per image |
+| How we obtain it | The bot never fetches images at runtime. The deployer copies files into the directory and describes each one in `data/stickers/manifest.json` (id, file, description). The bot only reads the manifest and sends the referenced local file. |
+| **Redistribution conclusion** | **Not permitted.** Individual meme images carry no license and are third-party content. |
+| **Decision for public repository** | **Excluded.** `/data/stickers/` is git-ignored and kept private. The public repository ships only the loader code (`src/qq_bot/services/sticker_library.py`) — no image files, no manifest content, no test fixtures derived from real memes. |
+
 ## Notes
 
 - The public repository distributes **only** the code, documentation, and
   test fixtures described in sections 4 and 5 above. Data directories
-  (`data/roco_pet_details/`, `data/roco_assets/`, `data/roco_pet_cards/`)
-  are not included in the public tree or public git history.
+  (`data/roco_pet_details/`, `data/roco_assets/`, `data/roco_pet_cards/`,
+  `data/stickers/`) are not included in the public tree or public git
+  history.
 - Git LFS changes storage, not licensing. Excluding these directories
   from the public repository is a licensing decision, not a storage one.
 - This document reflects the repository owner's best-effort review as of

@@ -36,6 +36,7 @@ from qq_bot.services.persona import (
 )
 from qq_bot.services.reliability import classify_exception
 from qq_bot.services.typo_injector import maybe_apply_typo
+from qq_bot.services.sticker_library import Sticker, StickerLibrary
 
 logger = get_logger("qq_bot.auto_chat")
 
@@ -79,6 +80,9 @@ class AutoChatState:
         # 贴表情反应（S10-HUMAN-P2 H9）：独立冷却时刻 + 每日计数（进程内存态）
         self._last_reaction: dict[int, float] = {}
         self._reaction_daily: dict[tuple[int, str], int] = {}
+        # 表情包（S10-HUMAN-P2 H10）：与文本/react 各自独立的冷却与每日计数
+        self._last_sticker: dict[int, float] = {}
+        self._sticker_daily: dict[tuple[int, str], int] = {}
 
     def lock(self, group_id: int) -> asyncio.Lock:
         return self._locks.setdefault(group_id, asyncio.Lock())
@@ -223,6 +227,30 @@ class AutoChatState:
             self._reaction_daily.get((group_id, day_key), 0) + 1
         )
 
+    # ---- 表情包限额（S10-HUMAN-P2 H10）----
+
+    def sticker_limit_reason(self, group_id: int, *, settings: BotSettings) -> str:
+        """`""` 在限额内，否则 `cooldown`|`daily_limit`。与文本、react 三者
+        各自独立计数：发图不占文本冷却/小时/日额度，也不占 react 额度。"""
+        last = self._last_sticker.get(group_id)
+        if last is not None and self._clock() - last < settings.auto_chat_sticker_cooldown_seconds:
+            return "cooldown"
+        day_key = self._bucket_clock().strftime("%Y-%m-%d")
+        if (
+            self._sticker_daily.get((group_id, day_key), 0)
+            >= settings.auto_chat_sticker_daily_limit
+        ):
+            return "daily_limit"
+        return ""
+
+    def note_sticker(self, group_id: int) -> None:
+        """登记一次成功发表情包：刷新独立冷却并累计当日计数。"""
+        self._last_sticker[group_id] = self._clock()
+        day_key = self._bucket_clock().strftime("%Y-%m-%d")
+        self._sticker_daily[(group_id, day_key)] = (
+            self._sticker_daily.get((group_id, day_key), 0) + 1
+        )
+
     # ---- 群兴趣度（S10-HUMAN-P2 H7）----
 
     def note_activity(
@@ -315,6 +343,15 @@ _GATE_REACT_INSTRUCTION = (
     '其他情况一律 "action": "reply"。'
 )
 
+# 表情包指令（S10-HUMAN-P2 H10）：与 react 同一"同进同出"原则——只在库非空、
+# 开关开、通道可用时与候选列表一起进 user prompt；关闭时模型不知道有这个动作，
+# 解析层对未知 action 回落 reply。
+_GATE_STICKER_INSTRUCTION = (
+    "当回应更适合用一张图（大笑、无语、问号、安慰等）且打字反而多余时，"
+    '可输出 "action": "sticker" 并在 "sticker_id" 给出下方候选 ID 之一；'
+    '其他情况一律 "action": "reply"。'
+)
+
 _GATE_REASONS = frozenset({"addressed", "question_answerable", "banter", "none"})
 
 
@@ -336,8 +373,11 @@ class GateDecision:
     confidence: float
     # S10-HUMAN-P2 H9：贴表情反应。action=react 时本轮只贴表情不生成文本；
     # emoji_id 必须是调用方白名单内的字符串（解析层只做类型归一）。
+    # H10：action=sticker 时本轮只发表情包；sticker_id 必须是库中启用条目
+    # （同样只在这里做类型归一，白名单校验在服务层）。
     action: str = "reply"
     emoji_id: str = ""
+    sticker_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -585,17 +625,21 @@ def parse_gate_output(content: str | None) -> GateDecision | None:
         return None
     # H9：action 仅接受 reply/react（未知值回落 reply，fail-closed 不变）；
     # emoji_id 只接受字符串（模型给数字等一律视为不可用）。
+    # H10：action 再接受 sticker；sticker_id 同样只接受字符串，白名单在服务层。
     action = payload.get("action", "reply")
-    if action not in ("reply", "react"):
+    if action not in ("reply", "react", "sticker"):
         action = "reply"
     emoji_raw = payload.get("emoji_id", "")
     emoji_id = emoji_raw.strip() if isinstance(emoji_raw, str) else ""
+    sticker_raw = payload.get("sticker_id", "")
+    sticker_id = sticker_raw.strip() if isinstance(sticker_raw, str) else ""
     return GateDecision(
         should_reply=should_reply,
         reason=reason,
         confidence=confidence,
         action=action,
         emoji_id=emoji_id,
+        sticker_id=sticker_id,
     )
 
 
@@ -653,6 +697,42 @@ def _note_reaction_result(ok: bool) -> str:
         if not _REACTION_UNSUPPORTED:
             _REACTION_UNSUPPORTED = True
             logger.warning("auto chat reaction channel disabled after consecutive failures")
+        return "unsupported"
+    return "failed"
+
+
+# 表情包发送降级（S10-HUMAN-P2 H10）：与 react 同一方案——同一发送动作连续
+# 失败 ≥3 次 → 进程级禁用该通道（例如 NapCat 拒绝本地文件路径）；偶发单次
+# 失败只累计，任何一次成功清零。禁用后 sticker 意图回落文本回复。
+_STICKER_FAIL_STREAK = 0
+_STICKER_UNSUPPORTED = False
+
+
+def sticker_unsupported() -> bool:
+    """表情包通道是否已被判不可用（进程内，重启复位）。"""
+    return _STICKER_UNSUPPORTED
+
+
+def _reset_sticker_streak() -> None:
+    """复位降级状态。仅测试隔离用（_STICKER_* 为模块级进程态）。"""
+    global _STICKER_FAIL_STREAK, _STICKER_UNSUPPORTED
+    _STICKER_FAIL_STREAK = 0
+    _STICKER_UNSUPPORTED = False
+
+
+def _note_sticker_result(ok: bool) -> str:
+    """登记一次表情包发送结局，返回 AUTO_CHAT_STICKERS 标签：
+    成功清零计 `"ok"`；失败累计，第 3 次连续失败起置禁用并计 `"unsupported"`，
+    其间计 `"failed"`。翻转禁用时发一条固定文案 warning（不携带路径/内容）。"""
+    global _STICKER_FAIL_STREAK, _STICKER_UNSUPPORTED
+    if ok:
+        _STICKER_FAIL_STREAK = 0
+        return "ok"
+    _STICKER_FAIL_STREAK += 1
+    if _STICKER_FAIL_STREAK >= 3:
+        if not _STICKER_UNSUPPORTED:
+            _STICKER_UNSUPPORTED = True
+            logger.warning("auto chat sticker channel disabled after consecutive failures")
         return "unsupported"
     return "failed"
 
@@ -1037,6 +1117,8 @@ async def run_auto_chat(
     quoted_self: bool = False,
     react: Callable[[int, str], Awaitable[bool]] | None = None,
     trigger_message_id: int | None = None,
+    sticker_library: StickerLibrary | None = None,
+    send_sticker: Callable[[Sticker], Awaitable[bool]] | None = None,
 ) -> None:
     """Full pipeline for one non-addressed group message (spec 一/二/三/四节).
 
@@ -1049,6 +1131,10 @@ async def run_auto_chat(
     ``react``/``trigger_message_id``（S10-HUMAN-P2 H9）：贴表情回调与被反应的
     触发消息 id。回调为 None 或无触发消息（收集器批次交付路径）时 react 通道
     自然不可用，决策门即使给 action=react 也回落文本回复。
+
+    ``sticker_library``/``send_sticker``（S10-HUMAN-P2 H10）：本地表情包库快照
+    与发送回调。任一缺失（或库为空）时 sticker 通道不可用，候选块与指令都不进
+    prompt，门给 action=sticker 也回落文本路径。
 
     ``_request_completion`` is a test seam defaulting to the real
     ``request_completion``; production callers never pass it. Send and quota
@@ -1074,6 +1160,18 @@ async def run_auto_chat(
         and bool(settings.auto_chat_reaction_id_list)
         and not reaction_unsupported()
     )
+
+    # 表情包候选（H10）的准入：开关开、库非空、发送回调在、通道未被判
+    # unsupported。与 react 同一"同进同出"原则：不可用时候选块与指令都不进
+    # prompt。候选整轮只取一次（重试 prompt 复用同一份列表）。
+    sticker_candidates: tuple[Sticker, ...] = ()
+    if (
+        send_sticker is not None
+        and settings.auto_chat_sticker_enabled
+        and sticker_library is not None
+        and not sticker_unsupported()
+    ):
+        sticker_candidates = sticker_library.candidates(settings.auto_chat_sticker_max_candidates)
 
     is_batch = batch is not None
     items = (
@@ -1232,6 +1330,17 @@ async def run_auto_chat(
                 f"\n{_GATE_REACT_INSTRUCTION}\n"
                 f"可用表情 ID：{ids}（仅当 action=react 时选一个；不适合就 action=reply）"
             )
+        # 表情包候选块（H10）：与 react 同进同出，库为空/通道不可用时整块缺席。
+        sticker_hint = ""
+        if sticker_candidates:
+            listed = "\n".join(
+                f"- {sticker.id}：{sticker.description}" for sticker in sticker_candidates
+            )
+            sticker_hint = (
+                f"\n{_GATE_STICKER_INSTRUCTION}\n"
+                f"可用表情包候选（ID：描述）：\n{listed}\n"
+                "（仅当 action=sticker 时选一个 ID；不适合就 action=reply）"
+            )
         try:
             content = await complete(
                 system_prompt=GATE_SYSTEM_PROMPT,
@@ -1240,7 +1349,8 @@ async def run_auto_chat(
                     batch_rows=_batch_as_rows(items, group_id) if is_batch else (),
                     jargon_refs=jargon_refs,
                 )
-                + reaction_hint,
+                + reaction_hint
+                + sticker_hint,
                 settings=settings,
                 client=client,
                 model=settings.router_model,
@@ -1309,6 +1419,37 @@ async def run_auto_chat(
                     return  # 不生成/不 note_reply/不冷场/不发文本
                 _metric("gate", "react_failed")
                 return  # 发送中失败即结束本轮：门已判定只值得贴表情，不强行生成文本
+
+        # ---- 表情包通道（S10-HUMAN-P2 H10）----
+        # 与 react 同构：门给 sticker 且 id 命中本轮候选（即库中启用条目）
+        # 才算"这轮真的打算发图"。任一前置不满足视为未尝试，落文本路径。
+        if (
+            decision.action == "sticker"
+            and send_sticker is not None
+            and not _STICKER_UNSUPPORTED
+            and any(candidate.id == decision.sticker_id for candidate in sticker_candidates)
+        ):
+            sticker = next(c for c in sticker_candidates if c.id == decision.sticker_id)
+            _metric("gate", "sticker_intent")
+            if state.sticker_limit_reason(group_id, settings=settings):
+                # 表情包限额满 = 未尝试：与 react 同族，落文本路径不静默丢轮
+                metrics.AUTO_CHAT_STICKERS.labels("limit").inc()
+                _metric("prefilter", "sticker_limit")
+            else:
+                if quota_check is not None and not await quota_check():
+                    _metric("gate", "quota_denied")
+                    return
+                try:
+                    ok = await send_sticker(sticker)
+                except Exception:
+                    ok = False
+                metrics.AUTO_CHAT_STICKERS.labels(_note_sticker_result(ok)).inc()
+                if ok:
+                    state.note_sticker(group_id)
+                    _metric("gate", "sticker")
+                    return  # 不生成/不 note_reply/不热聊/不冷场
+                _metric("gate", "sticker_failed")
+                return  # 门已判定只值得发图，不强行生成文本
 
     if quota_check is not None and not await quota_check():
         _metric("gate", "quota_denied")
