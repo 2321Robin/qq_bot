@@ -83,7 +83,9 @@ def validate_expression(
 # ---- 学习轮流水线（S10-HUMAN-P1 H5/H6）----
 
 _QUOTA_SCOPE = "expression_learn"
-_LLM_MAX_TOKENS = 500
+_LLM_MAX_TOKENS = (
+    1500  # 提取调用：20 条消息的 JSON 载荷 ≥1000 字符（500 会截断成不可解析，静默丢批）
+)
 _LLM_TEMPERATURE = 0.3
 # 候选模板/词条只以数量进入 RoundSummary 与指标，正文绝不进日志（隐私边界）
 _LOGGER_NAME = "qq_bot.expression_learner"

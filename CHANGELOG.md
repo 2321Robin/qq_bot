@@ -79,6 +79,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- Fixed the expression-learning extract call requesting too small a `max_tokens` (2026-10-19 deployment finding): with a full 20-message batch the glm-4-flash extract payload is ~1.2k chars of JSON, and 500 tokens made the provider truncate it mid-string (`Unterminated string`), so `_parse_extract` returned `None` and the whole batch silently stored nothing while the round still reported `status=ok` with zero expressions/jargon. `_LLM_MAX_TOKENS` is now 1500; a regression test pins the floor with a full-length payload so a truncating value cannot come back unnoticed.
 - Fixed the broken CI quality gate: removed a stale unused import and applied ruff-format across the package so the lint/format job passes again.
 - Fixed the chat-completions payload built by `request_model_turn` omitting the `model` field: every AI request now declares the model explicitly, as required by providers that reject model-less bodies.
 - Fixed quota usage/event writes silently never persisting: `quota_usage`/`quota_events` inserts now commit immediately on their own transaction instead of riding the caller's borrowed, possibly-rolled-back transaction.

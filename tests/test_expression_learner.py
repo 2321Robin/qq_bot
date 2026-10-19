@@ -76,6 +76,12 @@ class FakeMemory:
         return True
 
 
+# 满员 20 条消息批次的提取 JSON 正文下限（含每条候选的 template + evidence_quote）。
+# 生产实测（2026-10-19，glm-4-flash）同形状载荷 1188~1247 字符；取 1000 作下限，
+# 任何低于它的 _LLM_MAX_TOKENS 都会被 provider 截断成不可解析 JSON。
+_FULL_PAYLOAD_MIN_CHARS = 1000
+
+
 def _extract_payload(expressions, jargon):
     return json.dumps({"expressions": expressions, "jargon": jargon}, ensure_ascii=False)
 
@@ -201,6 +207,48 @@ async def test_round_extract_failure_isolates_batch():
     assert summary.rejected_review == 0
     assert summary.stored == 1  # 第二批照常
     assert len(mem.stored) == 1 and mem.stored[0]["template"] == "确实"
+
+
+async def test_extract_max_tokens_covers_full_length_payload():
+    """生产事故回归（2026-10-19 部署实测）：glm-4-flash 对 20 条消息的提取调用
+    在 max_tokens=500 下返回 1247 字符的 JSON 被 provider 截断
+    （``Unterminated string``），``_parse_extract`` 返回 None → 整批零入库，
+    学习轮表面上 status=ok 但 expressions/jargon 全为 0。
+
+    此用例锁死提取调用的 max_tokens 下限：一个 20 条消息的满员批次至少有
+    ``_FULL_PAYLOAD_MIN_CHARS`` 字符的 JSON 正文（含全部候选的 template +
+    evidence_quote），请求的上限必须容纳它——截断即静默丢批，比调用失败
+    更难发现（指标只体现 extract/ok，不入库原因不可见）。"""
+    from qq_bot.services import expression_learner as learner
+
+    # 消息与模板共用一套合法形状：模板固定片段只含虚词/语气词（过校验器），
+    # 而 evidence_quote 逐条不同、各带长数字序号，复制 20 遍仍撑出
+    # ≥1000 字符的 JSON 正文，与线上载荷同量级。
+    texts = [f"那第{i}个新活动,真的要冲吗" for i in range(20)]
+    candidates = [{"template": "那{对象}吗", "evidence_quote": t} for t in texts]
+    payload = _extract_payload(expressions=candidates, jargon=[])
+    mem = FakeMemory(texts)
+    seen: dict[str, int] = {}
+
+    async def complete(**kwargs):
+        system = kwargs["system_prompt"]
+        if "表达分析器" in system:
+            seen["max_tokens"] = kwargs["max_tokens"]
+            return payload
+        if "表达审核器" in system:
+            return _review_payload(accept_indexes=set(range(20)), count=20)
+        raise AssertionError("本用例不应产生黑话释义调用")
+
+    summary = await run_learning_round(
+        group_id=1, memory_store=mem, settings=_settings(), complete=complete, quota=None
+    )
+
+    assert learner._LLM_MAX_TOKENS >= _FULL_PAYLOAD_MIN_CHARS
+    assert seen["max_tokens"] == learner._LLM_MAX_TOKENS
+    assert len(payload) >= _FULL_PAYLOAD_MIN_CHARS
+    # 完整载荷端到端落库：截断会让这一行变成 0（真实事故的静默失败形态）
+    assert summary.stored == 20
+    assert summary.expressions_extracted == 20
 
 
 async def test_round_review_parse_failure_rejects_all_and_stores_nothing():
