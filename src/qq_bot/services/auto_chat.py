@@ -1003,6 +1003,18 @@ async def run_auto_chat(
     def _metric(stage: str, result: str) -> None:
         metrics.AUTO_CHAT.labels(stage, result).inc()
 
+    # 可用表情 ID 提示（H9）的准入：除了设置开关与白名单，还要求本轮贴表情
+    # 通道真的可用（react 回调在、有触发消息 id、通道未被判 unsupported）。
+    # 收集器批次交付路径 react=None，提示绝不能出现——模型被承诺的表情通道
+    # 这一轮并不存在。整轮只算一次，与下方 react 分支的前置闸门保持同源。
+    reaction_available = (
+        react is not None
+        and trigger_message_id is not None
+        and settings.auto_chat_reaction_enabled
+        and bool(settings.auto_chat_reaction_id_list)
+        and not reaction_unsupported()
+    )
+
     is_batch = batch is not None
     items = (
         list(batch)
@@ -1148,10 +1160,11 @@ async def run_auto_chat(
         else:
             _metric("prefilter", "passed")
         gate_span = tracer.start_span("auto.gate", trace_id=current_request_id())
-        # 可用表情 ID 提示（H9）：仅在通道开启且白名单非空时告知模型——
-        # 空列表时 GATE_SYSTEM_PROMPT 已禁止 react，不必每次都在提示里强调。
+        # 可用表情 ID 提示（H9）：仅在通道本轮真的可用时告知模型——开关关、
+        # 白名单空、无回调/触发消息（收集器批次交付路径）或已判 unsupported
+        # 时都不提示；空列表时 GATE_SYSTEM_PROMPT 已禁止 react。
         reaction_hint = ""
-        if settings.auto_chat_reaction_enabled and settings.auto_chat_reaction_id_list:
+        if reaction_available:
             ids = "、".join(sorted(settings.auto_chat_reaction_id_list))
             reaction_hint = (
                 f"\n可用表情 ID：{ids}（仅当 action=react 时选一个；不适合就 action=reply）"
@@ -1198,6 +1211,10 @@ async def run_auto_chat(
         # 进入条件 = "这轮真的打算贴表情"：门给 react 且所有前置闸门通过。
         # 任一前置条件不满足（通道关/白名单空/emoji 不在白名单/已判
         # unsupported/无回调或触发消息）都视为"未尝试"——自然落到下方文本路径。
+        # 注意：本分支有意不取 state.lock（plan 明示）——贴表情不占 _last_sent/
+        # _hourly/_daily 的文本冷却与计数，并发同群多轮只可能让反应独立限额
+        # 被极小幅超额（状态自身的 dict 读写是单线程事件循环原子操作）；
+        # 下方文本路径的锁只覆盖它自己的临界段（limit_reason→acquire→生成）。
         if (
             decision.action == "react"
             and settings.auto_chat_reaction_enabled

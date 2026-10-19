@@ -2249,6 +2249,63 @@ async def test_auto_chat_send_hook_swallows_finished_exception(
     await send("x")  # 不抛出 FinishedException 即通过
 
 
+# ---- 贴表情 react 闭包（S10-HUMAN-P2 H9，Fix Round 1 / Minor 5）----
+
+
+@pytest.mark.asyncio
+async def test_auto_chat_react_hook_returns_false_without_connected_bot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """无已连接 OneBot v11 bot：闭包必须返回 False（由 auto_chat 服务层
+    的连续失败降级逻辑处置），绝不抛异常。"""
+    event = FakeEvent("随便聊聊")
+    settings = BotSettings(allowed_group_ids="1001", ai_api_key="secret")
+    _, _send, react = ai_chat_plugin._build_auto_chat_hooks(event, settings)
+    monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: None)
+
+    assert await react(42, "128") is False
+
+
+@pytest.mark.asyncio
+async def test_auto_chat_react_hook_calls_set_msg_emoji_like_with_protocol_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """协议契约钉死：成功路径调用 `call_api("set_msg_emoji_like",
+    message_id=<int>, emoji_id=<str>)` 并返回 True（NapCat 参数名/类型）。"""
+    recorded: list[tuple[str, dict]] = []
+
+    class FakeOneBot:
+        async def call_api(self, action: str, **params):
+            recorded.append((action, params))
+            return None  # 协议成功时返回值无关紧要
+
+    event = FakeEvent("随便聊聊")
+    settings = BotSettings(allowed_group_ids="1001", ai_api_key="secret")
+    _, _send, react = ai_chat_plugin._build_auto_chat_hooks(event, settings)
+    monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: FakeOneBot())
+
+    assert await react(42, "128") is True
+    assert recorded == [("set_msg_emoji_like", {"message_id": 42, "emoji_id": "128"})]
+
+
+@pytest.mark.asyncio
+async def test_auto_chat_react_hook_swallows_api_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """协议不支持/超时/断连：call_api 抛异常时闭包返回 False，不向上抛。"""
+
+    class ExplodingOneBot:
+        async def call_api(self, action: str, **params):
+            raise RuntimeError("protocol unsupported")
+
+    event = FakeEvent("随便聊聊")
+    settings = BotSettings(allowed_group_ids="1001", ai_api_key="secret")
+    _, _send, react = ai_chat_plugin._build_auto_chat_hooks(event, settings)
+    monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: ExplodingOneBot())
+
+    assert await react(42, "128") is False
+
+
 # ---- 二期修复：多段连发（S7-AUTO-P2-10）----
 
 

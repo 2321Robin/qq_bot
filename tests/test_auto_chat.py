@@ -1536,6 +1536,13 @@ def _metric_value(stage: str, result: str) -> float:
     )
 
 
+def _reaction_metric(result: str) -> float:
+    """AUTO_CHAT_REACTIONS 的 result 维度采样（ok|failed|unsupported|limit）。"""
+    from prometheus_client import REGISTRY
+
+    return REGISTRY.get_sample_value("qq_bot_auto_chat_reactions_total", {"result": result}) or 0.0
+
+
 def _interest_gauge(group_id: int) -> float:
     """qq_bot_auto_chat_interest{group_hash} 当前采样值（0 = 未设置）。"""
     from prometheus_client import REGISTRY
@@ -2209,18 +2216,25 @@ class TestReactionPath:
             return True
 
         await _run(h, "随便聊聊", react=react)
-        assert calls["n"] == 1
-        # 第二次：日上限 → 回落文本（不再 react）
+        assert calls["n"] == 1  # 首轮成功：当日计数 = 1（= 上限）
+        # 把共享时钟推过 react 冷却（60s）使 cooldown 已清，但当日计数仍为 1
+        # → 第二次必须命中 daily_limit 而非 cooldown（与旧版等价性之外的定向
+        # 覆盖：cooldown 与 daily_limit 是 reaction_limit_reason 的两个独立分支）。
+        clock.advance(61.0)
+        limit_before = _reaction_metric("limit")
         h2 = Harness(["随便聊聊"], settings, state=state)
         h2.gate_content = h.gate_content
         await _run(h2, "随便聊聊", react=react)
-        assert calls["n"] == 1
-        assert h2.sent
+        assert calls["n"] == 1  # 未被 react：限额挡住
+        assert h2.sent  # 落到文本生成
+        # daily_limit 分支必须真的发射 limit 标签（负向确认：限额判定不生效时
+        # 第二轮会再次 react，本用例的 calls/标签断言随之失败）
+        assert _reaction_metric("limit") == limit_before + 1
 
     async def test_three_failures_disable_channel_then_fallback(self) -> None:
         from qq_bot.services import auto_chat as m
 
-        m._reset_reaction_streak()  # 测试隔离
+        m._reset_reaction_streak()  # 测试隔离：进程级降级态
         settings = _run_settings(
             auto_chat_sample_rate=1.0,
             auto_chat_reaction_enabled=True,
@@ -2233,10 +2247,111 @@ class TestReactionPath:
         async def failing_react(message_id: int, emoji_id: str) -> bool:
             return False
 
-        for _ in range(3):
+        try:
+            for _ in range(3):
+                await _run(h, "随便聊聊", react=failing_react)
+                # 发送中失败即结束本轮：门已判定只值得贴表情，不得回落生成文本
+                # （控制器的 resolution #1——react_failed 分支不补发文本）。
+                assert h.sent == []
+            assert m.reaction_unsupported() is True
+            # 第 4 次：react 不再尝试，直接文本
+            h.sent.clear()
             await _run(h, "随便聊聊", react=failing_react)
-        assert m.reaction_unsupported() is True
-        # 第 4 次：react 不再尝试，直接文本
-        h.sent.clear()
-        await _run(h, "随便聊聊", react=failing_react)
-        assert h.sent
+            assert h.sent
+        finally:
+            # _REACTION_* 是模块级进程态：禁用标记绝不可泄漏给后续用例
+            m._reset_reaction_streak()
+
+
+class TestGateEmojiHintGating:
+    """决策门"可用表情 ID"提示行的准入（Fix Round 1 / Minor 7）：提示必须与
+    本轮贴表情通道的真实可用性一致——react 回调在、有触发消息 id、开关与白
+    名单齐备、未判 unsupported。收集器批次交付路径 react=None（无触发消息
+    id），提示绝不能出现，否则等于给模型一个不存在的通道。"""
+
+    def _gate_prompt(self, h: Harness) -> str:
+        gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
+        assert len(gate_calls) == 1  # 决策门恰好调一次
+        return gate_calls[0]["user_prompt"]
+
+    async def test_hint_present_on_react_path(self) -> None:
+        settings = _run_settings(
+            auto_chat_sample_rate=1.0,
+            auto_chat_reaction_enabled=True,
+            auto_chat_reaction_whitelist="128,4",
+            auto_chat_cooldown_seconds=0.0,
+        )
+        h = Harness(["随便聊聊"], settings)
+        h.gate_content = _react_gate_content("128")
+
+        async def react(message_id: int, emoji_id: str) -> bool:
+            return True
+
+        await _run(h, "随便聊聊", react=react)
+        assert "可用表情 ID：128、4" in self._gate_prompt(h)
+
+    async def test_hint_absent_on_batch_path(self) -> None:
+        """react=None + trigger_message_id=None（收集器批次交付路径的接线形态）：
+        即使开关开启、白名单非空，提示也不得出现。"""
+        settings = _run_settings(
+            auto_chat_sample_rate=1.0,
+            auto_chat_reaction_enabled=True,
+            auto_chat_reaction_whitelist="128,4",
+            auto_chat_cooldown_seconds=0.0,
+        )
+        h = Harness(["随便聊聊"], settings)
+        now = datetime.now(UTC)
+        items = [
+            BatchItem(raw_text="开黑吗", sender_user_id=3001, created_at=now, row_id=999),
+        ]
+        await run_auto_chat(
+            event=FakeEvent(),
+            raw_text="开黑吗",
+            batch=items,
+            settings=h.settings,
+            memory_store=h.memory,
+            send=h.send,
+            quota_check=h.quota_check,
+            state=h.state,
+            rng=h.rng,
+            sleeper=h.sleeper,
+            _cold_sleep=h.instant_cold_sleep,
+            _request_completion=h.completion(),
+            react=None,
+            trigger_message_id=None,
+        )
+        gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
+        assert gate_calls  # 批次路径同样过决策门
+        assert "可用表情 ID" not in gate_calls[0]["user_prompt"]
+        assert "action=react" not in gate_calls[0]["user_prompt"]
+
+    async def test_hint_absent_without_trigger_message_id(self) -> None:
+        """单消息路径但拿不到触发消息 id（react 无从贴起）：提示同样缺席。"""
+        settings = _run_settings(
+            auto_chat_sample_rate=1.0,
+            auto_chat_reaction_enabled=True,
+            auto_chat_reaction_whitelist="128",
+            auto_chat_cooldown_seconds=0.0,
+        )
+        h = Harness(["随便聊聊"], settings)
+
+        async def react(message_id: int, emoji_id: str) -> bool:
+            raise AssertionError("react 不应被调用：无触发消息 id 时通道不可用")
+
+        await run_auto_chat(
+            event=FakeEvent(),
+            raw_text="随便聊聊",
+            settings=h.settings,
+            memory_store=h.memory,
+            send=h.send,
+            quota_check=h.quota_check,
+            state=h.state,
+            rng=h.rng,
+            sleeper=h.sleeper,
+            _cold_sleep=h.instant_cold_sleep,
+            _request_completion=h.completion(),
+            react=react,
+            trigger_message_id=None,
+        )
+        assert h.sent  # 回落文本生成
+        assert "可用表情 ID" not in self._gate_prompt(h)
