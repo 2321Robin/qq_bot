@@ -39,11 +39,20 @@ When the bot is running, it may process the following categories of data:
   - *Long-term preferences* — written **only** by the explicit user
     command `/记忆保存` (whole-group explicit opt-in, one entry per user,
     truncated to `MEMORY_PREFERENCE_MAX_CHARS` characters).
+  - *Person observation cards* — only when `PERSON_OBSERVE_ENABLED=true`,
+    an offline learning round (admin `/表达学习` or
+    `scripts/learn_expressions.py`) stores **one short derived profile per
+    user per group** (≤ `PERSON_OBSERVE_MAX_CHARS` characters, rolling
+    overwrite). Message bodies are never stored in the card; the card is
+    readable by the user themselves via `/记忆查看` and by the AI prompt
+    builder for that user. Users who closed long-term memory
+    (`/记忆关闭`) never get a card: the opt-out clears any existing card
+    and blocks writes.
   - *Deletion scope* — `/记忆删除 全部` (or `/记忆关闭`) deletes the
-    invoking user's own recent messages, AI replies, preference entry and
-    any summaries related to those messages. It does **not** delete other
-    users' messages, and there is no mechanism that affects data of
-    users other than the invoker.
+    invoking user's own recent messages, AI replies, preference entry,
+    observation card and any summaries related to those messages. It does
+    **not** delete other users' messages, cards or data, and there is no
+    mechanism that affects data of users other than the invoker.
 - **Logs contain no message bodies.** Runtime logs record only counts
   and category-level outcomes (retry attempts, circuit-breaker state,
   per-group failure counts); message text, raw QQ group/user numbers,
@@ -114,9 +123,9 @@ proxied by their self-hosted 60s instance.
 - The SQLite database is entirely under the deployer's control.
 - **User-facing deletion commands (stage 2):**
   - `/记忆删除 全部` (or `/记忆关闭`) — deletes the invoking user's own
-    recent messages, AI replies, preference entry and related summaries
-    from the chat memory database. Deletion is immediate and survives
-    restart; no deleted content is fed into later prompts.
+    recent messages, AI replies, preference entry, observation card and
+    related summaries from the chat memory database. Deletion is immediate
+    and survives restart; no deleted content is fed into later prompts.
   - `/记忆删除` — deletes only the invoking user's saved preference entry.
   - These commands affect only the invoking user's data, never other
     users' messages.

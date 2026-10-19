@@ -85,6 +85,16 @@ class JargonRow:
     confirmed_at: str | None
 
 
+@dataclass(frozen=True)
+class PersonObservationRow:
+    group_id: int
+    user_id: int
+    observation: str
+    source_message_id: int | None
+    insufficient: bool
+    updated_at: str
+
+
 class RepositoryClosedError(RuntimeError):
     """Raised when operating on a closed repository."""
 
@@ -431,10 +441,12 @@ class ChatMemoryRepository:
     # -- full user deletion (S2-MEM-07) -------------------------------------
 
     async def delete_user_data(self, *, group_id: int, user_id: int) -> list[int]:
-        """Delete one user's messages (with their AI replies), preferences and
-        closed state; delete summaries that reference any of those messages.
-        Other users' rows are untouched. Returns the affected message ids for
-        in-process cache invalidation (S2-MEM-07)."""
+        """Delete one user's messages (with their AI replies), preferences,
+        observation card and closed state; delete summaries that reference any
+        of those messages. Other users' rows are untouched. Returns the
+        affected message ids for in-process cache invalidation (S2-MEM-07,
+        extended for the H8 observation card: the card holds derived facts
+        about this user, so full deletion clears it)."""
         connection = self._require_open()
         cursor = await connection.execute(
             "SELECT id FROM chat_messages WHERE group_id = ? AND user_id = ?",
@@ -469,6 +481,10 @@ class ChatMemoryRepository:
         )
         await connection.execute(
             "DELETE FROM user_memory_state WHERE group_id = ? AND user_id = ?",
+            (group_id, user_id),
+        )
+        await connection.execute(
+            "DELETE FROM person_observations WHERE group_id = ? AND user_id = ?",
             (group_id, user_id),
         )
         await connection.commit()
@@ -733,6 +749,88 @@ class ChatMemoryRepository:
         )
         await connection.commit()
         return cursor.rowcount > 0
+
+    # -- person observation cards (S10-HUMAN-P2 H8) --------------------------
+
+    async def upsert_person_observation(
+        self,
+        *,
+        group_id: int,
+        user_id: int,
+        observation: str,
+        source_message_id: int | None = None,
+        insufficient: bool = False,
+        now: datetime | None = None,
+    ) -> None:
+        """One rolling card per (group, user): a new extract overwrites the
+        previous card entirely. An ``insufficient`` card is a negative
+        marker — the material never supports an extractable profile — and
+        replaces whatever card existed, so stale reads never survive."""
+        connection = self._require_open()
+        timestamp = self._to_utc_iso(now or datetime.now(UTC))
+        await connection.execute(
+            """
+            INSERT INTO person_observations (
+                group_id, user_id, observation, source_message_id, insufficient, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT (group_id, user_id)
+            DO UPDATE SET
+                observation = excluded.observation,
+                source_message_id = excluded.source_message_id,
+                insufficient = excluded.insufficient,
+                updated_at = excluded.updated_at
+            """,
+            (
+                group_id,
+                user_id,
+                observation,
+                source_message_id,
+                int(insufficient),
+                timestamp,
+            ),
+        )
+        await connection.commit()
+
+    async def get_person_observation(
+        self, *, group_id: int, user_id: int
+    ) -> PersonObservationRow | None:
+        connection = self._require_open()
+        cursor = await connection.execute(
+            """
+            SELECT group_id, user_id, observation, source_message_id,
+                   insufficient, updated_at
+            FROM person_observations
+            WHERE group_id = ? AND user_id = ?
+            """,
+            (group_id, user_id),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return PersonObservationRow(
+            group_id=int(row[0]),
+            user_id=int(row[1]),
+            observation=str(row[2]),
+            source_message_id=None if row[3] is None else int(row[3]),
+            insufficient=bool(row[4]),
+            updated_at=str(row[5]),
+        )
+
+    async def delete_person_observation(self, *, group_id: int, user_id: int) -> bool:
+        """Delete one user's observation card; False when there was none."""
+        connection = self._require_open()
+        cursor = await connection.execute(
+            "DELETE FROM person_observations WHERE group_id = ? AND user_id = ?",
+            (group_id, user_id),
+        )
+        await connection.commit()
+        return cursor.rowcount > 0
+
+    async def observations_enabled(self, *, group_id: int, user_id: int) -> bool:
+        """Observation cards follow the preference opt-out (``/记忆关闭``):
+        no opt-out marker means the card may be written and read back."""
+        return await self.preferences_enabled(group_id=group_id, user_id=user_id)
 
     async def _cleanup(self, connection: aiosqlite.Connection, now: datetime | None) -> None:
         cutoff = self._to_utc_iso((now or datetime.now(UTC)) - timedelta(days=self.retention_days))

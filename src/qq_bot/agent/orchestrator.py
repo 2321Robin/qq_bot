@@ -262,11 +262,13 @@ class AgentOrchestrator:
 
     async def _load_memory_layers(
         self, request: AgentRequest
-    ) -> tuple[list[str], list[str], str | None, str]:
+    ) -> tuple[list[str], list[str], str | None, str, str | None]:
         """Fetch the request-scoped memory layers and build the prompt block
         (S2-MEM-09: layers only leave the box for scopes that can use chat
-        memory, and only on routes that allow the memory tool)."""
-        empty: tuple[list[str], list[str], str | None, str] = ([], [], None, "")
+        memory, and only on routes that allow the memory tool). H8 adds the
+        observation card of the *current user*, gated by the same switch the
+        offline learner writes under."""
+        empty: tuple[list[str], list[str], str | None, str, str | None] = ([], [], None, "", None)
         if (
             self._memory is None
             or not request.scope.can_use_chat_memory
@@ -284,6 +286,9 @@ class AgentOrchestrator:
             rows = await self._memory.recent_layer(group_id=group_id, limit=limit)
             summaries = await self._memory.summary_layer(group_id=group_id)
             preferences, _ = await self._memory.preference_layer(group_id=group_id, user_id=user_id)
+            observation = await self._memory.person_observe_layer(
+                group_id=group_id, user_id=user_id
+            )
         except Exception:
             logger.exception("memory layers failed; continuing without memory context")
             return empty
@@ -297,8 +302,10 @@ class AgentOrchestrator:
             blocks.append("历史摘要：\n" + "\n".join(f"- {text}" for text in summary_texts))
         if preference_text:
             blocks.append(f"用户长期偏好：{preference_text}")
+        if observation:
+            blocks.append(f"你对当前用户的了解（可能过时，仅供参考）：{observation}")
         block = "\n\n".join(blocks)
-        return recent_texts, summary_texts, preference_text, block
+        return recent_texts, summary_texts, preference_text, block, observation
 
     async def run(self, request: AgentRequest) -> GroundedAnswer | SafeFailure:
         """Run the agent loop and record the outcome (S4-METRIC-08).
@@ -344,9 +351,13 @@ class AgentOrchestrator:
             # S2-SEC-04: external content cannot change policy, tools, scope,
             # budget or verifier behavior.
             system_prompt = f"{system_prompt}\n{UNTRUSTED_CONTENT_POLICY}"
-        recent_texts, summary_texts, preference_text, memory_block = await self._load_memory_layers(
-            request
-        )
+        (
+            recent_texts,
+            summary_texts,
+            preference_text,
+            memory_block,
+            _observation,
+        ) = await self._load_memory_layers(request)
         user_content = request.prompt if not memory_block else f"{request.prompt}\n\n{memory_block}"
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt},

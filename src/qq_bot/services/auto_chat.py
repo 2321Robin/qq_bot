@@ -504,6 +504,8 @@ _BATCH_SECTION_HEADER = (
 _EXPRESSION_SECTION_HEADER = "本群表达参考（仅供语气参考，禁止照抄原句，内容仍须回应最新消息）："
 _JARGON_SECTION_HEADER = "本群黑话参考（理解用，不确定含义就不要用）："
 
+_PERSON_OBSERVE_SECTION_HEADER = "你对当前发言者的了解（可能过时，仅供参考，接个人梗时可用）："
+
 
 def build_gate_user_prompt(
     rows: Sequence[ChatMemoryRow],
@@ -529,6 +531,7 @@ def build_casual_user_prompt(
     batch_rows: Sequence[ChatMemoryRow] = (),
     expression_refs: Sequence[str] = (),
     jargon_refs: Sequence[str] = (),
+    person_observe_refs: Sequence[str] = (),
 ) -> str:
     lines = ["最近群消息（最后一条是最新消息）："]
     lines.extend(_render_rows(rows))
@@ -544,6 +547,9 @@ def build_casual_user_prompt(
     if recent_replies:
         lines.append("你最近发过的消息（换着花样说，禁止重复这些句式和用词）：")
         lines.extend(f"- {text}" for text in recent_replies)
+    if person_observe_refs:
+        lines.append(_PERSON_OBSERVE_SECTION_HEADER)
+        lines.extend(f"- {text}" for text in person_observe_refs)
     lines.append(
         "请以群友身份先回应最新消息本身：打招呼就回应问候，提问就回应问题，"
         "可以顺势接梗；不要跑题到更早的话题。"
@@ -988,6 +994,31 @@ async def _expression_sample(
     return sample
 
 
+async def _person_observe_refs(
+    memory_store: Any, group_id: int, user_id: int, *, settings: BotSettings
+) -> tuple[str, ...]:
+    """当前发言者的观察卡引用（S10-HUMAN-P2 H8）。关闭、无卡、负卡或任何
+    存储失败都返回空——注入只是语气增强，绝不拖累主流程。用户的
+    ``/记忆关闭`` 状态在学习时已阻止写卡，删除卡自然读出空。"""
+    if not settings.person_observe_enabled:
+        return ()
+    try:
+        row = await memory_store.get_person_observation(group_id=group_id, user_id=user_id)
+    except Exception:
+        return ()
+    if row is None or row.insufficient or not row.observation:
+        return ()
+    return (row.observation,)
+
+
+def trigger_sender_id(items: Sequence[Any], event: Any, is_batch: bool) -> int | None:
+    """当前触发消息的发送者（H8 观察卡归属）。批次路径取过滤后最后一条；
+    单消息路径恒等于 event.user_id。返回 None 时调用方跳过注入。"""
+    if is_batch:
+        return items[-1].sender_user_id if items else None
+    return getattr(event, "user_id", None)
+
+
 async def run_auto_chat(
     *,
     event: Any,
@@ -1300,6 +1331,14 @@ async def run_auto_chat(
             expression_rows = await _expression_sample(memory_store, group_id, settings=settings)
             expression_refs = tuple(r.template for r in expression_rows)
             expression_ids = [r.id for r in expression_rows]
+            # 观察卡对应当前发言人（H8）：与表达样本同生命周期取一次，
+            # 重试 prompt 复用同一份，不重复读库。
+            observe_refs = await _person_observe_refs(
+                memory_store,
+                group_id,
+                trigger_sender_id(items, event, is_batch),
+                settings=settings,
+            )
 
             async def _generate() -> str:
                 return await complete(
@@ -1311,6 +1350,7 @@ async def run_auto_chat(
                             batch_rows=_batch_as_rows(items, group_id) if is_batch else (),
                             expression_refs=expression_refs,
                             jargon_refs=jargon_refs,
+                            person_observe_refs=observe_refs,
                         )
                         + f"\n风格要求：{style_directive(rng)}"
                     ),
@@ -1358,6 +1398,7 @@ async def run_auto_chat(
                     batch_rows=_batch_as_rows(items, group_id) if is_batch else (),
                     expression_refs=expression_refs,
                     jargon_refs=jargon_refs,
+                    person_observe_refs=observe_refs,
                 )
                 + f"\n风格要求：{style_directive(rng)}"
                 + "\n重写要求：你刚才的回复被拒绝（"

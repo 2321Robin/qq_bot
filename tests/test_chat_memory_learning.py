@@ -314,6 +314,71 @@ async def test_distinct_group_ids_filters_window_and_orders(tmp_path):
         await repo.close()
 
 
+async def test_person_observation_upsert_overwrites_per_group_user(tmp_path):
+    repo = _repo(tmp_path)
+    await repo.open()
+    try:
+        await repo.upsert_person_observation(
+            group_id=1001, user_id=2001, observation="老观察", source_message_id=1
+        )
+        assert await repo.get_person_observation(group_id=1001, user_id=2001) is not None
+        # 第二次提取滚动覆盖：字段整体替换，旧文本不残留
+        await repo.upsert_person_observation(
+            group_id=1001,
+            user_id=2001,
+            observation="新观察",
+            source_message_id=2,
+            insufficient=True,
+        )
+        row = await repo.get_person_observation(group_id=1001, user_id=2001)
+        assert row is not None
+        assert row.observation == "新观察"
+        assert row.insufficient is True
+        assert row.source_message_id == 2
+        # 每群每人一张：不同用户/群互不可见
+        assert await repo.get_person_observation(group_id=1001, user_id=2002) is None
+        assert await repo.get_person_observation(group_id=9999, user_id=2001) is None
+    finally:
+        await repo.close()
+
+
+async def test_person_observation_delete_and_observations_enabled(tmp_path):
+    repo = _repo(tmp_path)
+    await repo.open()
+    try:
+        await repo.upsert_person_observation(
+            group_id=1001, user_id=2001, observation="观察", insufficient=False
+        )
+        assert await repo.observations_enabled(group_id=1001, user_id=2001) is True
+        assert await repo.delete_person_observation(group_id=1001, user_id=2001) is True
+        assert await repo.delete_person_observation(group_id=1001, user_id=2001) is False
+        # /记忆关闭 同样封死观察卡读写
+        await repo.close_preferences(group_id=1001, user_id=2001)
+        assert await repo.observations_enabled(group_id=1001, user_id=2001) is False
+    finally:
+        await repo.close()
+
+
+async def test_delete_user_data_clears_person_observation(tmp_path):
+    repo = _repo(tmp_path)
+    await repo.open()
+    try:
+        await _add_message(repo, 1001, "我的消息", minutes_ago=5, user_id=2001)
+        await _add_message(repo, 1001, "别人的消息", minutes_ago=5, user_id=2002)
+        await repo.upsert_person_observation(group_id=1001, user_id=2001, observation="将被删除")
+        await repo.upsert_person_observation(group_id=1001, user_id=2002, observation="别人的观察")
+
+        affected = await repo.delete_user_data(group_id=1001, user_id=2001)
+
+        assert affected == [1]
+        assert await repo.get_person_observation(group_id=1001, user_id=2001) is None
+        # 别人的观察卡必须保留
+        other = await repo.get_person_observation(group_id=1001, user_id=2002)
+        assert other is not None and other.observation == "别人的观察"
+    finally:
+        await repo.close()
+
+
 async def test_v3_database_upgrades_to_v4_keeping_messages(tmp_path):
     """A schema-v3 database auto-migrates to v4 on open, keeping its rows."""
     path = tmp_path / "upgrade.sqlite3"
@@ -368,3 +433,11 @@ async def test_learning_methods_reject_closed_repository(tmp_path):
         await repo.disable_jargon(group_id=1001, term="x")
     with pytest.raises(RepositoryClosedError):
         await repo.distinct_group_ids(days=7)
+    with pytest.raises(RepositoryClosedError):
+        await repo.upsert_person_observation(group_id=1001, user_id=2001, observation="x")
+    with pytest.raises(RepositoryClosedError):
+        await repo.get_person_observation(group_id=1001, user_id=2001)
+    with pytest.raises(RepositoryClosedError):
+        await repo.delete_person_observation(group_id=1001, user_id=2001)
+    with pytest.raises(RepositoryClosedError):
+        await repo.observations_enabled(group_id=1001, user_id=2001)

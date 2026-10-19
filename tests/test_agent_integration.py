@@ -166,6 +166,40 @@ async def test_memory_layers_reach_budget_and_model_turn(
 
 
 @pytest.mark.asyncio
+async def test_person_observation_card_reaches_model_turn(
+    memory_repository,
+) -> None:
+    """H8: 当前用户的观察卡进入 agent 用户消息，关闭时整段缺席。"""
+    await memory_repository.upsert_person_observation(
+        group_id=1001, user_id=2001, observation="话不多，偏爱暗影系"
+    )
+
+    gateway = FakeGateway([_final([{"text": "好的", "kind": "conversational"}])])
+    orchestrator = _build_stack(
+        memory_repository,
+        gateway,
+        settings=BotSettings(
+            ai_api_key="test-secret",
+            ai_model="test-model",
+            person_observe_enabled=True,
+        ),
+    )
+
+    outcome = await orchestrator.run(_request("我最近在练什么？"))
+
+    assert isinstance(outcome, GroundedAnswer)
+    user_content = gateway.messages[0][1]["content"]
+    assert "你对当前用户的了解" in user_content
+    assert "偏爱暗影系" in user_content
+
+    # 默认关闭：卡不存在于 prompt
+    gateway = FakeGateway([_final([{"text": "好的", "kind": "conversational"}])])
+    orchestrator = _build_stack(memory_repository, gateway)
+    await orchestrator.run(_request("我最近在练什么？"))
+    assert "你对当前用户的了解" not in gateway.messages[0][1]["content"]
+
+
+@pytest.mark.asyncio
 async def test_memory_layers_gated_by_scope_and_route(
     memory_repository,
 ) -> None:

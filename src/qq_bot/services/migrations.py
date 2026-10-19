@@ -202,6 +202,28 @@ MIGRATIONS: tuple[Migration, ...] = (
             """,
         ),
     ),
+    Migration(
+        version=5,
+        name="person_observations",
+        statements=(
+            """
+            CREATE TABLE IF NOT EXISTS person_observations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                observation TEXT NOT NULL,
+                source_message_id INTEGER,
+                insufficient INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                UNIQUE (group_id, user_id)
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_person_observations_group_user
+            ON person_observations (group_id, user_id)
+            """,
+        ),
+    ),
 )
 
 SUPPORTED_SCHEMA_VERSION = max(migration.version for migration in MIGRATIONS)

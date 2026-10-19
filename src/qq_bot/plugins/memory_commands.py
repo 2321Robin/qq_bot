@@ -66,13 +66,21 @@ async def handle_memory_view(event: GroupMessageEvent) -> None:
     service = _service()
     rows, enabled = await service.list_preferences(group_id=event.group_id, user_id=event.user_id)
     state = "已开启" if enabled else "已关闭（长期偏好不会进入对话）"
-    if not rows:
-        await finish_with_send_errors_logged(
-            memory_view_command, f"当前没有已保存的长期偏好（状态：{state}）。"
-        )
-    lines = [f"长期偏好（状态：{state}）："]
-    for index, row in enumerate(rows, start=1):
-        lines.append(f"{index}. #{row.id} {row.preference}")
+    lines: list[str] = []
+    if rows:
+        lines.append(f"长期偏好（状态：{state}）：")
+        for index, row in enumerate(rows, start=1):
+            lines.append(f"{index}. #{row.id} {row.preference}")
+    else:
+        lines.append(f"当前没有已保存的长期偏好（状态：{state}）。")
+    # 观察卡透明（H8）：用户可看到机器人对自己沉淀的了解，可被 /记忆删除 全部
+    # 或 /记忆关闭 一并清除。功能关闭时无卡可读，直接省略该段。
+    observation = await service.person_observe_layer(group_id=event.group_id, user_id=event.user_id)
+    if observation is not None:
+        lines.append(f"机器人对你的了解（可能过时）：{observation}")
+        lines.append("（可用 /记忆删除 全部 或 /记忆关闭 清除）")
+    elif not rows:
+        await finish_with_send_errors_logged(memory_view_command, lines[0])
     await finish_with_send_errors_logged(memory_view_command, "\n".join(lines))
 
 
@@ -93,7 +101,8 @@ async def handle_memory_delete(event: GroupMessageEvent, args: Message = Command
         )
         await finish_with_send_errors_logged(
             memory_delete_command,
-            f"已删除当前用户的全部记忆（消息 {len(affected)} 条、AI 回复、偏好与关联摘要）。",
+            f"已删除当前用户的全部记忆（消息 {len(affected)} 条、AI 回复、偏好、观察卡"
+            "与关联摘要）。",
         )
     if not target.isdigit():
         await finish_with_send_errors_logged(
@@ -119,5 +128,5 @@ async def handle_memory_close(event: GroupMessageEvent) -> None:
     await _service().close_preferences(group_id=event.group_id, user_id=event.user_id)
     await finish_with_send_errors_logged(
         memory_close_command,
-        "已关闭长期偏好并清除全部已保存内容；后续对话不再包含长期记忆层。",
+        "已关闭长期偏好并清除全部已保存内容（含观察卡）；后续对话不再包含长期记忆层。",
     )

@@ -445,3 +445,163 @@ def test_run_learning_round_has_no_rng_parameter():
 
     assert "rng" not in inspect.signature(run_learning_round).parameters
     assert "rng" not in inspect.signature(_process_batch).parameters
+
+
+class _ObserveMemory(FakeMemory):
+    """在 FakeMemory 上加观察卡存取与 /记忆关闭 状态。
+
+    所有素材行归同一位群友（2001）：观察卡的活跃发言者门槛按用户聚合，
+    每行一个用户会让任何批量都达不到门槛。"""
+
+    def __init__(self, texts: list[str], *, opted_out: bool = False):
+        super().__init__(texts)
+        self.opted_out = opted_out
+        self.cards: dict[int, dict] = {}
+
+    async def messages_since(self, *, group_id, days, now=None):
+        from datetime import UTC, datetime, timedelta
+
+        return [
+            ChatMemoryRow(
+                id=i + 1,
+                group_id=group_id,
+                user_id=2001,
+                message_text=t,
+                created_at=(datetime.now(UTC) - timedelta(hours=2)).isoformat(),
+                is_ai_prompt=False,
+                ai_reply="",
+            )
+            for i, t in enumerate(self.texts)
+        ]
+
+    async def observations_enabled(self, *, group_id, user_id):
+        return not self.opted_out
+
+    async def upsert_person_observation(self, **kwargs):
+        self.cards[kwargs["user_id"]] = kwargs
+
+
+def _observe_settings(**overrides):
+    base = {
+        "person_observe_enabled": True,
+        "person_observe_min_messages": 4,
+        "person_observe_max_chars": 100,
+    }
+    base.update(overrides)
+    return _settings(**base)
+
+
+def _observe_payload(observation: str):
+    return json.dumps({"observation": observation}, ensure_ascii=False)
+
+
+async def test_observation_cards_written_for_active_speakers():
+    texts = [f"消息{i}" for i in range(6)]  # 同一用户 6 条
+    mem = _ObserveMemory(texts)
+    settings = _observe_settings()
+
+    async def complete(**kwargs):
+        system = kwargs["system_prompt"]
+        if "表达分析器" in system:
+            return _extract_payload(expressions=[], jargon=[])
+        return _observe_payload("话多，爱发表情")
+
+    summary = await run_learning_round(
+        group_id=1001, memory_store=mem, settings=settings, complete=complete, quota=None
+    )
+    assert summary.observations_updated == 1
+    assert summary.observations_insufficient == 0
+    card = mem.cards[2001]
+    assert card["observation"] == "话多，爱发表情"
+    assert card["insufficient"] is False
+    assert card["source_message_id"] == 6  # 本批该用户最后一条
+
+
+async def test_observation_skipped_below_min_messages_and_when_closed():
+    texts = ["消息0", "消息1"]  # 2 条 < 门槛 4
+    mem = _ObserveMemory(texts)
+    settings = _observe_settings()
+
+    async def complete(**kwargs):
+        system = kwargs["system_prompt"]
+        if "表达分析器" in system:
+            return _extract_payload(expressions=[], jargon=[])
+        raise AssertionError("发言数不足 → 不应有观察调用")
+
+    summary = await run_learning_round(
+        group_id=1001, memory_store=mem, settings=settings, complete=complete, quota=None
+    )
+    assert summary.observations_updated == 0
+    assert mem.cards == {}
+
+    # /记忆关闭（opted_out）→ 不写卡
+    mem = _ObserveMemory([f"消息{i}" for i in range(6)], opted_out=True)
+
+    async def opted_out_complete(**kwargs):
+        system = kwargs["system_prompt"]
+        if "表达分析器" in system:
+            return _extract_payload(expressions=[], jargon=[])
+        raise AssertionError("用户关闭记忆 → 不应有观察调用")
+
+    summary = await run_learning_round(
+        group_id=1001, memory_store=mem, settings=settings, complete=opted_out_complete, quota=None
+    )
+    assert summary.observations_updated == 0
+    assert mem.cards == {}
+
+
+async def test_observation_model_text_is_validated_before_store():
+    """含长数字串（隐私）或超长的观察被确定性闸拒绝，落负卡。"""
+    mem = _ObserveMemory(["消息0", "消息1", "消息2", "消息3"])
+    settings = _observe_settings()  # max_chars=100
+
+    async def complete(**kwargs):
+        system = kwargs["system_prompt"]
+        if "表达分析器" in system:
+            return _extract_payload(expressions=[], jargon=[])
+        return _observe_payload("他的QQ号是123456789，加他好友")
+
+    summary = await run_learning_round(
+        group_id=1001, memory_store=mem, settings=settings, complete=complete, quota=None
+    )
+    assert summary.observations_updated == 0
+    assert summary.observations_insufficient == 1
+    card = mem.cards[2001]
+    assert card["observation"] == "" and card["insufficient"] is True
+
+
+async def test_observation_negative_card_replaces_stale_positive_card():
+    """模型返回空/不可解析 → 负卡滚动覆盖旧正卡，过期观察不会残留。"""
+    mem = _ObserveMemory(["消息0", "消息1", "消息2", "消息3"])
+    mem.cards[2001] = {"user_id": 2001, "observation": "旧观察", "insufficient": False}
+    settings = _observe_settings()
+
+    async def complete(**kwargs):
+        system = kwargs["system_prompt"]
+        if "表达分析器" in system:
+            return _extract_payload(expressions=[], jargon=[])
+        return "不是json"
+
+    summary = await run_learning_round(
+        group_id=1001, memory_store=mem, settings=settings, complete=complete, quota=None
+    )
+    assert summary.observations_insufficient == 1
+    assert mem.cards[2001]["observation"] == ""
+    assert mem.cards[2001]["insufficient"] is True
+
+
+async def test_observation_disabled_by_default_writes_nothing():
+    mem = _ObserveMemory(["消息0", "消息1", "消息2", "消息3"])
+    settings = _settings()  # person_observe_enabled 默认 False
+
+    async def complete(**kwargs):
+        system = kwargs["system_prompt"]
+        if "表达分析器" in system:
+            return _extract_payload(expressions=[], jargon=[])
+        raise AssertionError("功能关闭 → 不应有观察调用")
+
+    summary = await run_learning_round(
+        group_id=1001, memory_store=mem, settings=settings, complete=complete, quota=None
+    )
+    assert summary.observations_updated == 0
+    assert mem.cards == {}

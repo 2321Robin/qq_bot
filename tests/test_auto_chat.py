@@ -2424,3 +2424,116 @@ class TestGateEmojiHintGating:
         assert "可用表情 ID" not in self._gate_prompt(h)
         # react 指令与列表同块：通道不可用时整块缺席，不残留半截指令
         assert "action=react" not in self._gate_prompt(h)
+
+
+class _ObserveMemory(FakeMemory):
+    """get_person_observation 返回预设卡；未设置时表示无卡。"""
+
+    def __init__(self, texts: list[str], observation: str | None = None, insufficient=False):
+        super().__init__(texts)
+        self.observation = observation
+        self.insufficient = insufficient
+
+    async def get_person_observation(self, *, group_id: int, user_id: int):
+        if self.observation is None:
+            return None
+        from qq_bot.services.chat_memory import PersonObservationRow
+
+        return PersonObservationRow(
+            group_id=group_id,
+            user_id=user_id,
+            observation=self.observation,
+            source_message_id=None,
+            insufficient=self.insufficient,
+            updated_at="",
+        )
+
+
+def _observe_casual_prompt(h: Harness) -> str:
+    casual = [c for c in h.completions if "决策器" not in c["system_prompt"]]
+    assert casual, "生成调用未发生"
+    return casual[-1]["user_prompt"]
+
+
+class TestPersonObserveInjection:
+    async def test_card_reaches_casual_prompt_when_enabled(self) -> None:
+        h = Harness(
+            ["在吗", "冲"],
+            _run_settings(person_observe_enabled=True),
+        )
+        h.memory = _ObserveMemory(["在吗", "冲"], observation="话不多，潜水党")
+        await _run(h)
+        assert h.sent
+        assert "你对当前发言者的了解" in _observe_casual_prompt(h)
+        assert "话不多，潜水党" in _observe_casual_prompt(h)
+
+    async def test_disabled_by_default_never_injects_card(self) -> None:
+        h = Harness(["在吗", "冲"], _run_settings())
+        h.memory = _ObserveMemory(["在吗", "冲"], observation="话不多，潜水党")
+        await _run(h)
+        assert h.sent
+        assert "你对当前发言者的了解" not in _observe_casual_prompt(h)
+
+    async def test_negative_card_and_missing_card_stay_absent(self) -> None:
+        # 负卡（insufficient）与空正文当作没有卡
+        h = Harness(["在吗", "冲"], _run_settings(person_observe_enabled=True))
+        h.memory = _ObserveMemory(["在吗", "冲"], observation="", insufficient=True)
+        await _run(h)
+        assert h.sent
+        assert "你对当前发言者的了解" not in _observe_casual_prompt(h)
+
+        # 没有卡记录
+        h = Harness(["在吗", "冲"], _run_settings(person_observe_enabled=True))
+        h.memory = _ObserveMemory(["在吗", "冲"], observation=None)
+        h.casual_content = "冲！新活动冲什么冲"
+        await _run(h, "冲！新活动")
+        assert h.sent
+        assert "你对当前发言者的了解" not in _observe_casual_prompt(h)
+
+    async def test_store_failure_is_silent_but_send_continues(self) -> None:
+        h = Harness(["在吗", "冲"], _run_settings(person_observe_enabled=True))
+        h.memory = _ObserveMemory(["在吗", "冲"], observation="观察")
+
+        async def failing_get(**kwargs):
+            raise RuntimeError("db gone")
+
+        h.memory.get_person_observation = failing_get  # type: ignore[method-assign]
+        await _run(h)
+        assert h.sent
+        assert "你对当前发言者的了解" not in _observe_casual_prompt(h)
+
+    async def test_retry_prompt_keeps_the_same_card(self) -> None:
+        """重写重试不是新的一轮群聊：首次与重试两条 prompt 带同一份观察，
+        整轮只读一次库（S10-HUMAN-P2 H8，与 H5 样本同一语义）。"""
+        reads = {"n": 0}
+
+        class CountingMemory(_ObserveMemory):
+            async def get_person_observation(self, *, group_id, user_id):
+                reads["n"] += 1
+                return await _ObserveMemory.get_person_observation(
+                    self, group_id=group_id, user_id=user_id
+                )
+
+        h = Harness(["在吗", "冲"], _run_settings(person_observe_enabled=True))
+        h.memory = CountingMemory(["在吗", "冲"], observation="爱打野")
+        # 首条回复复述触发句 → echo → 重写一次；重写内容换说法
+        seq = iter(["一起去打新活动吗", "换个说法，这次不去了"])
+        raw_text = "一起去打新活动吗"
+
+        def completion():
+            async def fake(**kwargs) -> str:
+                h.completions.append(kwargs)
+                if "决策器" in kwargs["system_prompt"]:
+                    return h.gate_content
+                return next(seq)
+
+            return fake
+
+        await _run(h, raw_text, _completion=completion())
+        casual_prompts = [
+            c["user_prompt"] for c in h.completions if "决策器" not in c["system_prompt"]
+        ]
+        assert len(casual_prompts) == 2  # 生成 + 重写
+        for prompt in casual_prompts:
+            assert "爱打野" in prompt
+        assert reads["n"] == 1

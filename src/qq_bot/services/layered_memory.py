@@ -227,10 +227,30 @@ class LayeredMemoryService:
         )
 
     async def delete_all(self, *, group_id: int, user_id: int) -> list[int]:
-        """Full deletion for one user (S2-MEM-07): messages, AI replies,
-        preferences, source-linked summaries. Returns affected message ids
-        for in-process cache invalidation. Never touches other users."""
+        """Full deletion for one user (S2-MEM-07, H8): messages, AI replies,
+        preferences, observation card, source-linked summaries. Returns the
+        affected message ids for in-process cache invalidation. Never touches
+        other users."""
         return await self._repository.delete_user_data(group_id=group_id, user_id=user_id)
 
+    async def person_observe_layer(self, *, group_id: int, user_id: int) -> str | None:
+        """The current user's observation card, or None (S10-HUMAN-P2 H8).
+        Gated by ``person_observe_enabled`` (same switch the offline learner
+        writes under); a closed/opted-out user has no card to read."""
+        if not self._settings.person_observe_enabled:
+            return None
+        try:
+            row = await self._repository.get_person_observation(group_id=group_id, user_id=user_id)
+        except Exception:
+            logger.exception("person observation read failed; continuing without it")
+            return None
+        if row is None or row.insufficient or not row.observation:
+            return None
+        return row.observation
+
     async def close_preferences(self, *, group_id: int, user_id: int) -> None:
+        """Opt out of long-term memory (S2-MEM-06 + H8): the observation card
+        is derived long-term data about this user, so closing clears it too —
+        a previously derived card never keeps being injected after an opt-out."""
         await self._repository.close_preferences(group_id=group_id, user_id=user_id)
+        await self._repository.delete_person_observation(group_id=group_id, user_id=user_id)

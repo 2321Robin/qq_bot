@@ -57,6 +57,10 @@ async def _seed(repository: ChatMemoryRepository) -> tuple[int, int]:
     return first, second
 
 
+async def _observe(repository: ChatMemoryRepository, user_id: int, text: str) -> None:
+    await repository.upsert_person_observation(group_id=1001, user_id=user_id, observation=text)
+
+
 # ---------------------------------------------------------------------------
 # Layers (S2-MEM-01..06)
 # ---------------------------------------------------------------------------
@@ -271,6 +275,44 @@ async def test_delete_all_removes_user_memory_and_invalidates_summaries(
     assert await repository.get_preferences(group_id=1001, user_id=2001) == []
     rows = await repository.recent_group_messages(group_id=1001, limit=10, now=_NOW)
     assert [row.user_id for row in rows] == [2002]  # other user untouched
+
+
+async def test_person_observe_layer_disabled_by_default(repository) -> None:
+    service = LayeredMemoryService(repository, _settings())
+    await _observe(repository, 2001, "喜欢火系")
+    assert await service.person_observe_layer(group_id=1001, user_id=2001) is None
+
+
+async def test_person_observe_layer_returns_card_and_skips_negative(repository) -> None:
+    service = LayeredMemoryService(repository, _settings(person_observe_enabled=True))
+    await _observe(repository, 2001, "话不多，爱潜水")
+    assert await service.person_observe_layer(group_id=1001, user_id=2001) == "话不多，爱潜水"
+    # 负卡（素材不足标记）与空正文都当作没有卡
+    await repository.upsert_person_observation(
+        group_id=1001, user_id=2002, observation="", insufficient=True
+    )
+    assert await service.person_observe_layer(group_id=1001, user_id=2002) is None
+    assert await service.person_observe_layer(group_id=1001, user_id=9999) is None
+
+
+async def test_close_preferences_clears_observation_card(repository) -> None:
+    service = LayeredMemoryService(repository, _settings(person_observe_enabled=True))
+    await _observe(repository, 2001, "将被清除")
+    await service.close_preferences(group_id=1001, user_id=2001)
+    assert await repository.get_person_observation(group_id=1001, user_id=2001) is None
+    assert await service.person_observe_layer(group_id=1001, user_id=2001) is None
+
+
+async def test_delete_all_clears_only_invokers_observation_card(repository) -> None:
+    service = LayeredMemoryService(repository, _settings(person_observe_enabled=True))
+    await _observe(repository, 2001, "我的观察")
+    await _observe(repository, 2002, "别人的观察")
+
+    await service.delete_all(group_id=1001, user_id=2001)
+
+    assert await repository.get_person_observation(group_id=1001, user_id=2001) is None
+    other = await repository.get_person_observation(group_id=1001, user_id=2002)
+    assert other is not None and other.observation == "别人的观察"
 
 
 # ---------------------------------------------------------------------------
@@ -540,3 +582,47 @@ async def test_memory_close_command_clears_and_blocks(_patch_repository) -> None
 
     assert "已关闭长期偏好" in message
     assert await repo.preferences_enabled(group_id=1001, user_id=2001) is False
+
+
+async def test_memory_view_command_shows_observation_card_when_enabled(
+    monkeypatch, _patch_repository
+) -> None:
+    repo = _patch_repository
+    monkeypatch.setattr(
+        memory_commands, "get_settings", lambda: _settings(person_observe_enabled=True)
+    )
+    await _observe(repo, 2001, "看起来喜欢火系宠物")
+
+    message = await _drive_command(
+        memory_commands.memory_view_command, memory_commands.handle_memory_view, FakeEvent()
+    )
+
+    assert "机器人对你的了解" in message
+    assert "看起来喜欢火系宠物" in message
+    assert "/记忆删除 全部" in message
+
+
+async def test_memory_delete_all_command_clears_observation_card(_patch_repository) -> None:
+    repo = _patch_repository
+    await _observe(repo, 2001, "将被删除的观察")
+
+    message = await _drive_command(
+        memory_commands.memory_delete_command,
+        memory_commands.handle_memory_delete,
+        FakeEvent(),
+        "全部",
+    )
+
+    assert "观察卡" in message
+    assert await repo.get_person_observation(group_id=1001, user_id=2001) is None
+
+
+async def test_memory_close_command_clears_observation_card(_patch_repository) -> None:
+    repo = _patch_repository
+    await _observe(repo, 2001, "将被清除的观察")
+
+    await _drive_command(
+        memory_commands.memory_close_command, memory_commands.handle_memory_close, FakeEvent()
+    )
+
+    assert await repo.get_person_observation(group_id=1001, user_id=2001) is None

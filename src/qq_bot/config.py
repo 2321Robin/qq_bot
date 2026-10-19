@@ -413,6 +413,12 @@ class BotSettings(BaseSettings):
     expression_learn_lookback_days: int = 7
     jargon_confirm_hits: int = 4
     jargon_inject_max: int = 10
+    # P2（S10-HUMAN-P2 H8）：人物观察卡（默认关；写/读都受 /记忆关闭 约束，
+    # /记忆删除 全部 连同卡片一起删——删除权是上线前置）
+    person_observe_enabled: bool = False
+    person_observe_max_chars: int = 100
+    person_observe_min_messages: int = 4
+    person_observe_lookback_days: int = 7
 
     model_config = SettingsConfigDict(
         env_file=".env",

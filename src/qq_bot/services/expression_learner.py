@@ -1,6 +1,6 @@
-"""表达学习管线（S10-HUMAN P1 H5/H6）：从群聊语料提取槽位化句式模板与黑话，
-确定性校验 + LLM 自检双闸后入库，运行时注入为纯 DB 读。
-证据原文不落库（仅 row_id + sha256 摘要）；模板/词条不进日志与指标。"""
+"""表达学习管线（S10-HUMAN P1 H5/H6 + P2 H8）：从群聊语料提取槽位化句式模板、
+黑话与人物观察卡，确定性校验 + LLM 自检双闸后入库，运行时注入为纯 DB 读。
+证据原文不落库（仅 row_id + sha256 摘要）；模板/词条/观察卡不进日志与指标。"""
 
 from __future__ import annotations
 
@@ -13,7 +13,11 @@ from qq_bot.config import BotSettings
 from qq_bot.observability import metrics, record_error
 from qq_bot.observability.logging import hash_id
 from qq_bot.services.chat_memory import ChatMemoryRow
-from qq_bot.services.memory_prompt import render_rows_with_aliases
+from qq_bot.services.memory_prompt import (
+    build_user_aliases,
+    render_rows_with_aliases,
+    substitute_reference_tokens,
+)
 from qq_bot.services.reliability import classify_exception
 
 _ALLOWED_SLOT = "对象"
@@ -101,6 +105,8 @@ class RoundSummary:
     jargon_hit: int = 0
     jargon_confirmed: int = 0
     llm_calls_used: int = 0
+    observations_updated: int = 0
+    observations_insufficient: int = 0
 
 
 EXTRACT_SYSTEM_PROMPT = (
@@ -123,6 +129,15 @@ REVIEW_SYSTEM_PROMPT = (
 JARGON_DEFINE_SYSTEM_PROMPT = (
     "你是QQ群黑话考据员。根据群消息上下文推断一个群内用语的准确含义，输出严格 JSON："
     '{"definition": "一句话释义"}。释义不超过30字，直说含义，不要复述原词，'
+    "不要输出任何其他内容。"
+)
+
+
+OBSERVE_SYSTEM_PROMPT = (
+    "你是QQ群观察员。根据给定的一位群友近期消息，用一句不超过100字的中文"
+    "概括TA的说话风格、常见话题或喜好（可能过时，仅供参考）。"
+    '输出严格 JSON：{"observation": "..."}（素材不足时输出空字符串）。'
+    "绝不包含QQ号、昵称、真名、联系方式、密码等隐私；没有可靠观察就返回空。"
     "不要输出任何其他内容。"
 )
 
@@ -213,6 +228,33 @@ def _parse_definition(payload: str | None) -> str | None:
         return None
     definition = definition.strip()
     return definition or None
+
+
+def _parse_observation(payload: str | None) -> str | None:
+    """解析观察卡正文：非 JSON / 非字符串 / 空串一律 None（保持无卡）。"""
+    if not payload or not payload.strip():
+        return None
+    try:
+        data = json.loads(_strip_fence(payload))
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    observation = data.get("observation")
+    if not isinstance(observation, str):
+        return None
+    return observation.strip() or None
+
+
+_OBSERVATION_FORBIDDEN_RE = re.compile(r"\d{5,}|https?://|u\d{4,}")
+
+
+def validate_observation(*, observation: str, max_chars: int) -> bool:
+    """确定性隐私/长度闸：超长、长数字串、URL、u 开头长串一律拒。"""
+    text = observation.strip()
+    if not text or len(text) > max_chars:
+        return False
+    return not bool(_OBSERVATION_FORBIDDEN_RE.search(text))
 
 
 def _evidence_digest(text: str) -> str:
@@ -341,6 +383,80 @@ async def _confirm_jargon_terms(
             metrics.JARGON_TOTAL.labels("confirm", "ok").inc()
 
 
+async def _observe_active_speakers(
+    *,
+    group_id: int,
+    batch: list[ChatMemoryRow],
+    memory_store,
+    settings: BotSettings,
+    complete,
+    quota,
+    summary: RoundSummary,
+) -> None:
+    """本批活跃发言者的观察卡更新（S10-HUMAN-P2 H8）。
+
+    只处理本批发言数达到 ``person_observe_min_messages`` 的真实群友
+    （is_ai_prompt 行不算素材：那些是 @ 机器人的提问，不是本人的群聊语料），
+    且未 ``/记忆关闭`` 的用户。一次 LLM 调用 → 确定性闸 → 滚动覆盖写卡；
+    素材不足的负卡也滚动覆盖，让过期观察不会一直读出去。任一失败只跳过
+    该用户，绝不影响其它用户与其它学习阶段。"""
+    if not settings.person_observe_enabled:
+        return
+    counts: dict[int, list[int]] = {}
+    for row in batch:
+        if row.is_ai_prompt:
+            continue
+        counts.setdefault(row.user_id, []).append(row.id)
+    for user_id, message_ids in counts.items():
+        if len(message_ids) < settings.person_observe_min_messages:
+            continue
+        try:
+            if not await memory_store.observations_enabled(group_id=group_id, user_id=user_id):
+                metrics.PERSON_OBSERVE_TOTAL.labels("store", "opted_out").inc()
+                continue
+        except Exception:
+            continue
+        alias = build_user_aliases([r for r in batch if r.user_id == user_id])
+        rendered = "\n".join(
+            substitute_reference_tokens(row.message_text, alias)
+            for row in batch
+            if row.user_id == user_id
+        )
+        content = await _llm(
+            complete,
+            settings=settings,
+            client=None,
+            quota=quota,
+            summary=summary,
+            system_prompt=OBSERVE_SYSTEM_PROMPT,
+            user_prompt=f"这位群友最近在本群说过：\n{rendered}",
+            json_mode=True,
+        )
+        observation = _parse_observation(content)
+        if observation is not None and not validate_observation(
+            observation=observation, max_chars=settings.person_observe_max_chars
+        ):
+            observation = None
+            metrics.PERSON_OBSERVE_TOTAL.labels("validate", "rejected").inc()
+        insufficient = observation is None
+        try:
+            await memory_store.upsert_person_observation(
+                group_id=group_id,
+                user_id=user_id,
+                observation=observation or "",
+                source_message_id=message_ids[-1],
+                insufficient=insufficient,
+            )
+        except Exception:
+            continue
+        if insufficient:
+            summary.observations_insufficient += 1
+            metrics.PERSON_OBSERVE_TOTAL.labels("store", "insufficient").inc()
+        else:
+            summary.observations_updated += 1
+            metrics.PERSON_OBSERVE_TOTAL.labels("store", "ok").inc()
+
+
 async def _process_batch(
     *,
     group_id: int,
@@ -352,7 +468,7 @@ async def _process_batch(
     summary: RoundSummary,
     client=None,
 ) -> RoundSummary:
-    """单批：合并提取 → 确定性校验 → 自检 → 入库 → 黑话确认。
+    """单批：合并提取 → 确定性校验 → 自检 → 入库 → 黑话确认 → 观察卡。
     任一步失败只短路本批，不影响其它批（调用方 for 循环保证）。"""
     summary.batches += 1
     summary.messages_scanned += len(batch)
@@ -483,6 +599,17 @@ async def _process_batch(
             )
         else:
             metrics.JARGON_TOTAL.labels("confirm", "skipped").inc()
+    # 人物观察卡（S10-HUMAN-P2 H8）：放在最后，任一前半段失败都不影响它，
+    # 它自身的失败也不影响已入库的表达/黑话。
+    await _observe_active_speakers(
+        group_id=group_id,
+        batch=batch,
+        memory_store=memory_store,
+        settings=settings,
+        complete=complete,
+        quota=quota,
+        summary=summary,
+    )
     return summary
 
 

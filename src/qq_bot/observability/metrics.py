@@ -245,6 +245,20 @@ _define(
     "Auto chat reaction outcomes",
     ["result"],
 )
+_define(
+    "PERSON_OBSERVE_TOTAL",
+    Counter,
+    "qq_bot_person_observe_total",
+    "Person observation card pipeline results",
+    ["stage", "result"],
+)
+_define(
+    "PERSON_OBSERVE_CARDS",
+    Gauge,
+    "qq_bot_person_observe_cards",
+    "Active observation cards per group",
+    ["group_hash"],
+)
 
 
 def set_metrics_enabled(enabled: bool) -> None:
