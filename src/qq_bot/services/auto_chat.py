@@ -544,6 +544,9 @@ _BATCH_SECTION_HEADER = (
 _EXPRESSION_SECTION_HEADER = "本群表达参考（仅供语气参考，禁止照抄原句，内容仍须回应最新消息）："
 _JARGON_SECTION_HEADER = "本群黑话参考（理解用，不确定含义就不要用）："
 
+# 人设示例回复（2026-10-22 人设方案 B）：与表达参考段同级的语气参考。
+_PERSONA_EXAMPLES_SECTION_HEADER = "你平时的说话感觉（学这个感觉，禁止照抄原句）："
+
 _PERSON_OBSERVE_SECTION_HEADER = "你对当前发言者的了解（可能过时，仅供参考，接个人梗时可用）："
 
 
@@ -572,6 +575,7 @@ def build_casual_user_prompt(
     expression_refs: Sequence[str] = (),
     jargon_refs: Sequence[str] = (),
     person_observe_refs: Sequence[str] = (),
+    persona_examples: Sequence[str] = (),
 ) -> str:
     lines = ["最近群消息（最后一条是最新消息）："]
     lines.extend(_render_rows(rows))
@@ -584,6 +588,9 @@ def build_casual_user_prompt(
     if jargon_refs:
         lines.append(_JARGON_SECTION_HEADER)
         lines.extend(f"- {text}" for text in jargon_refs)
+    if persona_examples:
+        lines.append(_PERSONA_EXAMPLES_SECTION_HEADER)
+        lines.extend(f"- {text}" for text in persona_examples)
     if recent_replies:
         lines.append("你最近发过的消息（换着花样说，禁止重复这些句式和用词）：")
         lines.extend(f"- {text}" for text in recent_replies)
@@ -648,16 +655,18 @@ def parse_gate_output(content: str | None) -> GateDecision | None:
 _SHARED_STATE = AutoChatState()
 
 # 回复多样性（S7-AUTO-P2-09）：每次回复随机注入一条风格指令，机械打散
-# 小模型的模式坍缩（语气词开头+😂收尾那种模板腔）
+# 小模型的模式坍缩（语气词开头+😂收尾那种模板腔）。修剪说明：原 8 条里
+# 5 条强制极短，统计上把大部分回复压成统一的超短碎片——那本身就是机器人
+# 特征。现为短/中/长混合，并补两条节奏类（疑问收尾/感叹收尾）。
 _STYLE_DIRECTIVES: tuple[str, ...] = (
     "这条回复不要使用任何表情",
-    "这条回复不要使用任何标点符号",
-    "这条回复控制在 12 个字以内",
     "这条回复不要用任何语气词开头",
-    "这条回复只发一个 3 到 8 个字的短语",
-    "这条回复控制在 12 个字以内，并且不要任何标点",
-    "这条回复就像随口嘟囔的一句碎碎念",
+    "这条回复控制在 12 个字以内",
     "这条回复只回两个字到五个字",
+    "这条回复就像随口嘟囔的一句碎碎念",
+    "这条回复可以说长一点，两三个短句也行",
+    "这条回复用一个疑问句收尾",
+    "这条回复用一个感叹号收尾",
 )
 
 # 每群最近自主发言（不含被 @ 问答），注入 prompt 让模型避开自己的旧句式
@@ -819,8 +828,17 @@ def _reply_issue(reply: str, trigger: str, recent: Sequence[str]) -> str | None:
 
 
 def _strip_excl_and_emoji_punct(text: str) -> str:
-    """自主回复禁感叹号（拆分语义由句号承担）；表情与文字之间不夹标点。"""
-    cleaned = text.replace("！", "。").replace("!", "。")
+    """自主回复感叹号收口：整条至多保留一个感叹号——连续感叹折叠为一个，
+    多处感叹只留最后一句的、其余转句号（真人会"！"但不会"！！！"，而从不
+    感叹又是另一种机器人特征）；表情与文字之间不夹标点。"""
+    parts = re.split(r"[!！]+", text)
+    if len(parts) == 2:
+        cleaned = parts[0] + "！" + parts[1]
+    elif len(parts) > 2:
+        cleaned = "。".join(parts[:-2] + [parts[-2]]) + "！" + parts[-1]
+    else:
+        cleaned = text
+    cleaned = re.sub(r"。+！", "！", cleaned)
     cleaned = re.sub(r"[\s，,、；。：]*(" + _EMOJI_RE + r")", r"\1", cleaned)
     cleaned = re.sub(r"(" + _EMOJI_RE + r")\s*[，,、；。：]", r"\1", cleaned)
     return cleaned
@@ -855,9 +873,11 @@ def _record_tune_entry(
     reply_parts: Sequence[str],
     group_id: int,
     typo_applied: bool = False,
+    model: str = "",
 ) -> None:
     """调优记录：上文与回复内容落 JSONL（仅本地 data/，不进日志/指标），
-    供部署者复盘哪些回复好、哪些差。失败绝不影响主流程。"""
+    供部署者复盘哪些回复好、哪些差。`model` 记请求的回复模型（fallback 未必
+    真用这个模型，结合 AI_FALLBACK 日志可判断）。失败绝不影响主流程。"""
     if not settings.auto_chat_tune_log_enabled:
         return
     try:
@@ -865,6 +885,7 @@ def _record_tune_entry(
             "ts": datetime.now(UTC).isoformat(),
             "group_id": group_id,
             "path": path,
+            "model": model,
             "trigger": trigger,
             "context": [
                 {
@@ -900,10 +921,17 @@ def shared_state() -> AutoChatState:
 
 
 def build_cold_user_prompt(
-    rows: Sequence[ChatMemoryRow], bot_reply_text: str, recent_replies: Sequence[str] = ()
+    rows: Sequence[ChatMemoryRow],
+    bot_reply_text: str,
+    recent_replies: Sequence[str] = (),
+    *,
+    persona_examples: Sequence[str] = (),
 ) -> str:
     lines = ["最近群消息（最后一条是最新消息）："]
     lines.extend(_render_rows(rows))
+    if persona_examples:
+        lines.append(_PERSONA_EXAMPLES_SECTION_HEADER)
+        lines.extend(f"- {text}" for text in persona_examples)
     if recent_replies:
         lines.append("你最近发过的消息（换着花样说，禁止重复这些句式和用词）：")
         lines.extend(f"- {text}" for text in recent_replies)
@@ -976,6 +1004,7 @@ def schedule_cold_check(
                                 rows,
                                 bot_reply_text,
                                 recent_replies=_recent_replies(group_id),
+                                persona_examples=settings.persona_example_list,
                             )
                             + f"\n风格要求：{style_directive(random.random)}"
                         ),
@@ -1016,6 +1045,7 @@ def schedule_cold_check(
                 context_rows=rows,
                 reply_parts=[reply],
                 group_id=group_id,
+                model=settings.auto_chat_reply_model or settings.ai_model,
             )
             await send([reply])
             _cold("ok")
@@ -1492,6 +1522,7 @@ async def run_auto_chat(
                             expression_refs=expression_refs,
                             jargon_refs=jargon_refs,
                             person_observe_refs=observe_refs,
+                            persona_examples=settings.persona_example_list,
                         )
                         + f"\n风格要求：{style_directive(rng)}"
                     ),
@@ -1540,6 +1571,7 @@ async def run_auto_chat(
                     expression_refs=expression_refs,
                     jargon_refs=jargon_refs,
                     person_observe_refs=observe_refs,
+                    persona_examples=settings.persona_example_list,
                 )
                 + f"\n风格要求：{style_directive(rng)}"
                 + "\n重写要求：你刚才的回复被拒绝（"
@@ -1624,6 +1656,7 @@ async def run_auto_chat(
         reply_parts=parts,
         group_id=group_id,
         typo_applied=typo_applied,
+        model=settings.auto_chat_reply_model or settings.ai_model,
     )
     await send(parts)
     # 表达使用回写（S10-HUMAN-P1-04）：仅生成路径采样到 id 且真的发出去了才记；

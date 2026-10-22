@@ -36,7 +36,7 @@ def test_casual_system_prompt_contains_persona_and_constraints() -> None:
     prompt = casual_system_prompt(_persona())
     assert "小洛" in prompt
     assert "说话简短随意" in prompt
-    assert "20" in prompt  # 短句长度约束
+    assert "十几个字" in prompt  # 长度弹性：短为主但允许变化
     assert "不要编造" in prompt
 
 
@@ -45,6 +45,7 @@ def test_casual_system_prompt_anti_formula_rules() -> None:
     assert "句末不加句号" in prompt  # 群聊没有句末标点
     assert "表情" in prompt  # 表情稀缺化
     assert "语气词" in prompt  # 语气词不得连用
+    assert "感叹号" in prompt  # 长度/感叹号是一上限而非一刀切
 
 
 def test_casual_system_prompt_works_without_name() -> None:

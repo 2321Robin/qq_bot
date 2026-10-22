@@ -722,6 +722,15 @@ def test_persona_alias_list_parses_and_strips() -> None:
     assert settings.persona_alias_list == ("小洛", "洛洛")
 
 
+def test_persona_example_list_parses_pipes_and_strips() -> None:
+    settings = BotSettings(persona_example_replies=" 试过 重启就好了 | 别说了 今晚就钓 |")
+    assert settings.persona_example_list == ("试过 重启就好了", "别说了 今晚就钓")
+
+
+def test_persona_example_list_empty_when_unset() -> None:
+    assert BotSettings().persona_example_list == ()
+
+
 def test_effective_persona_prompt_falls_back_to_default() -> None:
     from qq_bot.config import DEFAULT_PERSONA_PROMPT
 

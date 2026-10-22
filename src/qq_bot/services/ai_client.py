@@ -233,6 +233,13 @@ async def request_ai_reply(
         if not active_settings.has_ai_fallback_config():
             raise
         metrics.FALLBACKS.labels("ai").inc()
+        # 静默切换会让"实际在用哪个模型"变得不可见（部署者以为在用主模型），
+        # 这里必须留痕；只记模型名，不记任何密钥。
+        logger.warning(
+            "AI primary failed, serving with fallback: requested_model=%s fallback_model=%s",
+            active_settings.ai_model,
+            active_settings.ai_fallback_model,
+        )
         return await _call_provider(
             prompt,
             settings=active_settings,
@@ -297,9 +304,14 @@ async def request_completion(
         if not active_settings.has_ai_fallback_config():
             raise
         metrics.FALLBACKS.labels("ai").inc()
+        effective = active_settings.ai_fallback_model
+        logger.warning(
+            "AI primary failed, serving with fallback: requested_model=%s fallback_model=%s",
+            chosen_model,
+            effective,
+        )
         # 备用侧永远用 ai_fallback_model（与 _call_provider 一致）：
         # 显式指定的主侧模型（如 router 便宜模型）在备用商可能不存在。
-        effective = active_settings.ai_fallback_model
         return await _call_small_provider(
             _payload(effective),
             settings=active_settings,
@@ -607,6 +619,11 @@ async def request_model_turn(
         if provider != "primary" or not active_settings.has_ai_fallback_config():
             raise
         metrics.FALLBACKS.labels("ai").inc()
+        logger.warning(
+            "AI primary failed, serving with fallback: requested_model=%s fallback_model=%s",
+            active_settings.ai_model,
+            active_settings.ai_fallback_model,
+        )
         data = await _post_chat_completion(
             payload,
             settings=active_settings,

@@ -256,6 +256,20 @@ class TestPrompts:
         assert "用户A：今天好累" in prompt
         assert "接" in prompt
 
+    def test_casual_user_prompt_injects_persona_examples(self) -> None:
+        rows = [_row("在吗", user_id=2001)]
+        prompt = build_casual_user_prompt(
+            rows, persona_examples=("这波啊 这波是本鸡的舒适圈", "别说了 今晚就钓")
+        )
+        assert "你平时的说话感觉（学这个感觉，禁止照抄原句）：" in prompt
+        assert "- 这波啊 这波是本鸡的舒适圈" in prompt
+        assert "- 别说了 今晚就钓" in prompt
+
+    def test_casual_user_prompt_omits_persona_example_section_when_empty(self) -> None:
+        rows = [_row("在吗", user_id=2001)]
+        prompt = build_casual_user_prompt(rows)
+        assert "你平时的说话感觉" not in prompt
+
 
 class TestBatchRendering:
     def test_consecutive_same_sender_merged_as_streak(self) -> None:
@@ -542,6 +556,26 @@ async def test_happy_path_gate_pass_send_with_delay() -> None:
     assert len(gate_calls) == 1
     assert len(casual_calls) == 1
     assert casual_calls[0]["max_tokens"] == 100
+
+
+@pytest.mark.asyncio
+async def test_generation_and_cold_inject_persona_examples_from_settings() -> None:
+    """方案 B 接线：生成与冷场补话都从 settings 注入示例段（含可能的
+    重试路径——凡非决策器的 casual 调用都该带上）。"""
+    h = Harness(
+        ["在吗", "新活动开了"],
+        _run_settings(
+            persona_example_replies="这波啊 这波是本鸡的舒适圈|今天也是躺平的一天",
+            auto_chat_cold_daily_limit=3,
+        ),
+    )
+    await _run(h)
+    await h.drain_cold()
+    casual_calls = [c for c in h.completions if "决策器" not in c["system_prompt"]]
+    assert len(casual_calls) >= 2  # 至少：生成 + 冷场补话
+    for call in casual_calls:
+        assert "你平时的说话感觉" in call["user_prompt"]
+        assert "这波啊 这波是本鸡的舒适圈" in call["user_prompt"]
 
 
 @pytest.mark.asyncio
@@ -977,6 +1011,12 @@ class TestColdFollowup:
         # 冷场指令标识：Harness.completion 三分路由依赖该词
         assert "没有人回应" in prompt
 
+    def test_cold_user_prompt_injects_persona_examples(self) -> None:
+        rows = [_row("早", user_id=2001)]
+        prompt = build_cold_user_prompt(rows, "早呀", persona_examples=("今天也是躺平的一天",))
+        assert "你平时的说话感觉" in prompt
+        assert "- 今天也是躺平的一天" in prompt
+
     @pytest.mark.asyncio
     async def test_schedule_cold_check_skips_at_zero_limit(self) -> None:
         h = Harness(["聊会"], _run_settings(auto_chat_cold_daily_limit=0))
@@ -1164,8 +1204,14 @@ def test_artifact_regex_catches_reference_token() -> None:
 
 
 class TestExclAndEmojiPunct:
-    def test_exclamation_removed_with_clause_split(self) -> None:
-        assert _strip_excl_and_emoji_punct("冲！干就完了！") == "冲。干就完了。"
+    def test_multiple_exclamations_keep_last_only(self) -> None:
+        assert _strip_excl_and_emoji_punct("冲！干就完了！") == "冲。干就完了！"
+
+    def test_exclamation_run_collapses_to_one(self) -> None:
+        assert _strip_excl_and_emoji_punct("牛！！！") == "牛！"
+
+    def test_single_exclamation_survives(self) -> None:
+        assert _strip_excl_and_emoji_punct("牛！服不服") == "牛！服不服"
 
     def test_no_punct_between_text_and_emoji(self) -> None:
         assert _strip_excl_and_emoji_punct("没人理我，🌸😂") == "没人理我🌸😂"

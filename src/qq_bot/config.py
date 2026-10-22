@@ -356,6 +356,9 @@ class BotSettings(BaseSettings):
     persona_name: str = ""  # 昵称；同时用于点名匹配；空 = 点名退化为仅 @
     persona_aliases: str = ""  # 其他叫法，逗号分隔
     persona_prompt: str = ""  # 空 = DEFAULT_PERSONA_PROMPT
+    # 示例回复（2026-10-22 人设方案 B）：竖线分隔的 few-shot，注入 casual 用户
+    # prompt 作语气参考；空 = 不注入该段。
+    persona_example_replies: str = ""
     auto_chat_sample_rate: float = 0.2
     auto_chat_cooldown_seconds: float = 300.0
     auto_chat_hourly_limit: int = 25  # 热聊期豁免小时上限
@@ -832,6 +835,12 @@ class BotSettings(BaseSettings):
     @property
     def persona_alias_list(self) -> tuple[str, ...]:
         return tuple(alias.strip() for alias in self.persona_aliases.split(",") if alias.strip())
+
+    @property
+    def persona_example_list(self) -> tuple[str, ...]:
+        return tuple(
+            item.strip() for item in self.persona_example_replies.split("|") if item.strip()
+        )
 
     @property
     def effective_persona_prompt(self) -> str:
