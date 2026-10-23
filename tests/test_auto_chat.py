@@ -31,9 +31,11 @@ from qq_bot.services.auto_chat import (
     style_directive,
     typing_intervals,
     plusone_triggered,
+    truncate_at_sentence,
     _ARTIFACT_RE,
     _BATCH_SECTION_HEADER,
     _has_id_artifact,
+    _reply_issue,
     _strip_excl_and_emoji_punct,
 )
 from qq_bot.services.chat_memory import ChatMemoryRow
@@ -1117,28 +1119,110 @@ def test_build_casual_prompt_without_recent_replies_has_no_block() -> None:
     assert "换着花样" not in prompt
 
 
-# ---- 二期修复：逗号长句拆分为多条短消息（S7-AUTO-P2-10）----
+# ---- 分段重写（S10-HUMAN-P3-01）：只在句末标点处切，逗号留在条内 ----
 
 
 class TestSplitCasualReply:
-    def test_commas_split_into_parts(self) -> None:
-        assert split_casual_reply("哈哈，玩啊，不然来群里干嘛😂？") == [
-            "哈哈",
-            "玩啊",
-            "不然来群里干嘛😂？",
+    def test_commas_stay_inside_one_message(self) -> None:
+        assert split_casual_reply("哈哈，玩啊，不然来群里干嘛😂？", rng=lambda: 0.9) == [
+            "哈哈，玩啊，不然来群里干嘛😂？"
         ]
 
-    def test_max_parts_merges_tail_with_comma(self) -> None:
-        assert split_casual_reply("一，二，三，四，五") == ["一", "二", "三，四，五"]
+    def test_short_text_never_split(self) -> None:
+        assert split_casual_reply("一，二，三，四，五", rng=lambda: 0.0) == ["一，二，三，四，五"]
+        assert split_casual_reply("玩吗", rng=lambda: 0.0) == ["玩吗"]
 
-    def test_no_separator_single_part(self) -> None:
-        assert split_casual_reply("玩吗") == ["玩吗"]
+    def test_empty_and_punct_only(self) -> None:
+        assert split_casual_reply("", rng=lambda: 0.0) == []
+        assert split_casual_reply("，哈哈，", rng=lambda: 0.0) == ["哈哈"]
 
-    def test_empty_fragments_dropped(self) -> None:
-        assert split_casual_reply("，哈哈，") == ["哈哈"]
+    def test_sentence_punct_splits_when_long(self) -> None:
+        text = "本鸡今天去了湖边。然后钓了一下午。一条都没上。气死本鸡了。"
+        # 去空白 24 字 ≤ 25 → 至多 2 条；两个句末切点正好 2 段
+        assert split_casual_reply(text, rng=lambda: 0.9) == [
+            "本鸡今天去了湖边。",
+            "然后钓了一下午。一条都没上。气死本鸡了。",
+        ]
 
-    def test_period_and_semicolon_also_split(self) -> None:
-        assert split_casual_reply("冲。好；走") == ["冲", "好", "走"]
+    def test_long_text_caps_at_two_with_high_rng(self) -> None:
+        text = "第一句话比较长一些。第二句也长。第三句还在继续说。第四句终于说完了。"
+        assert split_casual_reply(text, rng=lambda: 0.9) == [
+            "第一句话比较长一些。",
+            "第二句也长。第三句还在继续说。第四句终于说完了。",
+        ]
+
+    def test_long_text_three_parts_is_low_probability(self) -> None:
+        text = "第一句话比较长一些。第二句也长。第三句还在继续说。第四句终于说完了。"
+        assert split_casual_reply(text, rng=lambda: 0.1) == [
+            "第一句话比较长一些。",
+            "第二句也长。",
+            "第三句还在继续说。第四句终于说完了。",
+        ]
+
+    def test_no_sentence_punct_stays_single(self) -> None:
+        text = "这波操作有点意思，本鸡直接看乐了，真是服了你们这群人"
+        assert split_casual_reply(text, rng=lambda: 0.0) == [text]
+
+    def test_newline_is_a_boundary(self) -> None:
+        text = "上半句还没有说完呢继续说下半句\n下半句是另一条消息"
+        parts = split_casual_reply(text, rng=lambda: 0.9)
+        assert parts == ["上半句还没有说完呢继续说下半句", "下半句是另一条消息"]
+
+
+class TestTruncateAtSentence:
+    def test_cuts_at_last_sentence_punct_within_window(self) -> None:
+        text = "第一句话。第二句话也到了。第三句太长被截掉"
+        out = truncate_at_sentence(text, 14)
+        assert out == "第一句话。第二句话也到了。"
+
+    def test_hard_cut_without_punct(self) -> None:
+        text = "这十几个字里一个句末标点都没有就一直往后数"
+        assert truncate_at_sentence(text, 10) == text[:10]
+
+    def test_shorter_than_limit_untouched(self) -> None:
+        assert truncate_at_sentence("短的", 45) == "短的"
+
+
+# ---- 短语级口头禅闸（S10-HUMAN-P3-01）----
+
+
+class TestReplyIssuePhraseRepeat:
+    def test_shared_catchphrase_is_repeat(self) -> None:
+        # 整句相似度 < 0.8，只有短语闸能拦住
+        assert _reply_issue("这波操作有点意思啊你们真行", "", ["这波操作有点意思"]) == "repeat"
+
+    def test_short_common_words_not_flagged(self) -> None:
+        assert _reply_issue("吃饭完再组队", "", ["你到底吃饭完了吗"]) is None
+
+    def test_unrelated_replies_pass(self) -> None:
+        assert _reply_issue("X9挺猛的", "", ["今天天气不错"]) is None
+
+
+@pytest.mark.asyncio
+async def test_length_guard_rewrites_then_truncates() -> None:
+    """长度护栏（S10-HUMAN-P3-01）：超限回复触发一次重写；重写仍超长则
+    句末截断兜底，最终发送不超过上限。"""
+    h = Harness(["随便聊聊"], _run_settings())
+    long_reply = (
+        "第一句就很长了。第二句继续说个没完。第三句还在继续往下说个不停。"
+        "第四句依然没有要停的意思。第五句终于说完了。"
+    )
+    seq = iter([long_reply, long_reply])
+
+    def completion():
+        async def fake(**kwargs) -> str:
+            h.completions.append(kwargs)
+            if "决策器" in kwargs["system_prompt"]:
+                return h.gate_content
+            return next(seq)
+
+        return fake
+
+    await _run(h, "随便聊聊", _completion=completion())
+    assert h.sent
+    assert len("".join(h.sent).replace(" ", "")) <= 45
+    casual_prompts = [c["user_prompt"] for c in h.completions if "决策器" not in c["system_prompt"]]
+    assert any("太长" in p for p in casual_prompts)
 
 
 class TestTypingIntervals:
@@ -1171,12 +1255,22 @@ class TestTypingIntervals:
 
 
 @pytest.mark.asyncio
-async def test_run_auto_chat_splits_comma_reply_into_messages() -> None:
+async def test_run_auto_chat_keeps_comma_reply_single_message() -> None:
+    """分段重写（S10-HUMAN-P3-01）：带逗号的短回复整条发送，不再拆三条。"""
     h = Harness(["聊会"], _run_settings(auto_chat_sample_rate=0.0))
     h.state.note_reply(1001, settings=h.settings)
     h.casual_content = "哈哈，玩啊，不然来群里干嘛😂？"
     await _run(h, raw_text="聊会")
-    assert h.sent == ["哈哈", "玩啊", "不然来群里干嘛😂？"]
+    assert h.sent == ["哈哈，玩啊，不然来群里干嘛😂？"]
+
+
+@pytest.mark.asyncio
+async def test_run_auto_chat_splits_long_reply_at_sentence_punct() -> None:
+    h = Harness(["聊会"], _run_settings(auto_chat_sample_rate=0.0))
+    h.state.note_reply(1001, settings=h.settings)
+    h.casual_content = "本鸡今天去了湖边。然后钓了一下午。一条都没上。气死本鸡了。"
+    await _run(h, raw_text="聊会")
+    assert h.sent == ["本鸡今天去了湖边。", "然后钓了一下午。", "一条都没上。气死本鸡了。"]
 
 
 # ---- 二期修复 S7-AUTO-P2-11：冷场条件/伪影/表情标点/+1/调优记录 ----
@@ -1321,7 +1415,7 @@ class TestAntiEcho:
 
         await _run(h, raw_text="破防了？称号自己领的还赖账", _completion=completion())
         assert calls["n"] == 2  # 回声触发一次重写
-        assert h.sent == ["换个说法", "这称号本来就是我领的"]  # 拆分：逗号 → 连发
+        assert h.sent == ["换个说法，这称号本来就是我领的"]  # 带逗号短句整条发送
 
     @pytest.mark.asyncio
     async def test_self_repeat_regenerated(self) -> None:

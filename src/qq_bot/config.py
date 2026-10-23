@@ -403,6 +403,9 @@ class BotSettings(BaseSettings):
     auto_chat_context_max_age_minutes: float = 30.0
     auto_chat_reply_temperature: float = 0.85  # 群友模式生成温度，偏高换多样性
     auto_chat_reply_model: str = ""  # 自主回复专用模型；空 = 复用 ai_model
+    # 回复长度护栏（S10-HUMAN-P3-01）：去空白字数超此值先重写一次（上限而非
+    # 一刀切，长度方差保留给生成端），重写仍超则句末截断兜底。0 = 关闭。
+    auto_chat_max_reply_chars: int = 45
     auto_chat_tune_log_enabled: bool = (
         True  # 记录自主回复上文+回复到 data/auto_chat_tune.jsonl 供复盘
     )

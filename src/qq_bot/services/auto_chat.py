@@ -763,16 +763,56 @@ def style_directive(rng: Callable[[], float]) -> str:
     return _STYLE_DIRECTIVES[int(rng() * len(_STYLE_DIRECTIVES)) % len(_STYLE_DIRECTIVES)]
 
 
-def split_casual_reply(text: str, *, max_parts: int = 3) -> list[str]:
-    """逗号长句 → 多条短消息（S7-AUTO-P2-10）：真人群聊连发几条短句，
-    而不是挤一句逗号长句。生成端约束对经济型模型不可靠，因此确定性拆分；
-    超出条数的尾段用逗号并回最后一条（用户接受逗号，反对的是长逗号链）。"""
-    parts = [part.strip() for part in re.split(r"[，,、；;。]+", text.strip()) if part.strip()]
-    if len(parts) <= max_parts:
+def _visible_len(text: str) -> int:
+    return len(re.sub(r"\s+", "", text))
+
+
+def truncate_at_sentence(text: str, max_chars: int) -> str:
+    """长度护栏兜底（S10-HUMAN-P3-01）：截到最后一个句末标点（含），
+    窗口内没有句末标点则硬切。只做截断，不改写内容。"""
+    window = text[:max_chars]
+    cut = 0
+    for index, char in enumerate(window):
+        if char in "。！？!?…~～\n":
+            cut = index + 1
+    if cut > 0:
+        return window[:cut].strip()
+    return window.rstrip()
+
+
+# 分段策略（S10-HUMAN-P3-01，重写 S7-AUTO-P2-10 的见逗号就切）：参考 MaiBot
+# response_splitter 与 QQ-agent "普通对话默认 1 条最多 2 条" 的口径——只在
+# 句末标点处切，逗号/顿号/分号留在条内；短句永不拆；三段是低概率而非常态。
+# 实测旧规则把人设后的长回复稳定拆成 3 条（tune log 三段占比 58%）。
+_SPLIT_NEVER_BELOW = 12  # 去空白字数 ≤ 此值：整条发送，永不拆
+_SPLIT_TWO_BELOW = 25  # ≤ 此值：至多 2 条；更长：2 条常态、3 条低概率
+_THREE_PART_RATE = 0.2
+_SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[。！？!?…~～])\s*|\n+")
+
+
+def split_casual_reply(text: str, *, rng: Callable[[], float], max_parts: int = 3) -> list[str]:
+    """长回复 → 少量短消息。只在句末标点（。！？…~与换行）处切，一条
+    带逗号的消息不再被拆成几条；去空白 ≤12 字整条发送；≤25 字至多 2 条；
+    更长时 2 条常态、3 条低概率（rng < 0.2）；超出上限的尾段并回最后一条
+    （各段自带句末标点，不再补逗号）。"""
+    text = text.strip()
+    if not text:
+        return []
+    visible = _visible_len(text)
+    if visible <= _SPLIT_NEVER_BELOW:
+        cleaned = text.strip("，,、")
+        return [cleaned] if cleaned else []
+    parts = [part.strip("，,、") for part in _SENTENCE_BOUNDARY_RE.split(text)]
+    parts = [part for part in parts if part]
+    if len(parts) <= 1:
         return parts
-    merged = parts[: max_parts - 1]
-    merged.append("，".join(parts[max_parts - 1 :]))
-    return merged
+    cap = 2
+    if visible > _SPLIT_TWO_BELOW and rng() < _THREE_PART_RATE:
+        cap = 3
+    cap = min(cap, max_parts)
+    if len(parts) <= cap:
+        return parts
+    return [*parts[: cap - 1], "".join(parts[cap - 1 :])]
 
 
 def typing_intervals(
@@ -795,6 +835,10 @@ def typing_intervals(
 
 _PUNCT_NORM_RE = re.compile(r"[\s，,、；;。.!！?？~～…\"'「」『』（）()·]+")
 
+# 口头禅短语闸阈值（S10-HUMAN-P3-01）：去标点后共享 ≥5 连续字判 repeat。
+# 低于 5 会误伤"不知道啊"这类常用短语的正常复用。
+_PHRASE_REPEAT_MIN = 5
+
 
 # 引用令牌 u{id}（S10-HUMAN-P0-06）也算伪影：万一漏进回复文本，重写兜底
 _ARTIFACT_RE = re.compile(r"用户\d{4,}|u\d{5,}|(?<!\d)\d{5,11}(?!\d)")
@@ -813,7 +857,9 @@ def _norm_text(text: str) -> str:
 
 def _reply_issue(reply: str, trigger: str, recent: Sequence[str]) -> str | None:
     """自主回复质量闸（S7-AUTO-P2-12）：返回拒绝原因，None 表示通过。
-    echo = 几乎复述触发句；repeat = 与自己最近发言高度雷同。"""
+    echo = 几乎复述触发句；repeat = 与自己最近发言高度雷同，或共享
+    ≥5 连续字（去标点后）的口头禅短语——整句相似度抓不住"这波操作
+    有点意思"式复读（S10-HUMAN-P3-01，实测 9 条回复内出现 4 次）。"""
     norm_reply = _norm_text(reply)
     if not norm_reply:
         return "empty"
@@ -822,7 +868,11 @@ def _reply_issue(reply: str, trigger: str, recent: Sequence[str]) -> str | None:
         return "echo"
     for prev in recent:
         norm_prev = _norm_text(prev)
-        if norm_prev and SequenceMatcher(None, norm_reply, norm_prev).ratio() >= 0.8:
+        if not norm_prev:
+            continue
+        matcher = SequenceMatcher(None, norm_reply, norm_prev, autojunk=False)
+        blocks = matcher.get_matching_blocks()
+        if matcher.ratio() >= 0.8 or max(block.size for block in blocks) >= _PHRASE_REPEAT_MIN:
             return "repeat"
     return None
 
@@ -1560,6 +1610,42 @@ async def run_auto_chat(
         if _has_id_artifact(reply):
             _metric("generate", "artifact")
             return
+        # 长度护栏（S10-HUMAN-P3-01）：超限先带上下文重写一次（上限而非一刀切，
+        # 长度方差保留给生成端），重写仍超则句末截断兜底。实测 glm-4-flash 在
+        # 人设锚定后平均 41 字/条、最长 83 字，群友连续两天抱怨"怎么话这么长"。
+        max_chars = settings.auto_chat_max_reply_chars
+        if max_chars > 0 and _visible_len(reply) > max_chars:
+            _metric("generate", "too_long")
+            try:
+                shortened = (
+                    await complete(
+                        system_prompt=casual_system_prompt(persona),
+                        user_prompt=(
+                            build_casual_user_prompt(
+                                rows,
+                                recent_replies=_recent_replies(group_id),
+                                batch_rows=_batch_as_rows(items, group_id) if is_batch else (),
+                                expression_refs=expression_refs,
+                                jargon_refs=jargon_refs,
+                                person_observe_refs=observe_refs,
+                                persona_examples=settings.persona_example_list,
+                            )
+                            + "\n重写要求：你刚才的回复太长了。用 20 个字以内重说一遍，"
+                            "只说最想说的那句，直接输出那句话。"
+                        ),
+                        settings=settings,
+                        client=client,
+                        model=settings.auto_chat_reply_model or settings.ai_model,
+                        max_tokens=60,
+                        temperature=settings.auto_chat_reply_temperature,
+                    )
+                ).strip()
+            except Exception:
+                shortened = ""
+            if shortened and not _has_id_artifact(shortened):
+                reply = _strip_excl_and_emoji_punct(shortened)
+            if _visible_len(reply) > max_chars:
+                reply = truncate_at_sentence(reply, max_chars)
         issue = _reply_issue(reply, trigger_text, _recent_replies(group_id))
         if issue is not None:
             retry_model = settings.auto_chat_reply_model or settings.ai_model
@@ -1598,6 +1684,9 @@ async def run_auto_chat(
             if issue is not None:
                 _metric("generate", "repeat")
                 return
+            # 重试产物同样受长度护栏约束：只做确定性截断，不再花一次重写
+            if max_chars > 0 and _visible_len(reply) > max_chars:
+                reply = truncate_at_sentence(reply, max_chars)
     if any(word in reply for word in settings.auto_chat_sensitive_word_list):
         _metric("generate", "filtered")
         return
@@ -1634,7 +1723,7 @@ async def run_auto_chat(
         _request_completion=_request_completion,
         _sleep=_cold_sleep,
     )
-    parts = [reply] if plusone else split_casual_reply(reply)
+    parts = [reply] if plusone else split_casual_reply(reply, rng=rng)
     path_label = (
         "nicknamed"
         if category is TriggerCategory.NICKNAMED
