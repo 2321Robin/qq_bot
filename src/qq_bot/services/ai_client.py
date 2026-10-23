@@ -99,6 +99,15 @@ class AsyncPostClient(Protocol):
         raise NotImplementedError
 
 
+def _thinking_payload_extra(settings: BotSettings) -> dict[str, Any]:
+    """思考模型兼容（2026-10-24 glm-5.3-flash 主链切换）：思考 token 计入
+    max_tokens，会吃光决策门/生成链路的小预算正文；ai_thinking_disabled 时
+    携带 thinking.type=disabled（实测可关，DeepSeek 忽略该字段）。"""
+    if not settings.ai_thinking_disabled:
+        return {}
+    return {"thinking": {"type": "disabled"}}
+
+
 def build_chat_payload(
     prompt: str,
     settings: BotSettings,
@@ -173,6 +182,7 @@ def build_chat_payload(
         ],
         "temperature": 0.7,
         "max_tokens": 600,
+        **_thinking_payload_extra(settings),
     }
 
 
@@ -286,6 +296,7 @@ async def request_completion(
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        payload.update(_thinking_payload_extra(active_settings))
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
         return payload
@@ -596,6 +607,7 @@ async def request_model_turn(
         "temperature": 0.2 if response_format else 0.7,
         "max_tokens": 600,
     }
+    payload.update(_thinking_payload_extra(active_settings))
     if tools:
         payload["tools"] = tools
     if tool_choice:

@@ -940,3 +940,49 @@ def test_build_chat_payload_without_persona_keeps_default_style_line() -> None:
     system = payload["messages"][0]["content"]
     assert "像 QQ 群友聊天" in system
     assert "说话风格" in system  # 内置默认风格仍然注入
+
+
+# ---- 思考模型兼容（2026-10-24 glm-5.3-flash 主链切换）----
+
+
+def test_build_chat_payload_thinking_disabled_flag() -> None:
+    default_payload = build_chat_payload("你好", BotSettings(ai_model="test-model"))
+    assert "thinking" not in default_payload
+
+    disabled = build_chat_payload(
+        "你好", BotSettings(ai_model="test-model", ai_thinking_disabled=True)
+    )
+    assert disabled["thinking"] == {"type": "disabled"}
+
+
+@pytest.mark.asyncio
+async def test_request_completion_thinking_disabled_reaches_payload() -> None:
+    settings = BotSettings(ai_api_key="secret", ai_model="test-model", ai_thinking_disabled=True)
+    client = FakeClient(FakeResponse(_completion_payload("x")))
+
+    reply = await ai_client.request_completion(
+        system_prompt="sys",
+        user_prompt="usr",
+        settings=settings,
+        client=client,
+        max_tokens=100,
+    )
+
+    assert reply == "x"
+    assert client.calls[0]["json"]["thinking"] == {"type": "disabled"}
+
+
+@pytest.mark.asyncio
+async def test_request_completion_without_flag_omits_thinking_param() -> None:
+    settings = BotSettings(ai_api_key="secret", ai_model="test-model")
+    client = FakeClient(FakeResponse(_completion_payload("x")))
+
+    await ai_client.request_completion(
+        system_prompt="sys",
+        user_prompt="usr",
+        settings=settings,
+        client=client,
+        max_tokens=100,
+    )
+
+    assert "thinking" not in client.calls[0]["json"]

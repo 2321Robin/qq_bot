@@ -221,6 +221,11 @@ class BotSettings(BaseSettings):
     ai_fallback_api_key: str = Field(default="", repr=False)
     ai_fallback_base_url: str = "https://open.bigmodel.cn/api/paas/v4"
     ai_fallback_model: str = "glm-4-flash"
+    # glm-5.3 系默认强制思考（官方文档 thinking.type 仅支持 enabled），且思考
+    # token 计入 max_tokens——实测思考会吃光决策门/生成链路的小预算正文
+    # （max_tokens 100/120 时 reasoning 99/115、正文为空）。true 时所有 AI 请求
+    # 携带 thinking.type=disabled（实测可关；DeepSeek 对该字段宽容不报错）。
+    ai_thinking_disabled: bool = False
 
     chat_memory_path: str = "data/chat_memory.sqlite3"
     chat_memory_retention_days: int = 3
