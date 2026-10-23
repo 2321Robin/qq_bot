@@ -27,61 +27,9 @@
 
 三条独立链路：**消息对话**（QQ ↔ 机器人）、**数据生产**（BWiki → 校验 → 分发）与**观测归档**（日志/指标/链路 → 报告）。
 
-```mermaid
-flowchart LR
-    subgraph P1[链路一：消息对话]
-        User[QQ 群用户] --> NapCat[NapCatQQ]
-        NapCat -->|OneBot v11<br/>反向 WebSocket| NB[NoneBot2 事件层]
-        NB --> Cmd[commands / roco / scheduler]
-        NB --> Mem[memory_commands 记忆命令]
-        NB --> Ops[ops 配额 / 最近故障]
-        NB --> AI[ai_chat 编排<br/>request_id / 配额准入]
-        AI --> Quota[quota 限流 + 费用预算]
-        AI -->|AGENT_ENABLED=true| Agent[Agent 层<br/>router 四类 route / orchestrator<br/>5 个 Tool / 证据校验 / Token 预算]
-        Agent --> KB[roco_knowledge 知识增强]
-        Agent --> MemSvc[layered_memory 近期/摘要/偏好]
-        Agent --> Src[search Tavily]
-        Agent --> LLM[ai_client 主备模型]
-        AI -.AGENT_ENABLED=false.-> KB
-        AI -.旧链路.-> MemSvc
-        AI -.旧链路.-> Src
-        AI -.旧链路.-> LLM
-        KB --> Details[(roco_pet_details<br/>618 份 JSON)]
-        KB --> Index[(roco_search.sqlite3<br/>n-gram 倒排)]
-        MemSvc --> SQLite[(chat_memory.sqlite3<br/>migration 1-3 + quota)]
-        Quota --> SQLite
-        Src --> Tavily[Tavily API]
-        LLM --> Primary[主模型 API]
-        LLM -.故障转移.-> Fallback[备用模型 API]
-        AI --> Send[onebot_send 分类重试]
-        Send --> NapCat
-        Send --> Cards[(预生成图卡 PNG)]
-    end
+![系统架构总览：三条链路](docs/assets/architecture/architecture-overview.png)
 
-    subgraph P2[链路二：数据生产]
-        Wiki[BWiki 源] --> Fetch[fetch_roco_pet_detail 增量抓取]
-        Fetch --> Refresh[refresh_roco_data<br/>校验 / 隔离 / 质量门禁 / manifest<br/>差异报告 / 图卡增量 / 搜索索引]
-        Refresh --> Package[package_roco_data<br/>tar.gz + sha256SUMS]
-        Package --> Carrier[私有载体<br/>对象存储私有桶]
-        Carrier --> Download[download_roco_data<br/>哈希校验 + 原子落盘]
-        Download --> Details
-    end
-
-    subgraph P3[链路三：观测归档]
-        Events[运行时事件] --> Log[结构化日志<br/>JSON 白名单 / 哈希 ID]
-        Events --> Met[Prometheus 指标<br/>/metrics 同端口]
-        Events --> Trc[OTel 语义 span<br/>六阶段 trace_id]
-        Log -.同源.-> Met
-        Trc -.同 request_id.-> Log
-        Health[health 插件<br/>/healthz /readyz] --> Checks[逐项 checks<br/>database / data_version / onebot]
-        Met --> Collect[collect_run_metrics.py<br/>聚合 + 哈希维度]
-        Collect --> Rep[(data/reports<br/>metrics-*.json + metrics-state.json)]
-    end
-
-    Refresh -.门禁失败不发布.-> Fetch
-    Quota -.写入.-> Log
-    Met -.采集.-> Collect
-```
+各链路细节见对应章节：[AI 对话链路](#ai-对话能力)、[自主群聊插话管线](#自主群聊插话s7-autoauto_chat_enabledtrue)、[数据生产链路](#数据管道阶段-3)、[观测归档链路](#可观测性阶段-4)。
 
 ## 功能
 
@@ -314,7 +262,7 @@ ws://127.0.0.1:8081/onebot/v11/ws
 .\\venv\Scripts\python -m pytest --cov=qq_bot --cov-branch --cov-report=term-missing
 ```
 
-当前自动化测试 **889 个**（2026-08-03 硬化收尾后实测），Ruff 静态检查通过；分支覆盖率门槛 `fail_under` 由首次实测基线设定（当前 82%，见 `pyproject.toml`），未经明确评审不得下调。
+当前自动化测试 **1474 个**（2026-10-23 实测，`pytest --collect-only`；2026-08-03 硬化收尾时为 889 个），Ruff 静态检查通过；分支覆盖率门槛 `fail_under` 由首次实测基线设定（当前 82%，见 `pyproject.toml`），未经明确评审不得下调。
 
 开发前建议启用 pre-commit（含 ruff 与 Gitleaks 秘密扫描）：
 

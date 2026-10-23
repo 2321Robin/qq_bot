@@ -18,12 +18,13 @@ htmlcov/
 # Local runtime state (container smoke tests, ad-hoc databases)
 container-data/
 
-# docs/ — mostly ignored; only public-release markdown and screenshots tracked
+# docs/ — mostly ignored; only public-release markdown, screenshots and architecture diagrams tracked
 docs/*
 !docs/public-release/
 !docs/assets/
 docs/assets/*
 !docs/assets/screenshots/
+!docs/assets/architecture/
 
 data/chat_memory.sqlite3*
 # Game data — not redistributable

@@ -53,6 +53,25 @@ When the bot is running, it may process the following categories of data:
     observation card and any summaries related to those messages. It does
     **not** delete other users' messages, cards or data, and there is no
     mechanism that affects data of users other than the invoker.
+- **Auto-chat tune log (default on):** when `AUTO_CHAT_ENABLED=true` and
+  `AUTO_CHAT_TUNE_LOG_ENABLED=true` (the default), every autonomous reply
+  appends one JSON line to `data/auto_chat_tune.jsonl` containing the
+  trigger text, the recent context window (raw group id, raw user ids and
+  message bodies) and the bot's reply. This file is a local review
+  artifact for the deployer: it never enters logs, metrics, spans or the
+  public repository (git-ignored), and it is not sent anywhere. Set
+  `AUTO_CHAT_TUNE_LOG_ENABLED=false` to stop writing, or delete the file
+  to remove past entries.
+- **Learning-derived tables (opt-in):** when the expression-learning
+  feature is enabled (`EXPRESSION_LEARN_ENABLED=true`), the learning
+  round stores derived data in the chat SQLite database — sentence
+  **templates** with an evidence digest and jargon terms with inferred
+  definitions (migration 4 `expressions`/`jargon`, per group), plus the
+  person observation cards described above (migration 5). Templates,
+  digests and definitions are derived summaries, not message bodies;
+  the underlying messages remain subject to the normal retention days.
+  `/表达 禁用` and `/黑话 禁用` deactivate entries; removing the rows
+  requires a SQLite client.
 - **Logs contain no message bodies.** Runtime logs record only counts
   and category-level outcomes (retry attempts, circuit-breaker state,
   per-group failure counts); message text, raw QQ group/user numbers,
@@ -134,7 +153,9 @@ proxied by their self-hosted 60s instance.
   2. Delete the SQLite file at `CHAT_MEMORY_PATH` (default
      `data/chat_memory.sqlite3`), or delete individual rows using a
      SQLite client.
-  3. Optionally delete the `logs/` directory for runtime logs.
+  3. Delete `data/auto_chat_tune.jsonl` if the tune log was enabled
+     (or disable `AUTO_CHAT_TUNE_LOG_ENABLED` to stop future writes).
+  4. Optionally delete the `logs/` directory for runtime logs.
 - There is currently no mechanism to notify users when their data is
   deleted or to respond to data subject access requests automatically.
 
