@@ -240,6 +240,10 @@ class BotSettings(BaseSettings):
     ai_qa_vision_max_images: int = 2  # 单条消息最多携带图片数，超出丢弃并计数
     # 带图请求的读超时（图片下载 + 视觉推理比纯文本慢；仅覆盖带图请求）
     ai_qa_vision_timeout_seconds: float = 90.0
+    # 跨消息图片回忆（S11-VISION-01 补丁）：群友习惯"先发表情包再 @ 说话"，
+    # @消息本身不带图。收到带图消息时进程内记住图片源，@问答链自己没带图时
+    # 回捞 TTL 内同群最近一张；0 = 关闭。只存内存，重启即空。
+    ai_qa_vision_recall_seconds: float = 300.0
     # @问答回复可发表情：模型在回复里插 [发图:ID]/[发脸:名字] 标记，插件
     # 确定性解析后发送；与自主插话共用本地表情包库（库为空时通道自然不生效）
     ai_qa_sticker_enabled: bool = True
@@ -810,6 +814,13 @@ class BotSettings(BaseSettings):
     def validate_ai_qa_vision_timeout_seconds(cls, value: float) -> float:
         if value <= 0:
             raise ValueError("ai_qa_vision_timeout_seconds must be greater than 0")
+        return value
+
+    @field_validator("ai_qa_vision_recall_seconds")
+    @classmethod
+    def validate_ai_qa_vision_recall_seconds(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("ai_qa_vision_recall_seconds must be non-negative")
         return value
 
     @field_validator("ai_briefing_ai_provider")

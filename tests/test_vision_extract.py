@@ -221,3 +221,88 @@ def test_face_id_for_name_rejects_outside_whitelist() -> None:
 def test_face_whitelist_all_resolvable() -> None:
     for name in QA_FACE_WHITELIST:
         assert face_id_for_name(name) is not None, name
+
+
+# ---- 近期图片回忆（S11-VISION-01 跨消息补丁）----
+
+
+class _FakeClock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_recall_returns_recent_urls_within_ttl() -> None:
+    from qq_bot.services.vision_extract import ImageRecallBuffer
+
+    clock = _FakeClock()
+    buffer = ImageRecallBuffer(clock=clock)
+    buffer.remember(1001, ["https://img.example/a.jpg"])
+
+    assert buffer.recall(1001, ttl_seconds=300) == ("https://img.example/a.jpg",)
+
+
+def test_recall_expires_after_ttl() -> None:
+    from qq_bot.services.vision_extract import ImageRecallBuffer
+
+    clock = _FakeClock()
+    buffer = ImageRecallBuffer(clock=clock)
+    buffer.remember(1001, ["https://img.example/a.jpg"])
+    clock.now += 301
+
+    assert buffer.recall(1001, ttl_seconds=300) == ()
+
+
+def test_recall_isolated_per_group_and_prefers_latest() -> None:
+    from qq_bot.services.vision_extract import ImageRecallBuffer
+
+    clock = _FakeClock()
+    buffer = ImageRecallBuffer(clock=clock)
+    buffer.remember(1001, ["https://img.example/old.jpg"])
+    clock.now += 10
+    buffer.remember(1001, ["https://img.example/new.jpg"])
+    buffer.remember(2002, ["https://img.example/other.jpg"])
+
+    assert buffer.recall(1001, ttl_seconds=300) == ("https://img.example/new.jpg",)
+    assert buffer.recall(2002, ttl_seconds=300) == ("https://img.example/other.jpg",)
+    assert buffer.recall(3003, ttl_seconds=300) == ()
+
+
+def test_recall_keeps_only_max_per_group() -> None:
+    from qq_bot.services.vision_extract import ImageRecallBuffer
+
+    clock = _FakeClock()
+    buffer = ImageRecallBuffer(clock=clock, max_per_group=2)
+    buffer.remember(1001, ["https://img.example/1.jpg"])
+    clock.now += 1
+    buffer.remember(1001, ["https://img.example/2.jpg"])
+    clock.now += 1
+    buffer.remember(1001, ["https://img.example/3.jpg"])
+
+    # 最旧的 1 被挤出；回捞返回最近一条
+    assert buffer.recall(1001, ttl_seconds=300) == ("https://img.example/3.jpg",)
+    clock.now += 1
+    assert buffer.recall(1001, ttl_seconds=1.5) in (
+        ("https://img.example/3.jpg",),
+        ("https://img.example/2.jpg",),
+    )
+
+
+def test_recall_disabled_with_zero_ttl() -> None:
+    from qq_bot.services.vision_extract import ImageRecallBuffer
+
+    buffer = ImageRecallBuffer(clock=_FakeClock())
+    buffer.remember(1001, ["https://img.example/a.jpg"])
+
+    assert buffer.recall(1001, ttl_seconds=0) == ()
+
+
+def test_remember_ignores_empty_urls() -> None:
+    from qq_bot.services.vision_extract import ImageRecallBuffer
+
+    buffer = ImageRecallBuffer(clock=_FakeClock())
+    buffer.remember(1001, [])
+
+    assert buffer.recall(1001, ttl_seconds=300) == ()

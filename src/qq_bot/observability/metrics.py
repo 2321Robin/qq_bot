@@ -277,7 +277,7 @@ _define(
     "AI_VISION",
     Counter,
     "qq_bot_ai_vision_total",
-    "Vision request accounting (S11-VISION-01): request/degraded/fallback_text/dropped",
+    "Vision request accounting (S11-VISION-01): request/degraded/fallback_text/dropped/recalled",
     ["result"],
 )
 _define(

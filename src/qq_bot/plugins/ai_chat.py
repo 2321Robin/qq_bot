@@ -66,6 +66,7 @@ from qq_bot.services.vision_extract import (
     extract_vision_inputs,
     face_id_for_name,
     parse_reply_parts,
+    shared_image_recall,
     strip_reply_markers,
 )
 
@@ -159,6 +160,11 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
             )
             if vision.dropped_images:
                 metrics.AI_VISION.labels("dropped").inc(vision.dropped_images)
+            # 跨消息图片回忆（S11-VISION-01 补丁）：群友习惯"先发表情包再 @
+            # 说话"——带图消息先进缓冲，@问答链自己没带图时回捞 TTL 内最近
+            # 一张（见 QA 分支）。只存进程内存，重启即空。
+            if vision.images:
+                shared_image_recall().remember(event.group_id, vision.images)
             # 记忆/批次文本用占位：历史轮次知道"这里有一张图/一个表情"，
             # 原始图片不入库（隐私红线与 token 成本，V2 设计决策）。
             attachment_text = ("[图片]" if vision.image_segments else "") + "".join(
@@ -432,6 +438,19 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                     prompt_for_model = prompt
                     if vision.face_tags:
                         prompt_for_model = f"{prompt} {' '.join(vision.face_tags)}"
+                    # 本条消息没带图时回捞最近一张（跨消息"先发图再 @"场景）。
+                    request_images = vision.images
+                    if not request_images and settings.ai_qa_vision_recall_seconds > 0:
+                        recalled = shared_image_recall().recall(
+                            event.group_id,
+                            ttl_seconds=settings.ai_qa_vision_recall_seconds,
+                        )
+                        if recalled:
+                            request_images = recalled
+                            metrics.AI_VISION.labels("recalled").inc()
+                            prompt_for_model = (
+                                f"{prompt_for_model} （你刚发的那张图已附在本条消息里）"
+                            )
                     reply = await request_ai_reply(
                         prompt_for_model,
                         settings=settings,
@@ -439,7 +458,7 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                         search_context=search_context,
                         chat_context=chat_context,
                         roco_context=roco_context,
-                        images=vision.images,
+                        images=request_images,
                         extra_system_prompt=_qa_sticker_hint(settings),
                     )
         except AIReplyError:

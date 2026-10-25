@@ -10,7 +10,7 @@ from prometheus_client import REGISTRY
 from qq_bot.config import BotSettings
 from qq_bot.plugins import ai_chat as ai_chat_plugin
 from qq_bot.runtime import RuntimeStateError
-from qq_bot.services import quote_reference, roco_knowledge
+from qq_bot.services import quote_reference, roco_knowledge, vision_extract
 from qq_bot.services.chat_memory import ChatMemoryRow
 from qq_bot.services.sticker_library import Sticker
 from pathlib import Path
@@ -110,6 +110,13 @@ def _fresh_shared_quote_lru(monkeypatch: pytest.MonkeyPatch) -> None:
     """引用接线（S10-HUMAN-P0-06）使用进程级共享 LRU 单例；每个用例前重置，
     避免跨用例的消息登记残留影响引用解析结果。"""
     monkeypatch.setattr(quote_reference, "_SHARED_LRU", None)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_shared_image_recall(monkeypatch: pytest.MonkeyPatch) -> None:
+    """跨消息图片回忆（S11-VISION-01）同样走进程级单例；每例重置，避免
+    前面用例 remember 的图片被后面用例 recall 到。"""
+    monkeypatch.setattr(vision_extract, "_SHARED_IMAGE_RECALL", None)
 
 
 def memory_row(
@@ -3069,3 +3076,136 @@ def test_qa_sticker_hint_lists_candidates(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert "[发图:dog]" in hint or "发图" in hint
     assert "一只狗" in hint
     assert "呲牙" in hint
+
+
+# ---- 跨消息图片回忆接线（S11-VISION-01 补丁）----
+
+
+@pytest.mark.asyncio
+async def test_ai_chat_recalls_recent_group_image_when_at_message_has_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """表情包先发一条、@机器人再发一条（本条无图）：回捞最近一张随请求发出。"""
+    from qq_bot.services.vision_extract import ImageRecallBuffer
+
+    captured: dict = {}
+    recall_buffer = ImageRecallBuffer()
+
+    async def fake_request_ai_reply(prompt, **kwargs) -> str:
+        captured["prompt"] = prompt
+        captured["images"] = kwargs.get("images")
+        return "看到了"
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+    monkeypatch.setattr(ai_chat_plugin, "shared_image_recall", lambda: recall_buffer)
+
+    # 第一条：普通带图消息（非 @）
+    await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
+        FakeEvent("", [FakeImageSegment("https://multimedia.example/meme.jpg")])
+    )
+    # 第二条：@机器人纯文本
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
+            FakeEvent(
+                "看得到吗", [FakeAtSegment(2880000001), FakeTextSegment("看得到吗")], to_me=True
+            )
+        )
+
+    assert captured["images"] == ("https://multimedia.example/meme.jpg",)
+    assert "已附在本条消息里" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_ai_chat_recall_disabled_keeps_text_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RECALL_SECONDS=0：不回捞，行为与纯文本版一致。"""
+    from qq_bot.services.vision_extract import ImageRecallBuffer
+
+    captured: dict = {}
+    recall_buffer = ImageRecallBuffer()
+
+    async def fake_request_ai_reply(prompt, **kwargs) -> str:
+        captured["images"] = kwargs.get("images")
+        return "看不到"
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(
+            allowed_group_ids="1001", ai_api_key="secret", ai_qa_vision_recall_seconds=0
+        ),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+    monkeypatch.setattr(ai_chat_plugin, "shared_image_recall", lambda: recall_buffer)
+
+    await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
+        FakeEvent("", [FakeImageSegment("https://multimedia.example/meme.jpg")])
+    )
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
+            FakeEvent(
+                "看得到吗", [FakeAtSegment(2880000001), FakeTextSegment("看得到吗")], to_me=True
+            )
+        )
+
+    assert captured["images"] == ()
+
+
+@pytest.mark.asyncio
+async def test_ai_chat_own_image_wins_over_recall(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """@消息自带图时用本条的图，不回捞旧图。"""
+    from qq_bot.services.vision_extract import ImageRecallBuffer
+
+    captured: dict = {}
+    recall_buffer = ImageRecallBuffer()
+    recall_buffer.remember(1001, ["https://multimedia.example/old.jpg"])
+
+    async def fake_request_ai_reply(prompt, **kwargs) -> str:
+        captured["images"] = kwargs.get("images")
+        return "新图"
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+    monkeypatch.setattr(ai_chat_plugin, "shared_image_recall", lambda: recall_buffer)
+
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
+            FakeEvent(
+                "看这张",
+                [
+                    FakeAtSegment(2880000001),
+                    FakeTextSegment("看这张"),
+                    FakeImageSegment("https://multimedia.example/fresh.jpg"),
+                ],
+                to_me=True,
+            )
+        )
+
+    assert captured["images"] == ("https://multimedia.example/fresh.jpg",)
