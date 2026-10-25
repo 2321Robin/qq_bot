@@ -507,11 +507,85 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                 client=http_client,
             )
 
-        await finish_with_send_errors_logged(
-            ai_chat, _build_outgoing_reply(reply, settings=settings)
+        await _send_qa_reply(
+            event,
+            reply,
+            settings=settings,
         )
     finally:
         tracer.end_span(total_span)
+
+
+def _split_qa_reply(reply: str, *, max_parts: int = 3) -> list[str]:
+    """把模型回复按换行拆成多个气泡（S11-QA-VOICE-01 嘴硬节奏）。
+
+    真人群友先甩一句短的再补理由——挤在一个气泡里读不出节奏。模型被教
+    成用换行分段；超过 max_parts 段时溢出并回最后一段（长回答不炸屏）。
+    无换行时返回单段，行为与历史版本一致。"""
+    stripped = reply.strip()
+    if not stripped:
+        return []
+    parts = [part.strip() for part in stripped.split("\n") if part.strip()]
+    if len(parts) <= 1:
+        return [stripped]
+    if len(parts) <= max_parts:
+        return parts
+    return [*parts[: max_parts - 1], "\n".join(parts[max_parts - 1 :])]
+
+
+async def _send_qa_reply(
+    event: GroupMessageEvent,
+    reply: str,
+    *,
+    settings: BotSettings,
+) -> None:
+    """@问答回复的发送出口：多段时逐气泡发送（带打字节奏的间隔，碎片
+    走裸 API、失败静默——丢失可接受且内容不进日志），最后一段走 finish
+    的完整重试/熔断链路。单段时与历史路径逐字节等价。"""
+    parts = _split_qa_reply(reply)
+    if not parts:
+        # 空回复保底走历史路径（finish 语义不变，空内容由下游自行处置）
+        await finish_with_send_errors_logged(
+            ai_chat, _build_outgoing_reply(reply, settings=settings)
+        )
+        return
+    if len(parts) == 1:
+        await finish_with_send_errors_logged(
+            ai_chat, _build_outgoing_reply(parts[0], settings=settings)
+        )
+        return
+    bot = None
+    try:
+        bot = _connected_onebot_bot()
+    except Exception:
+        bot = None  # runtime/nonebot 未就绪：退回单条 finish，不阻塞回答
+    if bot is None:
+        # 无连接 bot：退回单条（finish 能兜住文本发送）
+        await finish_with_send_errors_logged(
+            ai_chat, _build_outgoing_reply("\n".join(parts), settings=settings)
+        )
+        return
+    if settings.auto_chat_typing_enabled:
+        intervals = typing_intervals(
+            parts,
+            base=settings.auto_chat_typing_base_seconds,
+            per_char=settings.auto_chat_typing_per_char,
+            max_seconds=settings.auto_chat_typing_max_seconds,
+            rng=random.random,
+        )
+    else:
+        intervals = [random.uniform(0.6, 1.4) for _ in parts[:-1]]
+    for index, part in enumerate(parts[:-1]):
+        try:
+            outgoing = _build_outgoing_reply(part, settings=settings)
+            if outgoing:
+                await bot.send_group_msg(group_id=event.group_id, message=outgoing)
+        except Exception:
+            pass  # 碎片丢失可接受；也不把消息内容写进日志（隐私白名单）
+        await asyncio.sleep(intervals[index])
+    await finish_with_send_errors_logged(
+        ai_chat, _build_outgoing_reply(parts[-1], settings=settings)
+    )
 
 
 def _build_outgoing_reply(reply: str, *, settings: BotSettings) -> Message:

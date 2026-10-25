@@ -3434,3 +3434,109 @@ def test_qa_sticker_hint_does_not_promise_unknown_faces(
     hint = ai_chat_plugin._qa_sticker_hint(BotSettings(ai_qa_sticker_enabled=True))
     assert "[发脸:#编号]" not in hint
     assert "发不出来" in hint
+
+
+# ---- QA 回复多气泡（S11-QA-VOICE-01：嘴硬拆两句才有节奏）----
+
+
+def test_split_qa_reply_newlines_to_bubbles() -> None:
+    assert ai_chat_plugin._split_qa_reply("烧啥烧\n额度就是留着这时候用的，不烧白不烧") == [
+        "烧啥烧",
+        "额度就是留着这时候用的，不烧白不烧",
+    ]
+
+
+def test_split_qa_reply_single_line_unchanged() -> None:
+    assert ai_chat_plugin._split_qa_reply("就一句话") == ["就一句话"]
+
+
+def test_split_qa_reply_caps_at_three_parts() -> None:
+    reply = "一\n二\n三\n四\n五"
+    parts = ai_chat_plugin._split_qa_reply(reply)
+    assert len(parts) == 3
+    assert parts[0] == "一"
+    assert "\n" in parts[-1]  # 溢出并回最后一段
+
+
+def test_split_qa_reply_drops_blank_lines() -> None:
+    assert ai_chat_plugin._split_qa_reply("\n 甲 \n\n 乙 \n") == ["甲", "乙"]
+
+
+@pytest.mark.asyncio
+async def test_qa_reply_multi_bubble_sends_parts_with_delay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """换行分段 → 前段裸 API 发送、末段走 finish；两段都过发图解析。"""
+    sent_fragments: list = []
+    finished: list = []
+
+    class FakeBot:
+        async def send_group_msg(self, *, group_id: int, message):
+            sent_fragments.append(message)
+
+    async def fake_request_ai_reply(prompt, **kwargs) -> str:
+        return "烧啥烧\n本鸡额度就是留着这时候用的"
+
+    async def fake_finish(message: object) -> None:
+        finished.append(message)
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+    monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: FakeBot())
+
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
+            FakeEvent("问一句", [FakeAtSegment(2880000001), FakeTextSegment("问一句")], to_me=True)
+        )
+
+    assert len(sent_fragments) == 1
+    assert sent_fragments[0].extract_plain_text() == "烧啥烧"
+    assert len(finished) == 1
+    assert finished[0].extract_plain_text() == "本鸡额度就是留着这时候用的"
+
+
+@pytest.mark.asyncio
+async def test_qa_reply_single_part_goes_straight_to_finish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """无换行回复：与历史路径一致，直接 finish 单条。"""
+    finished: list = []
+
+    class FakeBot:
+        async def send_group_msg(self, *, group_id: int, message):
+            raise AssertionError("single-part reply must not use raw send")
+
+    async def fake_request_ai_reply(prompt, **kwargs) -> str:
+        return "单条回复"
+
+    async def fake_finish(message: object) -> None:
+        finished.append(message)
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+    monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: FakeBot())
+
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
+            FakeEvent("问一句", [FakeAtSegment(2880000001), FakeTextSegment("问一句")], to_me=True)
+        )
+
+    assert not sent_fragments_guard() and finished[0].extract_plain_text() == "单条回复"
+
+
+def sent_fragments_guard() -> list:
+    return []
