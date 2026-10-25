@@ -1,15 +1,18 @@
 """引用回复解析（S10-HUMAN-P0 H4）：优先 OneBot reply 段自带扩展字段
-（NapCat/go-cqhttp 惯例的 qq/text），退回进程内 LRU；都不可得返回 None
-（调用方降级为普通文本）。标记格式 `u{id}` 只进本地 chat 存储，
-渲染时由 memory_prompt 替换为匿名别名，绝不出现在日志/指标/发送文本。"""
+（NapCat/go-cqhttp 惯例的 qq/text），退回进程内 LRU；S11-QUOTE-01 起再加
+第三级——按消息 id 调 OneBot get_msg 回查（fetch 闭包由调用方注入，本模块
+保持 bot 无关可测）。都不可得返回 None（调用方降级为普通文本）。标记格式
+`u{id}` 只进本地 chat 存储，渲染时由 memory_prompt 替换为匿名别名，
+绝不出现在日志/指标/发送文本。"""
 
 from __future__ import annotations
 
 import re
 import time
 from collections import OrderedDict
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol, Sequence
+from typing import Any, Protocol, Sequence
 
 _REF_TEXT_MAX = 30
 _LRU_CAPACITY = 200
@@ -56,6 +59,44 @@ def parse_reply_reference(
 
 def render_quoted_raw_text(raw_text: str, ref: QuoteReference) -> str:
     return f"回复 [引用 u{ref.ref_user_id}:{ref.ref_text}]：{raw_text}"
+
+
+async def resolve_reply_reference(
+    segments: Sequence[Any],
+    *,
+    self_id: int,
+    lru: _LruLike | None,
+    fetch: Callable[[int], Awaitable[tuple[int, str] | None]] | None = None,
+) -> QuoteReference | None:
+    """三级解析（S11-QUOTE-01）：扩展字段 → LRU → fetch 回查，任一级命中
+    即返回。前两级复用 parse_reply_reference；都失败且有 fetch 闭包时，取
+    第一个 reply 段的消息 id 回查原文（NapCat 实际不填 qq/text 扩展字段，
+    LRU 又有重启即空/30 分钟/200 条的天花板——get_msg 是唯一可靠来源）。
+    fetch 失败/无结果一律 None，调用方降级为无引用，绝不拖累主流程。"""
+    ref = parse_reply_reference(segments, self_id=self_id, lru=lru)
+    if ref is not None or fetch is None:
+        return ref
+    for segment in segments:
+        if getattr(segment, "type", None) != "reply":
+            continue
+        data = getattr(segment, "data", {}) or {}
+        try:
+            message_id = int(data.get("id"))
+        except (TypeError, ValueError):
+            continue
+        fetched: tuple[int, str] | None
+        try:
+            fetched = await fetch(message_id)
+        except Exception:
+            return None
+        if fetched is None:
+            return None
+        user_id, text = fetched
+        try:
+            return QuoteReference(ref_user_id=int(user_id), ref_text=_clean_text(text))
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 class QuoteReferenceLRU:
