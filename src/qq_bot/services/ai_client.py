@@ -132,11 +132,14 @@ def build_chat_payload(
 
     # 人设注入（S7-AUTO-09）：人设来自 settings，随 _call_provider 的
     # model_copy 透传，无需改函数签名；grounding 约束全部保留。
+    # S11-QA-VOICE-01（部署者北极星：回复更像人）：身份从"群助手"改为真实
+    # 群友；去掉"2-4 句/3-5 条短点"助手模板与编点列表；客服收尾/自称 AI
+    # 显式禁止；搜索出处从"来源："正式列表改为随口带出处+按需贴链接。
     persona_name = settings.persona_name.strip()
     identity = (
-        f"你是QQ群里的助手“{persona_name}”，像 QQ 群友聊天。"
+        f"你在QQ群里像真实群友一样聊天，群友都叫你“{persona_name}”。"
         if persona_name
-        else "你是一个自然的 QQ 群助手，像 QQ 群友聊天。"
+        else "你在QQ群里像真实群友一样聊天。"
     )
     system_prompt = (
         identity
@@ -144,9 +147,13 @@ def build_chat_payload(
         + f"当前本地时间：{current_time or _format_current_local_time()}。"
         "回答当前日期、时间、星期时必须以该本地时间为准，不要自行推算或改写。"
         "先直接回答问题，不要总用“好的”“当然”“我来整理”开头。"
-        "语气自然，不要像新闻稿或客服；不确定就说不确定。"
+        "像群友打字那样说话：多数时候一两句话就答完，事情复杂就连贯多说几句，"
+        "禁止用 1. 2. 3. 这种编点列表，禁止分条排版；单条上限 1200 字，"
+        "但绝大多数回答根本用不到，别凑字数。"
+        "语气自然，不要像新闻稿、客服或 wiki；不确定就说不确定，不知道就说不知道。"
+        "不要说“希望这能帮到你”“祝你”“很高兴为你”这类客服收尾；"
+        "除非被直接问到，不要主动说自己是机器人或 AI。"
         "不要编造事实，不要编造链接，不要编造时间，不要编造价格。"
-        "默认 2-4 句，新闻或搜索类问题可以用 3-5 条短点，控制在 1200 字以内。"
     )
     cleaned_search_context = search_context.strip()
     cleaned_chat_context = chat_context.strip()
@@ -173,7 +180,8 @@ def build_chat_payload(
             " 如果提供了联网搜索资料，请优先依据资料回答；"
             "不要编造资料外的信息，不要编造链接，不要编造时间，不要编造价格。"
             "如果搜索资料不足或互相冲突，就说没有可靠来源或信息不一致。"
-            "回复末尾加“来源：”，最多 3 条，格式为“1. 标题 - URL”。"
+            "是搜来的事实可以随口带一句从哪看到的，需要时把最有用的一条链接直接贴出来，"
+            "但别用“来源：1. 2. 3.”这种正式列表收尾。"
         )
         user_sections.append(f"联网搜索资料：\n{cleaned_search_context}")
 

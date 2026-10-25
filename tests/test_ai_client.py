@@ -117,7 +117,7 @@ def test_build_chat_payload_limits_reply_length() -> None:
     payload = build_chat_payload("今天新闻", settings)
 
     assert payload["max_tokens"] == 1200
-    assert "控制在 1200 字以内" in payload["messages"][0]["content"]
+    assert "上限 1200 字" in payload["messages"][0]["content"]
 
 
 def test_build_chat_payload_uses_natural_group_chat_style() -> None:
@@ -126,9 +126,20 @@ def test_build_chat_payload_uses_natural_group_chat_style() -> None:
     payload = build_chat_payload("今天新闻", settings)
 
     system_prompt = payload["messages"][0]["content"]
-    assert "像 QQ 群友聊天" in system_prompt
+    assert "像真实群友一样聊天" in system_prompt
     assert "直接回答" in system_prompt
     assert "不要总用“好的”" in system_prompt
+
+
+def test_build_chat_payload_bans_list_and_service_closers() -> None:
+    """S11-QA-VOICE-01（部署者北极星：回复更像人）：@问答禁编点列表、禁客服
+    收尾、不主动自称机器人/AI——长短像群友打字。"""
+    payload = build_chat_payload("今天新闻", BotSettings(ai_model="test-model"))
+    system_prompt = payload["messages"][0]["content"]
+    assert "禁止用 1. 2. 3. 这种编点列表" in system_prompt
+    assert "不要说“希望这能帮到你”" in system_prompt
+    assert "不要主动说自己是机器人或 AI" in system_prompt
+    assert "别凑字数" in system_prompt
 
 
 def test_build_chat_payload_requires_source_section_with_search_context() -> None:
@@ -141,8 +152,8 @@ def test_build_chat_payload_requires_source_section_with_search_context() -> Non
     )
 
     system_prompt = payload["messages"][0]["content"]
-    assert "末尾加“来源：”" in system_prompt
-    assert "最多 3 条" in system_prompt
+    assert "随口带一句从哪看到的" in system_prompt
+    assert "别用“来源：1. 2. 3.”这种正式列表收尾" in system_prompt
     assert "不要编造链接" in system_prompt
 
 
@@ -938,7 +949,7 @@ def test_build_chat_payload_injects_persona_when_configured() -> None:
 def test_build_chat_payload_without_persona_keeps_default_style_line() -> None:
     payload = build_chat_payload("你好", BotSettings(ai_model="test-model"))
     system = payload["messages"][0]["content"]
-    assert "像 QQ 群友聊天" in system
+    assert "像真实群友一样聊天" in system
     assert "说话风格" in system  # 内置默认风格仍然注入
 
 
