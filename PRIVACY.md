@@ -123,6 +123,12 @@ When the bot is running, it may process the following categories of data:
   configured AI model provider (e.g., OpenAI, ZhiPu AI) over HTTPS.
   Which messages are included depends on the chat memory query and
   the user's explicit reference ("参考最近 N 条", "@某人", etc.).
+  When the triggering message is a quote-reply (引用回复), the quoted
+  message's body is also sent along with the question (S11-QUOTE-02):
+  it is resolved through the reply segment's extension fields, an
+  in-process LRU, or a local OneBot `get_msg` recall (message id only,
+  no external transmission), and rendered with the same nickname/letter
+  aliases so raw user ids still never enter the prompt.
   In agent mode (`AGENT_ENABLED=true`), the transmitted payload is the
   user prompt plus the token-budgeted memory layers (recent messages,
   summary, preference) and local knowledge selected by the Router; the
