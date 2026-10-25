@@ -2728,7 +2728,7 @@ async def test_ai_chat_search_gate_searches_with_model_query(
     with pytest.raises(FinishCalled):
         await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 评价一下kimi k3.1pro"))  # type: ignore[arg-type]
 
-    assert gate_calls and gate_calls[0]["max_tokens"] == 60
+    assert gate_calls and gate_calls[0]["max_tokens"] == 128
     assert gate_calls[0]["json_mode"] is True
 
 

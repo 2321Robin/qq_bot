@@ -563,7 +563,7 @@ async def test_happy_path_gate_pass_send_with_delay() -> None:
     casual_calls = [c for c in h.completions if "决策器" not in c["system_prompt"]]
     assert len(gate_calls) == 1
     assert len(casual_calls) == 1
-    assert casual_calls[0]["max_tokens"] == 100
+    assert casual_calls[0]["max_tokens"] == 256
 
 
 @pytest.mark.asyncio

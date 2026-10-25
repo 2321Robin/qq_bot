@@ -1096,7 +1096,7 @@ def schedule_cold_check(
                         settings=settings,
                         client=client,
                         model=settings.auto_chat_reply_model or settings.ai_model,
-                        max_tokens=100,
+                        max_tokens=256,
                         temperature=settings.auto_chat_reply_temperature,
                     )
                 ).strip()
@@ -1487,7 +1487,7 @@ async def run_auto_chat(
                 settings=settings,
                 client=client,
                 model=settings.router_model,
-                max_tokens=120,
+                max_tokens=300,
                 json_mode=True,
             )
         except Exception as exc:
@@ -1633,7 +1633,7 @@ async def run_auto_chat(
                     settings=settings,
                     client=client,
                     model=settings.auto_chat_reply_model or settings.ai_model,
-                    max_tokens=100,
+                    max_tokens=256,
                     temperature=settings.auto_chat_reply_temperature,
                 )
 
@@ -1691,7 +1691,7 @@ async def run_auto_chat(
                         settings=settings,
                         client=client,
                         model=settings.auto_chat_reply_model or settings.ai_model,
-                        max_tokens=60,
+                        max_tokens=256,
                         temperature=settings.auto_chat_reply_temperature,
                     )
                 ).strip()
@@ -1727,7 +1727,7 @@ async def run_auto_chat(
                         settings=settings,
                         client=client,
                         model=retry_model,
-                        max_tokens=100,
+                        max_tokens=256,
                         temperature=settings.auto_chat_reply_temperature,
                     )
                 ).strip()

@@ -335,7 +335,7 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                     settings=settings,
                     client=http_client,
                     model=settings.router_model,
-                    max_tokens=60,
+                    max_tokens=128,
                     json_mode=True,
                 )
                 intent = parse_search_intent(gate_content)

@@ -137,7 +137,7 @@ def build_chat_payload(
         "先直接回答问题，不要总用“好的”“当然”“我来整理”开头。"
         "语气自然，不要像新闻稿或客服；不确定就说不确定。"
         "不要编造事实，不要编造链接，不要编造时间，不要编造价格。"
-        "默认 2-4 句，新闻或搜索类问题可以用 3-5 条短点，控制在 600 字以内。"
+        "默认 2-4 句，新闻或搜索类问题可以用 3-5 条短点，控制在 1200 字以内。"
     )
     cleaned_search_context = search_context.strip()
     cleaned_chat_context = chat_context.strip()
@@ -181,7 +181,7 @@ def build_chat_payload(
             {"role": "user", "content": user_content},
         ],
         "temperature": 0.7,
-        "max_tokens": 600,
+        "max_tokens": 1200,
         **_thinking_payload_extra(settings),
     }
 
@@ -271,7 +271,7 @@ async def request_completion(
     settings: BotSettings | None = None,
     client: AsyncPostClient | None = None,
     model: str = "",
-    max_tokens: int = 256,
+    max_tokens: int = 512,
     temperature: float = 0.7,
     json_mode: bool = False,
 ) -> str:
@@ -605,7 +605,7 @@ async def request_model_turn(
     payload: dict[str, Any] = {
         "messages": messages,
         "temperature": 0.2 if response_format else 0.7,
-        "max_tokens": 600,
+        "max_tokens": 1200,
     }
     payload.update(_thinking_payload_extra(active_settings))
     if tools:
