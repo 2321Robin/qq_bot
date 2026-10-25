@@ -43,9 +43,28 @@ async def test_version_command_replies_with_current_version(
 
     monkeypatch.setattr(commands, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
     monkeypatch.setattr(commands, "get_version", lambda: "9.8.7")
+    monkeypatch.setattr(commands, "get_commit", lambda: None)
     monkeypatch.setattr(commands.version_command, "finish", fake_finish)
 
     with pytest.raises(FinishCalled) as exc_info:
         await commands.handle_version(FakeEvent())  # type: ignore[arg-type]
 
     assert exc_info.value.message == "当前版本：9.8.7"
+
+
+@pytest.mark.asyncio
+async def test_version_command_appends_commit_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(commands, "get_settings", lambda: BotSettings(allowed_group_ids="1001"))
+    monkeypatch.setattr(commands, "get_version", lambda: "0.2.0")
+    monkeypatch.setattr(commands, "get_commit", lambda: "8f39936")
+    monkeypatch.setattr(commands.version_command, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled) as exc_info:
+        await commands.handle_version(FakeEvent())  # type: ignore[arg-type]
+
+    assert exc_info.value.message == "当前版本：0.2.0（8f39936）"

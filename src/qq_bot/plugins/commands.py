@@ -5,7 +5,7 @@ from qq_bot.config import get_settings
 from qq_bot.observability import metrics
 from qq_bot.services.help_text import build_help_text
 from qq_bot.services.onebot_send import finish_with_send_errors_logged
-from qq_bot.version import get_version
+from qq_bot.version import get_commit, get_version
 
 
 help_command = on_command("help", aliases={"帮助"}, priority=5, block=True)
@@ -33,7 +33,8 @@ async def handle_version(event: GroupMessageEvent) -> None:
 
     metrics.COMMANDS.labels("version").inc()
 
-    await finish_with_send_errors_logged(
-        version_command,
-        f"当前版本：{get_version()}",
-    )
+    version_text = f"当前版本：{get_version()}"
+    commit = get_commit()
+    if commit:
+        version_text += f"（{commit}）"
+    await finish_with_send_errors_logged(version_command, version_text)
