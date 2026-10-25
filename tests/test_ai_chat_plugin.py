@@ -2610,9 +2610,11 @@ async def test_quoted_reply_with_ai_prefix_still_explicit_command(
         await ai_chat_plugin.handle_ai_chat(event)  # type: ignore[arg-type]
 
     prompt = captured["prompt"]
-    assert prompt == "帮我看看这个"
+    # S11-QUOTE-02：引用内容按昵称别名渲染进 prompt（模型不再盲答引用），
+    # u{id} 令牌与 QQ 号依旧绝不出现——隐私红线不变，只是换了渲染层。
+    assert prompt == "回复 [引用 用户A:上分]：帮我看看这个"
     assert "u12345" not in prompt
-    assert "[引用" not in prompt
+    assert "12345" not in prompt
     # 存储侧仍带标记：引用上下文保留给本地存储与后续渲染
     assert written[0]["message_text"] == "回复 [引用 u12345:上分]：ai 帮我看看这个"
 
@@ -2621,8 +2623,9 @@ async def test_quoted_reply_with_ai_prefix_still_explicit_command(
 async def test_quoted_reply_addressed_to_bot_prompt_has_no_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Fix Round 1 回归 B：reply + @bot（to_me）走显式应答路径；提示词绝不
-    携带原始 u{id} 令牌（QQ 号经模型回显进群聊即隐私边界破防）。"""
+    """Fix Round 1 回归 B（S11-QUOTE-02 修订）：reply + @bot（to_me）走显式
+    应答路径；提示词现在携带昵称渲染的引用内容，但 u{id} 令牌与原始 QQ 号
+    绝不出现（QQ 号经模型回显进群聊即隐私边界破防）。"""
     captured: dict = {}
 
     async def fake_request_ai_reply(
@@ -2664,9 +2667,9 @@ async def test_quoted_reply_addressed_to_bot_prompt_has_no_token(
         await ai_chat_plugin.handle_ai_chat(event)  # type: ignore[arg-type]
 
     prompt = captured["prompt"]
-    assert prompt == "帮我看看这个"
+    assert prompt == "回复 [引用 用户A:上分]：帮我看看这个"
     assert "u12345" not in prompt
-    assert "[引用" not in prompt
+    assert "12345" not in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -3267,6 +3270,99 @@ async def test_recalled_image_note_attributes_current_user(
         context_rows=[],
     )
     assert "当前提问的用户自己刚发的" in note
+
+
+# ---- @问答引用前缀 + get_msg 回查（S11-QUOTE-01/02）----
+
+
+def test_qa_quote_prefix_renders_nickname_no_qq_digits() -> None:
+    """引用内容按上下文同一套昵称渲染进 QA prompt，QQ 号绝不出现。"""
+    ref = quote_reference.QuoteReference(ref_user_id=2002, ref_text="上一把太离谱了")
+    row = ChatMemoryRow(
+        id=1,
+        group_id=1001,
+        user_id=2002,
+        message_text="上一把太离谱了",
+        created_at="",
+        is_ai_prompt=False,
+        ai_reply="",
+    )
+    prefix = ai_chat_plugin._qa_quote_prefix(ref, [row], {2002: "大肥鱼"})
+    assert prefix == "回复 [引用 大肥鱼:上一把太离谱了]："
+    assert "2002" not in prefix
+
+
+def test_qa_quote_prefix_letter_fallback_aligned_with_context() -> None:
+    """无昵称回落字母：被引用者排在上下文行之后，字母序与上下文渲染一致不串位。"""
+    ref = quote_reference.QuoteReference(ref_user_id=3000, ref_text="原文")
+    row = ChatMemoryRow(
+        id=1,
+        group_id=1001,
+        user_id=2001,
+        message_text="占位",
+        created_at="",
+        is_ai_prompt=False,
+        ai_reply="",
+    )
+    prefix = ai_chat_plugin._qa_quote_prefix(ref, [row], None)
+    assert prefix.startswith("回复 [引用 用户B:原文]")
+
+
+def test_qa_quote_prefix_empty_text_degrades_to_note() -> None:
+    """引用纯图/取不到文字：降级为说明句，模型不编引用内容。"""
+    ref = quote_reference.QuoteReference(ref_user_id=2002, ref_text="")
+    prefix = ai_chat_plugin._qa_quote_prefix(ref, [], {2002: "大肥鱼"})
+    assert "大肥鱼" in prefix
+    assert "不要编造引用内容" in prefix
+
+
+def test_qa_quote_prefix_none_ref_is_empty() -> None:
+    assert ai_chat_plugin._qa_quote_prefix(None, [], None) == ""
+
+
+def test_plain_text_from_onebot_message_segment_array() -> None:
+    raw = [
+        {"type": "text", "data": {"text": "上半句"}},
+        {"type": "face", "data": {"id": "1"}},
+        {"type": "text", "data": {"text": "下半句"}},
+    ]
+    assert ai_chat_plugin._plain_text_from_onebot_message(raw) == "上半句下半句"
+
+
+def test_plain_text_from_onebot_message_cq_string() -> None:
+    assert ai_chat_plugin._plain_text_from_onebot_message("[CQ:image,file=x.jpg]看这个") == "看这个"
+
+
+async def test_quote_fetcher_calls_get_msg(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeBot:
+        async def call_api(self, api: str, **kwargs):
+            assert api == "get_msg"
+            return {
+                "message_id": kwargs["message_id"],
+                "sender": {"user_id": 2002},
+                "message": [{"type": "text", "data": {"text": "被引用的原话"}}],
+            }
+
+    monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: FakeBot())
+    fetch = ai_chat_plugin._quote_message_fetcher()
+    assert fetch is not None
+    assert await fetch(77) == (2002, "被引用的原话")
+
+
+async def test_quote_fetcher_none_without_bot(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: None)
+    assert ai_chat_plugin._quote_message_fetcher() is None
+
+
+async def test_quote_fetcher_swallows_api_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeBot:
+        async def call_api(self, api: str, **kwargs):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: FakeBot())
+    fetch = ai_chat_plugin._quote_message_fetcher()
+    assert fetch is not None
+    assert await fetch(77) is None
 
 
 @pytest.mark.asyncio

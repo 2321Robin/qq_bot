@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 import asyncio
 import random
+import re
 from collections.abc import Mapping, Sequence
 from types import SimpleNamespace
 from pathlib import Path
@@ -51,6 +52,12 @@ from qq_bot.services.nicknames import NicknameDirectory
 from qq_bot.services.onebot_send import finish_with_send_errors_logged
 from qq_bot.services.sticker_library import Sticker, StickerStore
 from qq_bot.services.prompt import extract_ai_prompt
+from qq_bot.services.quote_reference import (
+    QuoteReference,
+    render_quoted_raw_text,
+    resolve_reply_reference,
+    shared_quote_lru,
+)
 from qq_bot.services.quota import quota_scope
 from qq_bot.services.reliability import classify_exception
 from qq_bot.services.search import (
@@ -187,27 +194,25 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                 half_life=settings.auto_chat_interest_half_life,
             )
 
-            # 引用接线（S10-HUMAN-P0-06 H4 + Fix Round 1）：先登记本条消息供
-            # 后续引用回查，再解析 reply 段。引用自己 → quoted_self 必回旁路
-            # （不渲染标记）；引用他人 → 渲染 u{id} 标记进 stored_text，只有
-            # 本地 chat 存储与 auto 管道吃标记文本（渲染层由 memory_prompt
-            # 替换为匿名别名，绝不出现在日志/指标/发送文本）。命令/提问提取
-            # 继续用未加标记的 raw_text：reply + "ai " 前缀仍是显式命令，被 @
-            # 时提示词不携带 u{id}（防止 QQ 号经模型回显进群聊）。
+            # 引用接线（S10-HUMAN-P0-06 H4 + S11-QUOTE-01）：先登记本条消息供
+            # 后续引用回查，再按三级解析 reply 段（扩展字段→LRU→get_msg 回查）。
+            # 引用自己 → quoted_self 必回旁路（不渲染标记）；引用他人 → 渲染
+            # u{id} 标记进 stored_text，只有本地 chat 存储与 auto 管道吃标记
+            # 文本（渲染层由 memory_prompt 替换为匿名别名，绝不出现在日志/
+            # 指标/发送文本）。命令/提问提取继续用未加标记的 raw_text：reply +
+            # "ai " 前缀仍是显式命令；被 @ 时由 _qa_quote_prefix 按昵称渲染
+            # 引用内容进最终请求（u{id} 里的 QQ 号依旧不进任何模型 prompt）。
             quoted_self = False
             quoted_ref = None
             stored_text = raw_text
             if settings.auto_chat_quote_reply_enabled:
-                from qq_bot.services.quote_reference import (
-                    parse_reply_reference,
-                    render_quoted_raw_text,
-                    shared_quote_lru,
-                )
-
                 lru = shared_quote_lru()
                 lru.remember(event.message_id, event.user_id, raw_text)
-                quoted_ref = parse_reply_reference(
-                    event.get_message(), self_id=event.self_id, lru=lru
+                quoted_ref = await resolve_reply_reference(
+                    event.get_message(),
+                    self_id=event.self_id,
+                    lru=lru,
+                    fetch=_quote_message_fetcher(),
                 )
                 if quoted_ref is not None and quoted_ref.ref_user_id == int(event.self_id):
                     quoted_self = True
@@ -454,8 +459,14 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                     # 表情占位并入模型问题文本（图片本身随 images 走多模态块）；
                     # 提示词占位只进最终请求，不进搜索判别/本地知识检索。
                     prompt_for_model = prompt
+                    # 引用前缀（S11-QUOTE-02）：只进最终请求，不进搜索判别/
+                    # 本地知识检索（与表情占位同一纪律）；无引用时空串原样。
+                    prompt_for_model = (
+                        _qa_quote_prefix(quoted_ref, context_rows, qa_nicknames)
+                        + prompt_for_model
+                    )
                     if vision.face_tags:
-                        prompt_for_model = f"{prompt} {' '.join(vision.face_tags)}"
+                        prompt_for_model = f"{prompt_for_model} {' '.join(vision.face_tags)}"
                     # 本条消息没带图时回捞最近一张（跨消息"先发图再 @"场景）；
                     # 注脚带上发送者身份，模型才知道图归谁（回错对象教训）。
                     request_images = vision.images
@@ -685,6 +696,37 @@ def _recalled_image_note(
     return f"（这张图是群里的{label}刚发的、已附在本条消息里，不是当前提问的用户发的）"
 
 
+def _qa_quote_prefix(
+    quoted_ref: QuoteReference | None,
+    context_rows: Sequence[ChatMemoryRow],
+    nicknames: Mapping[int, str] | None,
+) -> str:
+    """@问答的引用前缀（S11-QUOTE-02）：被 @ 且引用了别人的消息时，把被引用
+    内容渲染进问题文本——此前 QA 链只见 raw_text，"引用某句话问啥意思"全在
+    盲答。渲染与聊天上下文同一套昵称别名（别名行序与 context 渲染一致，
+    字母回落不串位）；u{id} 存储标记的红线不变：QQ 号绝不进任何 prompt。
+    引用正文为空（纯图消息/取不到）时降级为说明句，模型不编引用内容。"""
+    if quoted_ref is None:
+        return ""
+    synthetic = ChatMemoryRow(
+        id=-1,
+        group_id=0,
+        user_id=quoted_ref.ref_user_id,
+        message_text="[引用]",
+        created_at="",
+        is_ai_prompt=False,
+        ai_reply="",
+    )
+    alias = build_user_aliases([*context_rows, synthetic], nicknames=nicknames)
+    label = alias.get(quoted_ref.ref_user_id, "用户?")
+    if not quoted_ref.ref_text:
+        return (
+            f"（这条消息引用了{label}发的消息，但引用部分没有文字内容或没取到，"
+            "不要编造引用内容）"
+        )
+    return f"回复 [引用 {label}:{quoted_ref.ref_text}]："
+
+
 async def _handle_agent_chat(
     event: GroupMessageEvent,
     prompt: str,
@@ -753,6 +795,56 @@ def _connected_onebot_bot() -> OneBotV11Bot | None:
         (bot for bot in get_bots().values() if isinstance(bot, OneBotV11Bot)),
         None,
     )
+
+
+def _plain_text_from_onebot_message(raw: object) -> str:
+    """OneBot `get_msg` 返回的 message 字段抽纯文本：段数组取 text 段拼接
+    （表情/图片等非文本段忽略），CQ 码字符串剥掉码。都没有就返回空串——
+    引用纯图消息时上层降级为"引用部分没有文字内容"。"""
+    if isinstance(raw, str):
+        return re.sub(r"\[CQ:[^\]]*\]", "", raw).strip()
+    if isinstance(raw, Sequence):
+        parts: list[str] = []
+        for segment in raw:
+            if not isinstance(segment, dict) or segment.get("type") != "text":
+                continue
+            data = segment.get("data") or {}
+            text = data.get("text")
+            if text:
+                parts.append(str(text))
+        return "".join(parts).strip()
+    return ""
+
+
+def _quote_message_fetcher() -> Callable[[int], Awaitable[tuple[int, str] | None]] | None:
+    """引用回查闭包（S11-QUOTE-01）：LRU/扩展字段都没中时按消息 id 调
+    OneBot `get_msg` 取原文。拿不到已连接 bot（含 NoneBot 未初始化的
+    测试环境）返回 None（不回查，行为与旧版一致）；回查失败吞异常返回
+    None——引用是增强，任何失败降级为无引用，绝不拖累消息主流程。"""
+    try:
+        bot = _connected_onebot_bot()
+    except Exception:
+        return None
+    if bot is None:
+        return None
+
+    async def _fetch(message_id: int) -> tuple[int, str] | None:
+        try:
+            data = await bot.call_api("get_msg", message_id=int(message_id))
+        except Exception:
+            return None
+        if not isinstance(data, dict):
+            return None
+        sender = data.get("sender") or {}
+        try:
+            user_id = int(sender.get("user_id") or data.get("user_id") or 0)
+        except (TypeError, ValueError):
+            return None
+        if not user_id:
+            return None
+        return user_id, _plain_text_from_onebot_message(data.get("message"))
+
+    return _fetch
 
 
 def _build_auto_chat_hooks(
