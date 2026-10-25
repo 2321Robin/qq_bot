@@ -81,6 +81,13 @@ _define(
     "Web searches",
     ["result"],
 )
+_define(
+    "SEARCH_GATE",
+    Counter,
+    "qq_bot_search_gate_total",
+    "LLM search-intent gate verdicts (S11-SEARCH-01)",
+    ["result"],
+)
 _define("SEARCH_DURATION", Histogram, "qq_bot_search_duration_seconds", "Web search latency")
 _define(
     "RETRIES",

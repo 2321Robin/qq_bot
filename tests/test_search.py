@@ -9,6 +9,7 @@ from qq_bot.services.search import (
     SearchError,
     SearchResult,
     format_search_context,
+    parse_search_intent,
     prompt_needs_search,
     search_web,
 )
@@ -255,3 +256,38 @@ def test_format_search_context_limits_sources_for_reply_prompt() -> None:
     assert "[2] Title Two" in context
     assert "[3] Title Three" in context
     assert "Title Four" not in context
+
+
+# ---- 联网判别门解析（S11-SEARCH-01）----
+
+
+def test_parse_search_intent_valid_search() -> None:
+    assert parse_search_intent('{"search": true, "query": "Kimi k3.1pro 发布"}') == (
+        True,
+        "Kimi k3.1pro 发布",
+    )
+
+
+def test_parse_search_intent_tolerates_markdown_fence() -> None:
+    content = '```json\n{"search": true, "query": "Kimi k3.1pro 发布"}\n```'
+    assert parse_search_intent(content) == (True, "Kimi k3.1pro 发布")
+
+
+def test_parse_search_intent_no_search() -> None:
+    assert parse_search_intent('{"search": false, "query": ""}') == (False, "")
+
+
+def test_parse_search_intent_search_requires_query() -> None:
+    assert parse_search_intent('{"search": true}') is None
+    assert parse_search_intent('{"search": true, "query": "   "}') is None
+
+
+def test_parse_search_intent_rejects_garbage() -> None:
+    assert parse_search_intent("not json at all") is None
+    assert parse_search_intent('{"search": "yes", "query": "x"}') is None
+    assert parse_search_intent('["search"]') is None
+
+
+def test_parse_search_intent_truncates_long_query() -> None:
+    _, query = parse_search_intent('{"search": true, "query": "' + "x" * 100 + '"}')
+    assert query == "x" * 80

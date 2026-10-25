@@ -236,6 +236,10 @@ class BotSettings(BaseSettings):
     tavily_api_key: str = Field(default="", repr=False)
     search_max_results: int = 5
     search_timeout_seconds: float = 10.0
+    # S11-SEARCH-01：@问答联网判别门。prompt_needs_search 关键词未命中时，
+    # 由模型判断该问题是否需要联网搜索并给出搜索词；判别失败按"不搜"处理
+    # （fail-open，维持现状）。关 = 纯关键词启发式。
+    ai_search_gate_enabled: bool = False
 
     # Reliability configuration (S1-RET-01). Attempts include the first call;
     # delays follow capped exponential backoff with jitter; breakers count only

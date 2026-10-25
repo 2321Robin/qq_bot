@@ -72,3 +72,10 @@ def test_casual_system_prompt_encourages_nickname_address() -> None:
     assert "不是必须称呼" in prompt
     assert "外文昵称用其中文意思叫即可" in prompt
     assert "绝对不要用它们或任何字母称呼群友" in prompt
+
+
+def test_casual_system_prompt_bans_stale_assertions() -> None:
+    """S11-SEARCH-01：自主插话不接搜索，靠 prompt 防守——会过时的信息
+    （产品版本/新闻）不知道就说不知道，禁止拿旧印象当现状。"""
+    prompt = casual_system_prompt(_persona())
+    assert "别拿旧印象当现状下断言" in prompt

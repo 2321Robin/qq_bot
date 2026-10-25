@@ -23,7 +23,7 @@ from qq_bot.runtime import (
     get_http_client,
     get_runtime,
 )
-from qq_bot.services.ai_client import AIReplyError, request_ai_reply
+from qq_bot.services.ai_client import AIReplyError, request_ai_reply, request_completion
 from qq_bot.services.auto_chat import (
     BatchItem,
     TriggerCategory,
@@ -52,8 +52,11 @@ from qq_bot.services.prompt import extract_ai_prompt
 from qq_bot.services.quota import quota_scope
 from qq_bot.services.reliability import classify_exception
 from qq_bot.services.search import (
+    SEARCH_GATE_SYSTEM_PROMPT,
     SearchError,
+    build_search_gate_user_prompt,
     format_search_context,
+    parse_search_intent,
     prompt_needs_search,
     search_web,
 )
@@ -313,6 +316,40 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
 
         search_context = ""
         needs_search = prompt_needs_search(prompt)
+        # 联网判别门（S11-SEARCH-01）：关键词未命中时由模型判断是否需要搜
+        # （顺带产出搜索词），堵住"评价一下 kimi k3.1pro"这类知识可能过时、
+        # 又不含任何搜索触发词的问法。判别失败/说不需要 → 维持现状不搜。
+        search_gate_asked = False
+        search_query = ""
+        if (
+            not needs_search
+            and settings.ai_search_gate_enabled
+            and settings.has_search_config()
+            and not settings.agent_enabled
+        ):
+            search_gate_asked = True
+            try:
+                gate_content = await request_completion(
+                    system_prompt=SEARCH_GATE_SYSTEM_PROMPT,
+                    user_prompt=build_search_gate_user_prompt(prompt),
+                    settings=settings,
+                    client=http_client,
+                    model=settings.router_model,
+                    max_tokens=60,
+                    json_mode=True,
+                )
+                intent = parse_search_intent(gate_content)
+            except Exception as exc:
+                record_error("search_gate", classify_exception(exc).category.value)
+                intent = None
+            if intent is None:
+                metrics.SEARCH_GATE.labels("error").inc()
+            elif intent[0]:
+                metrics.SEARCH_GATE.labels("search").inc()
+                needs_search = True
+                search_query = intent[1]
+            else:
+                metrics.SEARCH_GATE.labels("skip").inc()
         if needs_search and not settings.has_search_config():
             await finish_with_send_errors_logged(
                 ai_chat,
@@ -321,7 +358,11 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
 
         if not settings.agent_enabled and needs_search:
             try:
-                search_results = await search_web(prompt, settings=settings, client=http_client)
+                search_results = await search_web(
+                    search_query or prompt,
+                    settings=settings,
+                    client=http_client,
+                )
             except SearchError:
                 logger.exception("Web search failed for current-event prompt")
                 await finish_with_send_errors_logged(
@@ -330,6 +371,10 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
             else:
                 if search_results:
                     search_context = format_search_context(search_results)
+                elif search_gate_asked:
+                    # 判别路径搜不到：不硬拒答（fail-open）——用户没明确要搜，
+                    # 让模型带着"没资料"老实说不知道，比固定话术自然。
+                    metrics.SEARCH_GATE.labels("empty").inc()
                 else:
                     await finish_with_send_errors_logged(
                         ai_chat, "联网搜索没有找到可靠结果，先不乱编。"

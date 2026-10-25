@@ -2670,3 +2670,157 @@ async def test_send_sticker_hook_swallows_send_errors(
     monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: ExplodingOneBot())
 
     assert await send_sticker(_sticker()) is False
+
+
+# ---- 联网判别门（S11-SEARCH-01）：关键词未命中时由模型判断是否需要搜 ----
+
+
+@pytest.mark.asyncio
+async def test_ai_chat_search_gate_searches_with_model_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from qq_bot.services.search import SearchResult
+
+    gate_calls: list[dict] = []
+
+    async def fake_request_completion(**kwargs):
+        gate_calls.append(kwargs)
+        return '{"search": true, "query": "Kimi k3.1pro 发布"}'
+
+    async def fake_search_web(prompt: str, *, settings: BotSettings, client: object | None = None):
+        assert prompt == "Kimi k3.1pro 发布"  # 用判别门产出的搜索词，而非原话
+        return [SearchResult("K3.1Pro 发布", "https://example.com/k3", "k3 info")]
+
+    async def fake_request_ai_reply(
+        prompt: str,
+        *,
+        settings: BotSettings,
+        client: object | None = None,
+        search_context: str = "",
+        chat_context: str = "",
+        roco_context: str = "",
+    ) -> str:
+        assert prompt == "评价一下kimi k3.1pro"
+        assert "K3.1Pro 发布" in search_context
+        return "查到了。"
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(
+            allowed_group_ids="1001",
+            ai_api_key="secret",
+            search_enabled=True,
+            tavily_api_key="tvly-secret",
+            ai_search_gate_enabled=True,
+        ),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
+    monkeypatch.setattr(ai_chat_plugin, "request_completion", fake_request_completion)
+    monkeypatch.setattr(ai_chat_plugin, "search_web", fake_search_web)
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 评价一下kimi k3.1pro"))  # type: ignore[arg-type]
+
+    assert gate_calls and gate_calls[0]["max_tokens"] == 60
+    assert gate_calls[0]["json_mode"] is True
+
+
+@pytest.mark.asyncio
+async def test_ai_chat_search_gate_skips_when_model_says_no(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_request_completion(**kwargs):
+        return '{"search": false, "query": ""}'
+
+    async def unexpected_search_web(*args, **kwargs):
+        raise AssertionError("search should not be called when gate says no")
+
+    async def fake_request_ai_reply(
+        prompt: str,
+        *,
+        settings: BotSettings,
+        client: object | None = None,
+        search_context: str = "",
+        chat_context: str = "",
+        roco_context: str = "",
+    ) -> str:
+        assert search_context == ""
+        return "随便聊聊。"
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(
+            allowed_group_ids="1001",
+            ai_api_key="secret",
+            search_enabled=True,
+            tavily_api_key="tvly-secret",
+            ai_search_gate_enabled=True,
+        ),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
+    monkeypatch.setattr(ai_chat_plugin, "request_completion", fake_request_completion)
+    monkeypatch.setattr(ai_chat_plugin, "search_web", unexpected_search_web)
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 评价一下kimi k3.1pro"))  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_ai_chat_search_gate_fail_open_on_gate_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_request_completion(**kwargs):
+        raise RuntimeError("gate model down")
+
+    async def unexpected_search_web(*args, **kwargs):
+        raise AssertionError("search should not be called when gate errors")
+
+    async def fake_request_ai_reply(
+        prompt: str,
+        *,
+        settings: BotSettings,
+        client: object | None = None,
+        search_context: str = "",
+        chat_context: str = "",
+        roco_context: str = "",
+    ) -> str:
+        assert search_context == ""
+        return "这个本鸡真不知道。"
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(
+            allowed_group_ids="1001",
+            ai_api_key="secret",
+            search_enabled=True,
+            tavily_api_key="tvly-secret",
+            ai_search_gate_enabled=True,
+        ),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
+    monkeypatch.setattr(ai_chat_plugin, "request_completion", fake_request_completion)
+    monkeypatch.setattr(ai_chat_plugin, "search_web", unexpected_search_web)
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 评价一下kimi k3.1pro"))  # type: ignore[arg-type]

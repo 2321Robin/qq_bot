@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -53,6 +55,48 @@ def prompt_needs_search(prompt: str) -> bool:
         "news",
     )
     return any(trigger in prompt for trigger in triggers)
+
+
+# 联网判别门（S11-SEARCH-01）：关键词启发式覆盖不住"评价一下 kimi k3.1pro"
+# 这类不含触发词、但答案可能过时的问法——由模型判断是否需要搜并产出搜索词。
+SEARCH_GATE_SYSTEM_PROMPT = (
+    "你是QQ群助手的联网判断器。判断用户的问题是否需要联网搜索才能可靠回答——"
+    "涉及最新产品/版本/发布信息、新闻时事、价格、赛程、天气，或任何你的知识"
+    "可能已经过时的具体事实，都需要搜；闲聊、问候、纯情绪、对人的看法不需要。"
+    '只输出 JSON：{"search": true或false, "query": "中文搜索词"}。'
+    "search=true 时 query 给具体的搜索词（补全产品/事件全名，不要照抄原话）；"
+    "search=false 时 query 给空字符串。"
+)
+
+
+def build_search_gate_user_prompt(prompt: str) -> str:
+    return f"用户问题：{prompt}\n\n需要联网搜索吗？只输出 JSON。"
+
+
+def parse_search_intent(content: str) -> tuple[bool, str] | None:
+    """解析判别门输出；任何不合法形态返回 None（调用方按"不搜"处理）。
+    search=true 必须带非空 query（截到 80 字符），否则同样视为无效。"""
+    data: Any = None
+    try:
+        data = json.loads(content)
+    except ValueError:
+        match = re.search(r"\{.*\}", content, re.DOTALL)
+        if match:
+            try:
+                data = json.loads(match.group(0))
+            except ValueError:
+                return None
+    if not isinstance(data, dict):
+        return None
+    search = data.get("search")
+    if not isinstance(search, bool):
+        return None
+    if not search:
+        return False, ""
+    query = data.get("query")
+    if not isinstance(query, str) or not query.strip():
+        return None
+    return True, query.strip()[:80]
 
 
 def _breaker_for(name: str) -> CircuitBreaker:
