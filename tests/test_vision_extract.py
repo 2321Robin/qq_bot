@@ -353,3 +353,30 @@ def test_bare_faces_count_toward_face_cap() -> None:
     parsed = parse_reply_parts("[呲牙][偷笑][晕][大哭]")
     assert parsed.faces == 3
     assert parsed.dropped == 1
+
+
+# ---- 原始 id 直发（QQ 新表情静态表收录永远滞后，读到 [表情#编号] 即可回发）----
+
+
+def test_parse_face_spec_raw_id_passthrough() -> None:
+    from qq_bot.services.vision_extract import parse_face_spec
+
+    assert parse_face_spec("#489") == 489  # 2026-10-25 实测：QQ 新表情无任何表收录
+    assert parse_face_spec("#0") == 0
+
+
+def test_parse_face_spec_rejects_out_of_range_and_garbage() -> None:
+    from qq_bot.services.vision_extract import parse_face_spec
+
+    assert parse_face_spec("#99999") is None
+    assert parse_face_spec("#-1") is None
+    assert parse_face_spec("#abc") is None
+    assert parse_face_spec("#") is None
+
+
+def test_parse_face_spec_name_path_still_works() -> None:
+    from qq_bot.services.vision_extract import parse_face_spec
+
+    assert parse_face_spec("呲牙") == 13
+    assert parse_face_spec("咦") == 352
+    assert parse_face_spec("不存在的表情") is None

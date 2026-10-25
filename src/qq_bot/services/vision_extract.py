@@ -508,10 +508,29 @@ _FACE_NAME_TO_ID: dict[str, int] = {
     name: face_id for face_id, name in QQ_FACE_NAMES.items() if name in QA_FACE_WHITELIST
 }
 
+FACE_ID_MAX = 1000
+
 
 def face_id_for_name(name: str) -> int | None:
     """白名单表情名 → QQ face id；不在白名单返回 None（调用方丢标记）。"""
     return _FACE_NAME_TO_ID.get(name.strip())
+
+
+def parse_face_spec(value: str) -> int | None:
+    """发脸标记的值 → face id。
+
+    两种形态：白名单名字反查；或 ``#编号`` 直发原始 id——QQ 会持续新增
+    表情，静态表收录永远滞后（2026-10-25 实测 489 无任何表收录），读到
+    的 ``[表情#编号]`` 占位让模型可以原样回发见过的表情。越界/非法返回
+    None（调用方丢标记）。"""
+    value = value.strip()
+    if value.startswith("#"):
+        try:
+            face_id = int(value[1:])
+        except ValueError:
+            return None
+        return face_id if 0 <= face_id <= FACE_ID_MAX else None
+    return face_id_for_name(value)
 
 
 # ---- 入站提取 ----

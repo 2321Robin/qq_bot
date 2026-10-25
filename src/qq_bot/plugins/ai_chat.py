@@ -67,7 +67,7 @@ from qq_bot.services.vision_extract import (
     RecalledImage,
     append_attachment_tags,
     extract_vision_inputs,
-    face_id_for_name,
+    parse_face_spec,
     parse_reply_parts,
     shared_image_recall,
     strip_reply_markers,
@@ -541,7 +541,7 @@ def _build_outgoing_reply(reply: str, *, settings: BotSettings) -> Message:
             message.append(MessageSegment.image(f"file:///{sticker.path.resolve().as_posix()}"))
             metrics.QA_EXPRESSIONS.labels("sticker", "included").inc()
         else:
-            face_id = face_id_for_name(part.value) if channel_available else None
+            face_id = parse_face_spec(part.value) if channel_available else None
             if face_id is None:
                 metrics.QA_EXPRESSIONS.labels("face", "dropped").inc()
                 continue
@@ -565,7 +565,8 @@ def _qa_sticker_hint(settings: BotSettings) -> str:
     faces = "、".join(QA_FACE_WHITELIST)
     hint = (
         "回复时可以带表情：想回一个QQ经典小表情就在文本中插入 [发脸:名字]，"
-        "名字必须从可用名单里选；标记可与文字混排，没有合适的就不要插标记，"
+        "名字必须从可用名单里选；看到聊天里的 [表情#编号]（不认识的新表情）"
+        "想原样回发时，用 [发脸:#编号]。标记可与文字混排，没有合适的就不要插标记，"
         "也不要发明名单之外的名字。"
         f"可用QQ表情名：{faces}"
     )
@@ -576,8 +577,9 @@ def _qa_sticker_hint(settings: BotSettings) -> str:
     listed = "\n".join(f"- {item.id}：{item.description}" for item in candidates)
     return (
         "回复时可以带表情：想发一张表情包图片就在文本中插入 [发图:ID]，"
-        "想回一个QQ经典小表情就在文本中插入 [发脸:名字]；标记可与文字混排，"
-        "一条回复最多两张表情包；没有合适的就不要插标记，"
+        "想回一个QQ经典小表情就在文本中插入 [发脸:名字]；"
+        "看到聊天里的 [表情#编号]（不认识的新表情）想原样回发时，用 [发脸:#编号]。"
+        "标记可与文字混排，一条回复最多两张表情包；没有合适的就不要插标记，"
         "也不要发明候选之外的 ID 或名字。"
         f"表情包候选（ID：描述）：\n{listed}\n可用QQ表情名：{faces}"
     )

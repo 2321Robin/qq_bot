@@ -3390,3 +3390,43 @@ async def test_qa_chat_context_resolves_nicknames(
         )
 
     assert "阿伟：哈哈" in captured["chat_context"]
+
+
+def test_build_outgoing_reply_raw_face_id_resend(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """[发脸:#489]：静态表没有名字的新表情也能原样回发。"""
+    monkeypatch.setattr(
+        ai_chat_plugin, "_deliver_sticker_library", lambda: _sticker_library(tmp_path)
+    )
+    settings = BotSettings(ai_qa_sticker_enabled=True)
+
+    message = ai_chat_plugin._build_outgoing_reply("给[发脸:#489]", settings=settings)
+
+    assert isinstance(message, Message)
+    assert [seg.type for seg in message] == ["text", "face"]
+    assert message[1].data["id"] == "489"
+
+
+def test_build_outgoing_reply_raw_face_id_out_of_range_dropped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        ai_chat_plugin, "_deliver_sticker_library", lambda: _sticker_library(tmp_path)
+    )
+    settings = BotSettings(ai_qa_sticker_enabled=True)
+
+    message = ai_chat_plugin._build_outgoing_reply("给[发脸:#99999]", settings=settings)
+
+    assert message.extract_plain_text() == "给"
+    assert all(seg.type != "face" for seg in message)
+
+
+def test_qa_sticker_hint_teaches_raw_id_resend(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        ai_chat_plugin, "_deliver_sticker_library", lambda: _sticker_library(tmp_path)
+    )
+    hint = ai_chat_plugin._qa_sticker_hint(BotSettings(ai_qa_sticker_enabled=True))
+    assert "[发脸:#编号]" in hint
