@@ -2,7 +2,7 @@ import json
 
 from prometheus_client import REGISTRY
 
-from qq_bot.services.chat_memory import ChatMemoryRow, JargonRow
+from qq_bot.services.chat_memory import ChatMemoryRow, JargonRow, PersonObservationRow
 from qq_bot.services.expression_learner import (
     _process_batch,
     run_learning_round,
@@ -525,6 +525,19 @@ class _ObserveMemory(FakeMemory):
     async def observations_enabled(self, *, group_id, user_id):
         return not self.opted_out
 
+    async def get_person_observation(self, *, group_id, user_id):
+        card = self.cards.get(user_id)
+        if card is None:
+            return None
+        return PersonObservationRow(
+            group_id=group_id,
+            user_id=user_id,
+            observation=str(card.get("observation", "")),
+            source_message_id=card.get("source_message_id"),
+            insufficient=bool(card.get("insufficient", False)),
+            updated_at="",
+        )
+
     async def upsert_person_observation(self, **kwargs):
         self.cards[kwargs["user_id"]] = kwargs
 
@@ -618,10 +631,42 @@ async def test_observation_model_text_is_validated_before_store():
     assert card["observation"] == "" and card["insufficient"] is True
 
 
-async def test_observation_negative_card_replaces_stale_positive_card():
-    """模型返回空/不可解析 → 负卡滚动覆盖旧正卡，过期观察不会残留。"""
+async def test_observation_merges_old_card_into_prompt_and_store():
+    """旧卡文本进合并素材，长期事实（称呼偏好/喜好）由模型合并保留。"""
+    mem = _ObserveMemory([f"消息{i}" for i in range(6)])
+    mem.cards[2001] = {
+        "observation": "喜欢被叫阿明，爱聊钓鱼",
+        "insufficient": False,
+    }
+    settings = _observe_settings(person_observe_max_chars=200)
+    observe_prompts: list[tuple[str, str]] = []
+
+    async def complete(**kwargs):
+        system = kwargs["system_prompt"]
+        if "表达分析器" in system:
+            return _extract_payload(expressions=[], jargon=[])
+        observe_prompts.append((system, kwargs["user_prompt"]))
+        return _observe_payload("喜欢被叫阿明，最近在聊装修")
+
+    summary = await run_learning_round(
+        group_id=1001, memory_store=mem, settings=settings, complete=complete, quota=None
+    )
+    assert summary.observations_updated == 1
+    assert summary.observations_kept == 0
+    system, user_prompt = observe_prompts[0]
+    assert "旧观察" in user_prompt
+    assert "喜欢被叫阿明，爱聊钓鱼" in user_prompt
+    assert "不超过200字" in system  # 字数上限与配置同源，不再硬编码 100
+    card = mem.cards[2001]
+    assert card["observation"] == "喜欢被叫阿明，最近在聊装修"
+    assert card["insufficient"] is False
+    assert card["source_message_id"] == 6
+
+
+async def test_observation_unparseable_output_keeps_existing_card():
+    """模型返回不可解析 → 有旧卡时保留不覆盖（长期记忆不失忆）。"""
     mem = _ObserveMemory(["消息0", "消息1", "消息2", "消息3"])
-    mem.cards[2001] = {"user_id": 2001, "observation": "旧观察", "insufficient": False}
+    mem.cards[2001] = {"observation": "旧观察：喜欢被叫阿明", "insufficient": False}
     settings = _observe_settings()
 
     async def complete(**kwargs):
@@ -633,9 +678,33 @@ async def test_observation_negative_card_replaces_stale_positive_card():
     summary = await run_learning_round(
         group_id=1001, memory_store=mem, settings=settings, complete=complete, quota=None
     )
-    assert summary.observations_insufficient == 1
-    assert mem.cards[2001]["observation"] == ""
-    assert mem.cards[2001]["insufficient"] is True
+    assert summary.observations_kept == 1
+    assert summary.observations_updated == 0
+    assert summary.observations_insufficient == 0
+    # 旧卡原样保留，未被负卡覆盖
+    assert mem.cards[2001]["observation"] == "旧观察：喜欢被叫阿明"
+    assert mem.cards[2001]["insufficient"] is False
+
+
+async def test_observation_validator_reject_keeps_old_card():
+    """隐私闸拒绝的输出不能抹掉旧卡（拒收≠清空长期记忆）。"""
+    mem = _ObserveMemory(["消息0", "消息1", "消息2", "消息3"])
+    mem.cards[2001] = {"observation": "爱聊钓鱼", "insufficient": False}
+    settings = _observe_settings()
+
+    async def complete(**kwargs):
+        system = kwargs["system_prompt"]
+        if "表达分析器" in system:
+            return _extract_payload(expressions=[], jargon=[])
+        return _observe_payload("他的QQ号是123456789，加他好友")
+
+    summary = await run_learning_round(
+        group_id=1001, memory_store=mem, settings=settings, complete=complete, quota=None
+    )
+    assert summary.observations_kept == 1
+    assert summary.observations_updated == 0
+    assert mem.cards[2001]["observation"] == "爱聊钓鱼"
+    assert mem.cards[2001]["insufficient"] is False
 
 
 async def test_observation_disabled_by_default_writes_nothing():

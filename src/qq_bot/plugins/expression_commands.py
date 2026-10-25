@@ -75,7 +75,9 @@ def _broadcast_text(summary: RoundSummary) -> str:
         f"本轮学习完成：扫描 {summary.messages_scanned} 条消息 {summary.batches} 批；"
         f"表达 提取{summary.expressions_extracted} 入库{summary.stored} "
         f"重复{summary.duplicated}；黑话 新词{summary.jargon_new} "
-        f"确认{summary.jargon_confirmed}；调用 {summary.llm_calls_used} 次"
+        f"确认{summary.jargon_confirmed}；观察卡 更新{summary.observations_updated} "
+        f"保留{summary.observations_kept} 素材不足{summary.observations_insufficient}；"
+        f"调用 {summary.llm_calls_used} 次"
     )
 
 

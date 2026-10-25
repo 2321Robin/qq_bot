@@ -107,6 +107,7 @@ class RoundSummary:
     llm_calls_used: int = 0
     observations_updated: int = 0
     observations_insufficient: int = 0
+    observations_kept: int = 0
 
 
 EXTRACT_SYSTEM_PROMPT = (
@@ -133,13 +134,22 @@ JARGON_DEFINE_SYSTEM_PROMPT = (
 )
 
 
-OBSERVE_SYSTEM_PROMPT = (
-    "你是QQ群观察员。根据给定的一位群友近期消息，用一句不超过100字的中文"
-    "概括TA的说话风格、常见话题或喜好（可能过时，仅供参考）。"
-    '输出严格 JSON：{"observation": "..."}（素材不足时输出空字符串）。'
-    "绝不包含QQ号、昵称、真名、联系方式、密码等隐私；没有可靠观察就返回空。"
-    "不要输出任何其他内容。"
-)
+def observe_system_prompt(max_chars: int) -> str:
+    """合并式观察卡提示词：旧卡进素材、长期事实默认保留（S11-OBSERVE-01）。
+
+    字数上限与 ``person_observe_max_chars`` 同源（隐私闸用同一值校验），
+    不再硬编码，配置放宽时 prompt 与闸一起缩放。"""
+    return (
+        "你是QQ群观察员。把已有的旧观察与这位群友的近期消息合并成一份新观察，"
+        f"用一句不超过{max_chars}字的中文概括TA的称呼偏好、说话风格、常见话题或喜好"
+        "（可能过时，仅供参考）。仍然成立的旧观察必须保留，尤其是称呼偏好和长期喜好"
+        "这类只在早期素材里出现过的事实；近期消息与旧观察冲突时以近期消息为准；"
+        "不要推断、不要补充素材里没有的信息。"
+        '输出严格 JSON：{"observation": "..."}（仅当没有旧观察且新素材不足以形成'
+        "可靠观察时输出空字符串）。"
+        "绝不包含QQ号、昵称、真名、联系方式、密码等隐私；没有可靠观察就返回空。"
+        "不要输出任何其他内容。"
+    )
 
 
 def _strip_fence(content: str) -> str:
@@ -393,13 +403,15 @@ async def _observe_active_speakers(
     quota,
     summary: RoundSummary,
 ) -> None:
-    """本批活跃发言者的观察卡更新（S10-HUMAN-P2 H8）。
+    """本批活跃发言者的观察卡合并更新（S10-HUMAN-P2 H8 + S11-OBSERVE-01）。
 
     只处理本批发言数达到 ``person_observe_min_messages`` 的真实群友
     （is_ai_prompt 行不算素材：那些是 @ 机器人的提问，不是本人的群聊语料），
-    且未 ``/记忆关闭`` 的用户。一次 LLM 调用 → 确定性闸 → 滚动覆盖写卡；
-    素材不足的负卡也滚动覆盖，让过期观察不会一直读出去。任一失败只跳过
-    该用户，绝不影响其它用户与其它学习阶段。"""
+    且未 ``/记忆关闭`` 的用户。旧卡文本进合并素材：仍然成立的长期事实
+    （称呼偏好、喜好）默认保留，新消息冲突时以新消息为准。提取失败
+    （空/不可解析/隐私闸拒）但有旧卡 → 保留旧卡不写库，一轮失常不再抹掉
+    长期记忆；无旧卡时才写 insufficient 负卡。任一失败只跳过该用户，
+    绝不影响其它用户与其它学习阶段。"""
     if not settings.person_observe_enabled:
         return
     counts: dict[int, list[int]] = {}
@@ -416,20 +428,30 @@ async def _observe_active_speakers(
                 continue
         except Exception:
             continue
+        try:
+            previous = await memory_store.get_person_observation(group_id=group_id, user_id=user_id)
+        except Exception:
+            continue
+        old_observation = (
+            previous.observation
+            if previous is not None and not previous.insufficient and previous.observation
+            else ""
+        )
         alias = build_user_aliases([r for r in batch if r.user_id == user_id])
         rendered = "\n".join(
             substitute_reference_tokens(row.message_text, alias)
             for row in batch
             if row.user_id == user_id
         )
+        known = f"已有的旧观察（可能过时）：{old_observation}\n\n" if old_observation else ""
         content = await _llm(
             complete,
             settings=settings,
             client=None,
             quota=quota,
             summary=summary,
-            system_prompt=OBSERVE_SYSTEM_PROMPT,
-            user_prompt=f"这位群友最近在本群说过：\n{rendered}",
+            system_prompt=observe_system_prompt(settings.person_observe_max_chars),
+            user_prompt=f"{known}这位群友最近在本群说过：\n{rendered}",
             json_mode=True,
         )
         observation = _parse_observation(content)
@@ -438,6 +460,10 @@ async def _observe_active_speakers(
         ):
             observation = None
             metrics.PERSON_OBSERVE_TOTAL.labels("validate", "rejected").inc()
+        if observation is None and old_observation:
+            summary.observations_kept += 1
+            metrics.PERSON_OBSERVE_TOTAL.labels("store", "kept_old").inc()
+            continue
         insufficient = observation is None
         try:
             await memory_store.upsert_person_observation(

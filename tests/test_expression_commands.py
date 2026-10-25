@@ -306,6 +306,7 @@ async def test_learn_command_admin_broadcasts_counts_only(
     assert "重复1" in broadcast
     assert "新词2" in broadcast
     assert "确认1" in broadcast
+    assert "观察卡 更新0 保留0 素材不足0" in broadcast
     assert "调用 6 次" in broadcast
     # counts-only：模板/黑话文本绝不进自动播报
     assert "{" not in broadcast

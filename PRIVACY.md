@@ -42,8 +42,13 @@ When the bot is running, it may process the following categories of data:
   - *Person observation cards* — only when `PERSON_OBSERVE_ENABLED=true`,
     an offline learning round (admin `/表达学习` or
     `scripts/learn_expressions.py`) stores **one short derived profile per
-    user per group** (≤ `PERSON_OBSERVE_MAX_CHARS` characters, rolling
-    overwrite). Message bodies are never stored in the card; the card is
+    user per group** (≤ `PERSON_OBSERVE_MAX_CHARS` characters, merged
+    rolling update: the previous card text enters the merge prompt, facts
+    that still hold — nicknames the person prefers, long-term likes — are
+    kept by default and newer conflicting messages win). A failed extract
+    keeps the previous card instead of wiping it. Cards persist until the
+    user opts out or deletes them; message bodies are never stored in the
+    card; the card is
     readable by the user themselves via `/记忆查看` and by the AI prompt
     builder for that user. Users who closed long-term memory
     (`/记忆关闭`) never get a card: the opt-out clears any existing card
