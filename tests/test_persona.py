@@ -49,10 +49,10 @@ def test_casual_system_prompt_anti_formula_rules() -> None:
 
 
 def test_casual_system_prompt_bans_disturbance_complaints() -> None:
-    """2026-10-25 复盘：插话是机器人自己的选择，回“你喊我干嘛”既突兀又
-    自相矛盾（10-24 11:22 对叫大肥鱼的消息放行后抱怨被点名）。"""
+    """2026-10-25 复盘：插话必须接上文——别人跟第三方说话时以旁观身份加入，
+    不装作被点名、不回“你喊我干嘛”（10-24 11:22 的突兀插话）。"""
     prompt = casual_system_prompt(_persona())
-    assert "不要抱怨被打扰或被点名" in prompt
+    assert "接话必须接上文" in prompt
     assert "你喊我干嘛" in prompt
 
 

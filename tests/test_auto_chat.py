@@ -941,11 +941,11 @@ class TestPromptBotVisibility:
         assert "react" not in GATE_SYSTEM_PROMPT
 
     def test_gate_system_prompt_has_third_party_rule(self) -> None:
-        """2026-10-25 复盘：消息在喊别人/别的机器人（如“大肥鱼怎么不理我”）
-        不是在叫机器人，门须默认 false，避免放行后回出“你喊我干嘛”。"""
+        """2026-10-25 复盘（部署者裁决）：叫别人/别的机器人的消息不当 addressed，
+        但仍可按 banter 参与——禁的是不接上文的回复，不是参与本身。"""
         assert "等别人回应" in GATE_SYSTEM_PROMPT
-        assert "其他机器人" in GATE_SYSTEM_PROMPT
-        assert "面向全群" in GATE_SYSTEM_PROMPT
+        assert "不要当作 addressed" in GATE_SYSTEM_PROMPT
+        assert "可按 banter 参与" in GATE_SYSTEM_PROMPT
 
     def test_gate_system_prompt_injects_persona_name(self) -> None:
         prompt = gate_system_prompt("鸡煲")
