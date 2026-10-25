@@ -955,6 +955,46 @@ def test_build_chat_payload_thinking_disabled_flag() -> None:
     assert disabled["thinking"] == {"type": "disabled"}
 
 
+def test_build_chat_payload_qa_thinking_overrides_global_disable() -> None:
+    """S11-QA-THINK-01（部署者北极星：回复更经过考虑）：@问答链显式开思考
+    压过全局 disabled；自主链（request_completion）不受影响。"""
+    payload = build_chat_payload(
+        "你好",
+        BotSettings(ai_model="test-model", ai_thinking_disabled=True, ai_qa_thinking_enabled=True),
+    )
+    assert payload["thinking"] == {"type": "enabled"}
+
+    # 全局未关时开 Q&A 思考同样生效
+    payload = build_chat_payload(
+        "你好", BotSettings(ai_model="test-model", ai_qa_thinking_enabled=True)
+    )
+    assert payload["thinking"] == {"type": "enabled"}
+
+    # 关闭开关 → 回落全局语义（disabled/缺席）
+    payload = build_chat_payload(
+        "你好", BotSettings(ai_model="test-model", ai_thinking_disabled=True)
+    )
+    assert payload["thinking"] == {"type": "disabled"}
+
+
+@pytest.mark.asyncio
+async def test_request_completion_keeps_global_thinking_semantics() -> None:
+    """自主链不受 ai_qa_thinking_enabled 影响：抢答场景保持关。"""
+    settings = BotSettings(
+        ai_api_key="secret",
+        ai_model="test-model",
+        ai_thinking_disabled=True,
+        ai_qa_thinking_enabled=True,
+    )
+    client = FakeClient(FakeResponse(_completion_payload("x")))
+
+    await ai_client.request_completion(
+        system_prompt="sys", user_prompt="usr", settings=settings, client=client
+    )
+
+    assert client.calls[0]["json"]["thinking"] == {"type": "disabled"}
+
+
 @pytest.mark.asyncio
 async def test_request_completion_thinking_disabled_reaches_payload() -> None:
     settings = BotSettings(ai_api_key="secret", ai_model="test-model", ai_thinking_disabled=True)

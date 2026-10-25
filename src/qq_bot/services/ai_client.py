@@ -99,10 +99,19 @@ class AsyncPostClient(Protocol):
         raise NotImplementedError
 
 
-def _thinking_payload_extra(settings: BotSettings) -> dict[str, Any]:
+def _thinking_payload_extra(
+    settings: BotSettings, *, thinking_enabled: bool | None = None
+) -> dict[str, Any]:
     """思考模型兼容（2026-10-24 glm-5.3-flash 主链切换）：思考 token 计入
     max_tokens，会吃光决策门/生成链路的小预算正文；ai_thinking_disabled 时
-    携带 thinking.type=disabled（实测可关，DeepSeek 忽略该字段）。"""
+    携带 thinking.type=disabled（实测可关，DeepSeek 忽略该字段）。
+
+    S11-QA-THINK-01（部署者北极星：回复更像人/更经过考虑）：thinking_enabled
+    显式为 True 的调用方（仅 @问答链：build_chat_payload 与 agent 网关）发
+    thinking.type=enabled 压过全局 disabled——自主插话保持关（抢答场景快比
+    深重要）。"""
+    if thinking_enabled is True:
+        return {"thinking": {"type": "enabled"}}
     if not settings.ai_thinking_disabled:
         return {}
     return {"thinking": {"type": "disabled"}}
@@ -182,7 +191,7 @@ def build_chat_payload(
         ],
         "temperature": 0.7,
         "max_tokens": 1200,
-        **_thinking_payload_extra(settings),
+        **_thinking_payload_extra(settings, thinking_enabled=settings.ai_qa_thinking_enabled),
     }
 
 
@@ -607,7 +616,11 @@ async def request_model_turn(
         "temperature": 0.2 if response_format else 0.7,
         "max_tokens": 1200,
     }
-    payload.update(_thinking_payload_extra(active_settings))
+    payload.update(
+        _thinking_payload_extra(
+            active_settings, thinking_enabled=active_settings.ai_qa_thinking_enabled
+        )
+    )
     if tools:
         payload["tools"] = tools
     if tool_choice:

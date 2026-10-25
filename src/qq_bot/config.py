@@ -226,6 +226,11 @@ class BotSettings(BaseSettings):
     # （max_tokens 100/120 时 reasoning 99/115、正文为空）。true 时所有 AI 请求
     # 携带 thinking.type=disabled（实测可关；DeepSeek 对该字段宽容不报错）。
     ai_thinking_disabled: bool = False
+    # S11-QA-THINK-01（部署者北极星：回复更像人/更经过考虑）：仅在 @问答链
+    # （build_chat_payload 与 agent 网关）显式发 thinking.type=enabled，压过
+    # 全局 ai_thinking_disabled——答案先想后说；自主插话/决策门保持关
+    # （抢答场景快比深重要）。思考 token 计入 max_tokens（Q&A 上限 1200 足够）。
+    ai_qa_thinking_enabled: bool = False
 
     chat_memory_path: str = "data/chat_memory.sqlite3"
     chat_memory_retention_days: int = 3
