@@ -79,3 +79,12 @@ def test_casual_system_prompt_bans_stale_assertions() -> None:
     （产品版本/新闻）不知道就说不知道，禁止拿旧印象当现状。"""
     prompt = casual_system_prompt(_persona())
     assert "别拿旧印象当现状下断言" in prompt
+
+
+def test_casual_system_prompt_question_mark_and_no_phantom_people() -> None:
+    """2026-10-25 晚复盘：反问全带问号是机器味（「调戏本鸡啊?」线上实测）；
+    「那小子」「你俩」是模型虚构上下文外的人物，一提就穿帮。钉两条红线。"""
+    prompt = casual_system_prompt(_persona())
+    assert "不用问号收尾" in prompt
+    assert "上下文里没出现过的人不要编" in prompt
+    assert "直接回应最新那条消息" in prompt
