@@ -1239,3 +1239,12 @@ async def test_build_chat_payload_vision_requests_get_larger_output_cap() -> Non
 
     assert vision_payload["max_tokens"] == 2400
     assert text_payload["max_tokens"] == 1200
+
+
+def test_build_chat_payload_bans_self_within_reply_contradiction() -> None:
+    """2026-10-25 线上实测：'烧啥烧…不烧白不烧'一句话里先拒后迎，用户
+    吐槽前言不搭后语。系统提示词钉前后自洽约束。"""
+    payload = build_chat_payload("你好", BotSettings(ai_model="test-model"))
+    system_prompt = payload["messages"][0]["content"]
+    assert "立场要前后一致" in system_prompt
+    assert "别先否认又马上改口" in system_prompt
