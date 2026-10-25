@@ -84,6 +84,8 @@ class AutoChatState:
         # 表情包（S10-HUMAN-P2 H10）：与文本/react 各自独立的冷却与每日计数
         self._last_sticker: dict[int, float] = {}
         self._sticker_daily: dict[tuple[int, str], int] = {}
+        # 联网搜索（S11-AUTO-SEARCH）：每群每日独立计数（判别门 + Tavily 有真实成本）
+        self._search_daily: dict[tuple[int, str], int] = {}
 
     def lock(self, group_id: int) -> asyncio.Lock:
         return self._locks.setdefault(group_id, asyncio.Lock())
@@ -251,6 +253,23 @@ class AutoChatState:
         self._sticker_daily[(group_id, day_key)] = (
             self._sticker_daily.get((group_id, day_key), 0) + 1
         )
+
+    # ---- 联网搜索限额（S11-AUTO-SEARCH）----
+
+    def search_limit_reason(self, group_id: int, *, settings: BotSettings) -> str:
+        """`""` 在限额内，否则 `daily_limit`。搜索独立于文本/表情/react 额度：
+        每次搜索 = 一次判别门调用 + 一次 Tavily 调用，有真实成本。"""
+        if settings.auto_chat_search_daily_limit <= 0:
+            return ""
+        day_key = self._bucket_clock().strftime("%Y-%m-%d")
+        if self._search_daily.get((group_id, day_key), 0) >= settings.auto_chat_search_daily_limit:
+            return "daily_limit"
+        return ""
+
+    def note_search(self, group_id: int) -> None:
+        """登记一次实际执行的搜索（判别门说不需要不计数）。"""
+        day_key = self._bucket_clock().strftime("%Y-%m-%d")
+        self._search_daily[(group_id, day_key)] = self._search_daily.get((group_id, day_key), 0) + 1
 
     # ---- 群兴趣度（S10-HUMAN-P2 H7）----
 
@@ -563,6 +582,11 @@ _JARGON_SECTION_HEADER = "本群黑话参考（理解用，不确定含义就不
 # 人设示例回复（2026-10-22 人设方案 B）：与表达参考段同级的语气参考。
 _PERSONA_EXAMPLES_SECTION_HEADER = "你平时的说话感觉（学这个感觉，禁止照抄原句）："
 
+_SEARCH_SECTION_HEADER = (
+    "联网搜到的资料（最新消息里的具体事实以下面资料为准，"
+    "可以随口提在哪看到的；没用到的资料不用提，别用播报腔）："
+)
+
 _PERSON_OBSERVE_SECTION_HEADER = "你对当前发言者的了解（可能过时，仅供参考，接个人梗时可用）："
 
 
@@ -598,6 +622,7 @@ def build_casual_user_prompt(
     person_observe_refs: Sequence[str] = (),
     persona_examples: Sequence[str] = (),
     nicknames: Mapping[int, str] | None = None,
+    search_refs: str = "",
 ) -> str:
     lines = ["最近群消息（最后一条是最新消息）："]
     lines.extend(_render_rows(rows, nicknames=nicknames))
@@ -608,6 +633,9 @@ def build_casual_user_prompt(
                 batch_rows, build_user_aliases([*rows, *batch_rows], nicknames=nicknames)
             )
         )
+    if search_refs:
+        lines.append(_SEARCH_SECTION_HEADER)
+        lines.append(search_refs)
     if expression_refs:
         lines.append(_EXPRESSION_SECTION_HEADER)
         lines.extend(f"- {text}" for text in expression_refs)
@@ -1215,6 +1243,63 @@ def trigger_sender_id(items: Sequence[Any], event: Any, is_batch: bool) -> int |
     return getattr(event, "user_id", None)
 
 
+# ---- 联网搜索（S11-AUTO-SEARCH）----
+
+
+async def _auto_search(
+    trigger_text: str,
+    *,
+    settings: BotSettings,
+    client: Any,
+    _request_completion: Any = None,
+) -> str:
+    """自主插话的联网判别+搜索（fail-open）：判别门说不需要、判别失败、
+    搜索失败、无结果一律返回空串，聊天照常生成（banter 不为联网买单）。
+    复用 @问答同一套判别门提示词与 Tavily 搜索；``_request_completion``
+    为测试接缝，生产调用方不传。"""
+    from qq_bot.services.ai_client import request_completion as _real_completion
+    from qq_bot.services.search import (
+        SEARCH_GATE_SYSTEM_PROMPT,
+        build_search_gate_user_prompt,
+        format_search_context,
+        parse_search_intent,
+        search_web,
+    )
+
+    complete = _request_completion or _real_completion
+    try:
+        content = await complete(
+            system_prompt=SEARCH_GATE_SYSTEM_PROMPT,
+            user_prompt=build_search_gate_user_prompt(trigger_text),
+            settings=settings,
+            client=client,
+            model=settings.router_model,
+            max_tokens=128,
+            json_mode=True,
+        )
+        intent = parse_search_intent(content)
+    except Exception as exc:
+        metrics.SEARCH_GATE.labels("error").inc()
+        record_error("auto_chat_search", classify_exception(exc).category.value)
+        return ""
+    if intent is None:
+        metrics.SEARCH_GATE.labels("error").inc()
+        return ""
+    if not intent[0]:
+        metrics.SEARCH_GATE.labels("skip").inc()
+        return ""
+    try:
+        results = await search_web(intent[1], settings=settings, client=client)
+    except Exception as exc:
+        record_error("auto_chat_search", classify_exception(exc).category.value)
+        return ""
+    if not results:
+        metrics.SEARCH_GATE.labels("empty").inc()
+        return ""
+    metrics.SEARCH_GATE.labels("search").inc()
+    return format_search_context(results)
+
+
 async def run_auto_chat(
     *,
     event: Any,
@@ -1605,6 +1690,24 @@ async def run_auto_chat(
             return
         if reply is None:
             generate_span = tracer.start_span("auto.generate", trace_id=current_request_id())
+            # 联网搜索（S11-AUTO-SEARCH）：生成前由判别门决定是否搜索，搜到
+            # 资料才注入生成 prompt；判别/搜索失败 fail-open 照常聊天。
+            search_refs = ""
+            if settings.auto_chat_search_enabled and settings.has_search_config():
+                if state.search_limit_reason(group_id, settings=settings):
+                    _metric("search", "limit")
+                else:
+                    search_refs = await _auto_search(
+                        trigger_text,
+                        settings=settings,
+                        client=client,
+                        _request_completion=complete,
+                    )
+                    if search_refs:
+                        state.note_search(group_id)
+                        _metric("search", "on")
+                    else:
+                        _metric("search", "off")
             # 表达样本每次 run 只取一次：重试 prompt 复用同一批参考（重试不是
             # 新的一轮群聊），id 也一并留待发送成功后回写。
             expression_rows = await _expression_sample(memory_store, group_id, settings=settings)
@@ -1639,6 +1742,7 @@ async def run_auto_chat(
                             person_observe_refs=observe_refs,
                             persona_examples=settings.persona_example_list,
                             nicknames=nicknames,
+                            search_refs=search_refs,
                         )
                         + f"\n风格要求：{style_directive(rng)}"
                         + vision_note
@@ -1698,6 +1802,7 @@ async def run_auto_chat(
                                 person_observe_refs=observe_refs,
                                 persona_examples=settings.persona_example_list,
                                 nicknames=nicknames,
+                                search_refs=search_refs,
                             )
                             + "\n重写要求：你刚才的回复太长了。用 20 个字以内重说一遍，"
                             "只说最想说的那句，直接输出那句话。"
@@ -1727,6 +1832,7 @@ async def run_auto_chat(
                     jargon_refs=jargon_refs,
                     person_observe_refs=observe_refs,
                     persona_examples=settings.persona_example_list,
+                    search_refs=search_refs,
                 )
                 + f"\n风格要求：{style_directive(rng)}"
                 + "\n重写要求：你刚才的回复被拒绝（"

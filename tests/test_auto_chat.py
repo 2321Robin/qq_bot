@@ -459,9 +459,11 @@ class Harness:
         self.rng_value = 0.0
         self.slept: list[float] = []
         self.gate_content = '{"should_reply": true, "reason": "banter", "confidence": 0.9}'
+        self.search_gate_content = '{"search": false, "query": ""}'
         self.casual_content = "你们这是要去哪？"
         self.cold_content = "鱼都晒干了都没人理"
         self.quota_allowed = True
+        self.searched_queries: list[str] = []
         self.completions: list[dict] = []
 
     async def send(self, text) -> None:
@@ -495,6 +497,8 @@ class Harness:
             system = kwargs["system_prompt"]
             if "决策器" in system:
                 return self.gate_content
+            if "联网判断器" in system:
+                return self.search_gate_content
             if "没有人回应" in system or "没有人回应" in kwargs.get("user_prompt", ""):
                 return self.cold_content
             return self.casual_content
@@ -3043,3 +3047,115 @@ async def test_trigger_images_stay_out_when_vision_disabled() -> None:
     assert len(casual_calls) == 1
     assert casual_calls[0]["images"] == ()
     assert "结合图片内容" not in casual_calls[0]["user_prompt"]
+
+
+# ---- 联网搜索（S11-AUTO-SEARCH）：平常聊天按需联网，fail-open + 每日限额 ----
+
+
+def _search_settings(**overrides) -> BotSettings:
+    return _run_settings(
+        auto_chat_search_enabled=True,
+        search_enabled=True,
+        tavily_api_key="tvly",
+        **overrides,
+    )
+
+
+@pytest.mark.asyncio
+async def test_auto_chat_search_injects_refs_into_generation(monkeypatch) -> None:
+    from types import SimpleNamespace
+
+    from qq_bot.services import search as search_module
+
+    h = Harness(["在吗", "新活动开了"], _search_settings())
+    h.search_gate_content = '{"search": true, "query": "今天比赛 赛果"}'
+
+    async def fake_search_web(query, *, settings, client=None):
+        h.searched_queries.append(query)
+        return [SimpleNamespace(title="赛果", url="https://example.com/a", content="甲队 2:1 乙队")]
+
+    monkeypatch.setattr(search_module, "search_web", fake_search_web)
+    await _run(h, raw_text="今天有什么比赛")
+
+    assert h.searched_queries == ["今天比赛 赛果"]
+    casual = [
+        c
+        for c in h.completions
+        if "决策器" not in c["system_prompt"] and "联网判断器" not in c["system_prompt"]
+    ]
+    assert len(casual) == 1
+    assert "联网搜到的资料" in casual[0]["user_prompt"]
+    assert "甲队 2:1 乙队" in casual[0]["user_prompt"]
+    # 每日计数 +1
+    assert sum(h.state._search_daily.values()) == 1
+    assert h.state.search_limit_reason(1001, settings=h.settings) == ""
+
+
+@pytest.mark.asyncio
+async def test_auto_chat_search_skip_keeps_text_only(monkeypatch) -> None:
+    h = Harness(["在吗", "哈哈哈笑死"], _search_settings())
+    h.search_gate_content = '{"search": false, "query": ""}'
+    h.casual_content = "哦这样"
+
+    from qq_bot.services import search as search_module
+
+    async def unexpected_search(query, *, settings, client=None):
+        raise AssertionError("gate said no search")
+
+    monkeypatch.setattr(search_module, "search_web", unexpected_search)
+    await _run(h, raw_text="现在几比几了")
+
+    assert h.searched_queries == []
+    assert sum(h.state._search_daily.values()) == 0
+    assert h.sent == ["哦这样"]
+
+
+@pytest.mark.asyncio
+async def test_auto_chat_search_daily_limit_blocks_gate_call(monkeypatch) -> None:
+    from datetime import UTC, datetime
+
+    h = Harness(["在吗", "新活动开了"], _search_settings(auto_chat_search_daily_limit=1))
+    day_key = datetime.now(UTC).strftime("%Y-%m-%d")
+    h.state._search_daily[(1001, day_key)] = 1
+
+    from qq_bot.services import search as search_module
+
+    async def unexpected_search(query, *, settings, client=None):
+        raise AssertionError("daily limit must skip the search entirely")
+
+    monkeypatch.setattr(search_module, "search_web", unexpected_search)
+    await _run(h, raw_text="今天有什么比赛")
+
+    assert not any("联网判断器" in c["system_prompt"] for c in h.completions)
+    assert h.sent == ["你们这是要去哪？"]
+
+
+@pytest.mark.asyncio
+async def test_auto_chat_search_failure_fails_open(monkeypatch) -> None:
+    from qq_bot.services import search as search_module
+
+    h = Harness(["在吗", "新活动开了"], _search_settings())
+    h.search_gate_content = '{"search": true, "query": "今天比赛"}'
+
+    async def boom(query, *, settings, client=None):
+        raise RuntimeError("tavily down")
+
+    monkeypatch.setattr(search_module, "search_web", boom)
+    await _run(h, raw_text="今天有什么比赛")
+
+    # 搜索失败 fail-open：回复照常生成，不带资料
+    assert h.sent == ["你们这是要去哪？"]
+    casual = [
+        c
+        for c in h.completions
+        if "决策器" not in c["system_prompt"] and "联网判断器" not in c["system_prompt"]
+    ]
+    assert "联网搜到的资料" not in casual[0]["user_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_auto_chat_search_disabled_no_gate_call() -> None:
+    h = Harness(["在吗", "新活动开了"], _run_settings())
+    await _run(h, raw_text="今天有什么比赛")
+
+    assert not any("联网判断器" in c["system_prompt"] for c in h.completions)

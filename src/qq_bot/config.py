@@ -470,6 +470,13 @@ class BotSettings(BaseSettings):
     auto_chat_sticker_cooldown_seconds: float = 120.0
     auto_chat_sticker_max_candidates: int = 12
 
+    # ---- 自主插话联网搜索（S11-AUTO-SEARCH）----
+    # 平常聊天（自主插话）生成前由联网判别门判断是否需要搜索（复用 @问答
+    # 同一套判别门 + Tavily），搜到资料才注入生成 prompt；判别失败/搜索
+    # 失败一律 fail-open 照常聊天。关 = 平常聊天永不联网（历史行为）。
+    auto_chat_search_enabled: bool = False
+    auto_chat_search_daily_limit: int = 10  # 每群每日搜索次数上限；0 = 不限
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -800,6 +807,13 @@ class BotSettings(BaseSettings):
     def validate_ai_briefing_detail_chars(cls, value: int) -> int:
         if value < 0 or value > 2000:
             raise ValueError("ai_briefing_detail_chars must be between 0 and 2000")
+        return value
+
+    @field_validator("auto_chat_sticker_daily_limit", "auto_chat_search_daily_limit")
+    @classmethod
+    def validate_auto_chat_daily_limits(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("auto chat daily limits must be non-negative")
         return value
 
     @field_validator("ai_qa_vision_max_images")
