@@ -48,12 +48,14 @@ def test_casual_system_prompt_anti_formula_rules() -> None:
     assert "感叹号" in prompt  # 长度/感叹号是一上限而非一刀切
 
 
-def test_casual_system_prompt_bans_disturbance_complaints() -> None:
-    """2026-10-25 复盘：插话必须接上文——别人跟第三方说话时以旁观身份加入，
-    不装作被点名、不回“你喊我干嘛”（10-24 11:22 的突兀插话）。"""
+def test_casual_system_prompt_requires_context_followup() -> None:
+    """2026-10-25 复盘 + 部署者裁决：问题是不接上文，不是某句话本身——
+    “你喊我干嘛”在合适语境里可以说，禁具体短语是把措辞当根因，过度矫正。
+    只钉“接上文”要求，并用否断言钉住“不得出现短语级禁令”。"""
     prompt = casual_system_prompt(_persona())
     assert "接话必须接上文" in prompt
-    assert "你喊我干嘛" in prompt
+    assert "别装作被点名" in prompt
+    assert "你喊我干嘛" not in prompt
 
 
 def test_casual_system_prompt_works_without_name() -> None:
