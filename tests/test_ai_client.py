@@ -233,6 +233,21 @@ def test_build_chat_payload_includes_chat_context_when_provided() -> None:
     assert "不要编造不存在的历史聊天记录" in system_prompt
 
 
+def test_build_chat_payload_group_typing_style() -> None:
+    """S11-QA-VOICE-02（2026-10-25 晚复盘）：@问答与插话是同一个群友，
+    标点腔拉齐——句末句号、空格逗号、反问不带问号；且不得虚构上下文外的
+    人物（「那小子」「你俩」线上穿帮教训）。"""
+    settings = BotSettings(ai_model="test-model")
+
+    payload = build_chat_payload("评价一下", settings)
+
+    system_prompt = payload["messages"][0]["content"]
+    assert "句末不加句号" in system_prompt
+    assert "逗号能用空格代替就用空格" in system_prompt
+    assert "反问句不用问号收尾" in system_prompt
+    assert "上下文里没出现的人不要编" in system_prompt
+
+
 def test_build_chat_payload_combines_search_and_chat_context() -> None:
     settings = BotSettings(ai_model="test-model")
 
