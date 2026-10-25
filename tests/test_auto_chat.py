@@ -512,6 +512,9 @@ async def _run(
     send_sticker=None,
     nicknames=None,
 ) -> None:
+    async def _nick_resolver(user_ids):
+        return nicknames
+
     await run_auto_chat(
         event=FakeEvent(),
         raw_text=raw_text,
@@ -529,7 +532,7 @@ async def _run(
         trigger_message_id=FakeEvent.message_id,
         sticker_library=sticker_library,
         send_sticker=send_sticker,
-        nicknames=nicknames,
+        nickname_resolver=_nick_resolver if nicknames is not None else None,
     )
 
 

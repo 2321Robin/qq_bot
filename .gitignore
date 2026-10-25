@@ -27,6 +27,8 @@ docs/assets/*
 !docs/assets/architecture/
 
 data/chat_memory.sqlite3*
+# 群昵称缓存（S11-AUTO-04，含 id→昵称映射，本地专用）
+/data/group_nicknames.json
 # Game data — not redistributable
 /data/roco_pet_details/
 /data/roco_assets/

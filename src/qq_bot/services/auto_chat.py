@@ -1235,7 +1235,8 @@ async def run_auto_chat(
     trigger_message_id: int | None = None,
     sticker_library: StickerLibrary | None = None,
     send_sticker: Callable[[Sticker], Awaitable[bool]] | None = None,
-    nicknames: Mapping[int, str] | None = None,
+    nickname_resolver: Callable[[frozenset[int]], Awaitable[Mapping[int, str] | None]]
+    | None = None,
 ) -> None:
     """Full pipeline for one non-addressed group message (spec 一/二/三/四节).
 
@@ -1253,11 +1254,10 @@ async def run_auto_chat(
     与发送回调。任一缺失（或库为空）时 sticker 通道不可用，候选块与指令都不进
     prompt，门给 action=sticker 也回落文本路径。
 
-    ``nicknames``（S11-AUTO-04）：群成员 id→群昵称映射（插件经 OneBot
-    拉取并缓存），进门/生成 prompt 与 tune log；None 或缺某人的昵称时该人
-    回落「用户A/B」字母代称。
-
-    ``_request_completion`` is a test seam defaulting to the real
+    ``nickname_resolver``（S11-AUTO-04）：按需解析群昵称的异步回调
+    ``(user_ids) -> Mapping[int, str] | None``，插件经 OneBot 拉取并缓存。
+    上下文行加载后调用一次，结果进门/生成 prompt 与 tune log；None 或缺
+    某人的昵称时该人回落「用户A/B」字母代称。    ``_request_completion`` is a test seam defaulting to the real
     ``request_completion``; production callers never pass it. Send and quota
     are injected so this service stays matcher- and runtime-free."""
     from qq_bot.services.ai_client import request_completion as _real_completion
@@ -1346,6 +1346,17 @@ async def run_auto_chat(
     if not rows and not is_batch:
         _metric("prefilter", "no_context")
         return
+    # 昵称按需解析（S11-AUTO-04）：所需 id = 上下文行 + 批次项发送者；目录
+    # 只在遇到未知 id 且过了防抖窗口才真正拉 OneBot，失败返回 None 回落字母。
+    nicknames: Mapping[int, str] | None = None
+    if nickname_resolver is not None:
+        needed = {row.user_id for row in rows}
+        if is_batch:
+            needed |= {item.sender_user_id for item in items}
+        try:
+            nicknames = await nickname_resolver(frozenset(needed))
+        except Exception:
+            nicknames = None
     if is_batch:
         plusone_text = batch_plusone_text(items, rows)
         plusone = plusone_text is not None and plusone_text not in _recent_replies(group_id)

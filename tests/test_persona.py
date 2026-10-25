@@ -64,8 +64,11 @@ def test_casual_system_prompt_works_without_name() -> None:
 
 
 def test_casual_system_prompt_encourages_nickname_address() -> None:
-    """S11-AUTO-04（部署者裁决 2026-10-25）：prompt 带真实群昵称后，模型可
-    自然称呼群友；字母代称仍禁用（回落场景的兜底规则保留）。"""
+    """S11-AUTO-04（部署者裁决 2026-10-25）：prompt 带真实群昵称后，模型
+    **可以**用昵称称呼——不是必须、意思到了即可，外文昵称用中文意思叫；
+    字母代称仍禁用（回落场景的兜底规则保留）。"""
     prompt = casual_system_prompt(_persona())
-    assert "用昵称自然称呼对方" in prompt
+    assert "可以叫昵称" in prompt
+    assert "不是必须称呼" in prompt
+    assert "外文昵称用其中文意思叫即可" in prompt
     assert "绝对不要用它们或任何字母称呼群友" in prompt

@@ -63,16 +63,20 @@ When the bot is running, it may process the following categories of data:
   `AUTO_CHAT_TUNE_LOG_ENABLED=false` to stop writing, or delete the file
   to remove past entries.
 - **Group nicknames in prompts (opt-in, S11-AUTO-04):** with
-  `AUTO_CHAT_NICKNAMES_ENABLED=true` the bot fetches the group member list
-  via OneBot (`get_group_member_list`), keeps an in-process id→nickname map
-  (10-minute TTL, not persisted), and renders members by their group card
-  (falling back to QQ nickname) instead of the 用户A/B letter aliases in the
-  auto-chat prompts and tune-log context lines. Nicknames are group-public
-  information; they may therefore appear in model prompts (same provider
-  boundary as the messages themselves) and in the deployer-local tune log.
-  Raw user ids still never enter prompts, and a digit-only nickname (shaped
-  like a QQ id) is dropped to the letter alias. With the flag off (default)
-  or on any fetch failure the behavior is unchanged (letter aliases).
+  `AUTO_CHAT_NICKNAMES_ENABLED=true` the bot resolves members by their group
+  card (falling back to QQ nickname) instead of the 用户A/B letter aliases in
+  the auto-chat prompts and tune-log context lines. Per the deployer ruling
+  (2026-10-25) there is **no periodic refresh**: the OneBot
+  `get_group_member_list` call happens only when the current context contains
+  user ids missing from the cache, and the result is persisted to the
+  git-ignored `data/group_nicknames.json` (restarts reuse it; deleting the
+  file forces a full refresh; renames lag until then). Nicknames are
+  group-public information; they may therefore appear in model prompts (same
+  provider boundary as the messages themselves) and in the deployer-local
+  tune log. Raw user ids still never enter prompts, and a digit-only
+  nickname (shaped like a QQ id) is dropped to the letter alias. With the
+  flag off (default) or on any fetch failure the behavior is unchanged
+  (letter aliases).
 - **Learning-derived tables (opt-in):** when the expression-learning
   feature is enabled (`EXPRESSION_LEARN_ENABLED=true`), the learning
   round stores derived data in the chat SQLite database — sentence
