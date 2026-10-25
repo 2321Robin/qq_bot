@@ -48,6 +48,14 @@ def test_casual_system_prompt_anti_formula_rules() -> None:
     assert "感叹号" in prompt  # 长度/感叹号是一上限而非一刀切
 
 
+def test_casual_system_prompt_bans_disturbance_complaints() -> None:
+    """2026-10-25 复盘：插话是机器人自己的选择，回“你喊我干嘛”既突兀又
+    自相矛盾（10-24 11:22 对叫大肥鱼的消息放行后抱怨被点名）。"""
+    prompt = casual_system_prompt(_persona())
+    assert "不要抱怨被打扰或被点名" in prompt
+    assert "你喊我干嘛" in prompt
+
+
 def test_casual_system_prompt_works_without_name() -> None:
     prompt = casual_system_prompt(_persona(name="", aliases=()))
     assert "说话简短随意" in prompt

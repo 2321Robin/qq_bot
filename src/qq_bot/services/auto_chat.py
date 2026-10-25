@@ -328,9 +328,22 @@ GATE_SYSTEM_PROMPT = (
     "敏感或高风险话题必须 false；纯表情包、灌水、上下文接不上也必须 false。"
     "消息列表中的“机器人：”行表示机器人参与过该话题；"
     "若最新消息里的“你”可能指机器人（尤其紧跟机器人发言之后），视为 addressed，倾向回复。"
+    "反过来，消息明显在喊别人或等别人回应（叫某个群友、叫群里其他机器人）时，"
+    "那不是说给机器人的，默认 should_reply=false；只有面向全群、谁都接得上的开放话题才算 banter。"
     "不要输出任何其他字段。"
     "“连发N条”表示同一人的连续短消息，视为一段完整发言。"
 )
+
+
+def gate_system_prompt(persona_name: str = "") -> str:
+    """门系统提示词 = 静态规则 + 机器人名字提示（2026-10-25 复盘）：门此前
+    不知道机器人叫什么，分不清“喊鸡煲”和“喊群里另一个机器人”，对叫别人的
+    消息放行并回了句“你喊我干嘛”。名字留空（未配人设）时不加提示。"""
+    name = persona_name.strip()
+    if not name:
+        return GATE_SYSTEM_PROMPT
+    return GATE_SYSTEM_PROMPT + f"机器人的名字叫“{name}”，喊别的名字都不是在叫机器人。"
+
 
 # react 指令（S10-HUMAN-P2 H9，Final Fix）：不进系统提示词——通道关闭/不可用
 # 的部署不为永不出现的表情列表付 token；仅当本轮 reaction_available 时与
@@ -1423,7 +1436,7 @@ async def run_auto_chat(
             )
         try:
             content = await complete(
-                system_prompt=GATE_SYSTEM_PROMPT,
+                system_prompt=gate_system_prompt(settings.persona_name),
                 user_prompt=build_gate_user_prompt(
                     rows,
                     batch_rows=_batch_as_rows(items, group_id) if is_batch else (),

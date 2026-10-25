@@ -22,6 +22,7 @@ from qq_bot.services.auto_chat import (
     build_gate_user_prompt,
     classify_trigger,
     detect_negative_feedback,
+    gate_system_prompt,
     parse_gate_output,
     render_batch_rows,
     run_auto_chat,
@@ -938,6 +939,21 @@ class TestPromptBotVisibility:
         表情列表付 token；指令与「可用表情 ID」同块，仅在 reaction_available
         时进 user prompt（见 TestGateEmojiHintGating）。"""
         assert "react" not in GATE_SYSTEM_PROMPT
+
+    def test_gate_system_prompt_has_third_party_rule(self) -> None:
+        """2026-10-25 复盘：消息在喊别人/别的机器人（如“大肥鱼怎么不理我”）
+        不是在叫机器人，门须默认 false，避免放行后回出“你喊我干嘛”。"""
+        assert "等别人回应" in GATE_SYSTEM_PROMPT
+        assert "其他机器人" in GATE_SYSTEM_PROMPT
+        assert "面向全群" in GATE_SYSTEM_PROMPT
+
+    def test_gate_system_prompt_injects_persona_name(self) -> None:
+        prompt = gate_system_prompt("鸡煲")
+        assert "机器人的名字叫“鸡煲”" in prompt
+        assert "喊别的名字都不是在叫机器人" in prompt
+        # 未配人设（名字空白）时与静态提示词完全一致
+        assert gate_system_prompt("  ") == GATE_SYSTEM_PROMPT
+        assert gate_system_prompt("") == GATE_SYSTEM_PROMPT
 
 
 # ---- 二期：冷场反应（S7-AUTO-P2-05）----
