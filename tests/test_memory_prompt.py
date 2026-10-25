@@ -4,6 +4,7 @@ from qq_bot.services.memory_prompt import (
     extract_at_user_ids,
     format_chat_context,
     parse_memory_reference,
+    render_rows_with_aliases,
     substitute_reference_tokens,
 )
 
@@ -166,6 +167,57 @@ def test_format_chat_context_aliases_raw_user_ids() -> None:
 
 def test_format_chat_context_reports_empty_history() -> None:
     assert format_chat_context([]) == "没有找到相关历史聊天记录。"
+
+
+# ---- 真实群昵称渲染（S11-AUTO-04，部署者裁决 2026-10-25）----
+
+
+def test_render_rows_with_aliases_prefers_nicknames_and_falls_back() -> None:
+    rows = [
+        ChatMemoryRow(
+            id=1,
+            group_id=1,
+            user_id=12345,
+            message_text="今天活动是什么",
+            created_at="2026-09-23T00:00:00+00:00",
+            is_ai_prompt=False,
+            ai_reply="",
+        ),
+        ChatMemoryRow(
+            id=2,
+            group_id=1,
+            user_id=67890,
+            message_text="同问",
+            created_at="2026-09-23T00:01:00+00:00",
+            is_ai_prompt=False,
+            ai_reply="",
+        ),
+    ]
+
+    lines = render_rows_with_aliases(
+        rows,
+        nicknames={12345: "风哥", 67890: "123456"},  # 67890 昵称纯数字 → 回落字母
+    )
+
+    assert "风哥：今天活动是什么" in lines
+    assert "用户A：同问" in lines  # 回落者不占昵称的字母位
+
+
+def test_render_rows_with_aliases_without_nicknames_keeps_letters() -> None:
+    rows = [
+        ChatMemoryRow(
+            id=1,
+            group_id=1,
+            user_id=12345,
+            message_text="hi",
+            created_at="2026-09-23T00:00:00+00:00",
+            is_ai_prompt=False,
+            ai_reply="",
+        )
+    ]
+
+    assert render_rows_with_aliases(rows) == ["用户A：hi"]
+    assert render_rows_with_aliases(rows, nicknames=None) == ["用户A：hi"]
 
 
 # ---- 引用令牌匿名替换（S10-HUMAN-P0-06 H4）----

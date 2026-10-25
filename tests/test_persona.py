@@ -61,3 +61,11 @@ def test_casual_system_prompt_requires_context_followup() -> None:
 def test_casual_system_prompt_works_without_name() -> None:
     prompt = casual_system_prompt(_persona(name="", aliases=()))
     assert "说话简短随意" in prompt
+
+
+def test_casual_system_prompt_encourages_nickname_address() -> None:
+    """S11-AUTO-04（部署者裁决 2026-10-25）：prompt 带真实群昵称后，模型可
+    自然称呼群友；字母代称仍禁用（回落场景的兜底规则保留）。"""
+    prompt = casual_system_prompt(_persona())
+    assert "用昵称自然称呼对方" in prompt
+    assert "绝对不要用它们或任何字母称呼群友" in prompt

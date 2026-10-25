@@ -14,6 +14,7 @@ import random
 import re
 import time
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
@@ -570,12 +571,17 @@ def build_gate_user_prompt(
     *,
     batch_rows: Sequence[ChatMemoryRow] = (),
     jargon_refs: Sequence[str] = (),
+    nicknames: Mapping[int, str] | None = None,
 ) -> str:
     lines = ["最近群消息（最后一条是最新消息）："]
-    lines.extend(_render_rows(rows))
+    lines.extend(_render_rows(rows, nicknames=nicknames))
     if batch_rows:
         lines.append(_BATCH_SECTION_HEADER)
-        lines.extend(render_batch_rows(batch_rows, build_user_aliases([*rows, *batch_rows])))
+        lines.extend(
+            render_batch_rows(
+                batch_rows, build_user_aliases([*rows, *batch_rows], nicknames=nicknames)
+            )
+        )
     if jargon_refs:
         lines.append(_JARGON_SECTION_HEADER)
         lines.extend(f"- {text}" for text in jargon_refs)
@@ -591,12 +597,17 @@ def build_casual_user_prompt(
     jargon_refs: Sequence[str] = (),
     person_observe_refs: Sequence[str] = (),
     persona_examples: Sequence[str] = (),
+    nicknames: Mapping[int, str] | None = None,
 ) -> str:
     lines = ["最近群消息（最后一条是最新消息）："]
-    lines.extend(_render_rows(rows))
+    lines.extend(_render_rows(rows, nicknames=nicknames))
     if batch_rows:
         lines.append(_BATCH_SECTION_HEADER)
-        lines.extend(render_batch_rows(batch_rows, build_user_aliases([*rows, *batch_rows])))
+        lines.extend(
+            render_batch_rows(
+                batch_rows, build_user_aliases([*rows, *batch_rows], nicknames=nicknames)
+            )
+        )
     if expression_refs:
         lines.append(_EXPRESSION_SECTION_HEADER)
         lines.extend(f"- {text}" for text in expression_refs)
@@ -939,27 +950,33 @@ def _record_tune_entry(
     group_id: int,
     typo_applied: bool = False,
     model: str = "",
+    nicknames: Mapping[int, str] | None = None,
 ) -> None:
     """调优记录：上文与回复内容落 JSONL（仅本地 data/，不进日志/指标），
     供部署者复盘哪些回复好、哪些差。`model` 记请求的回复模型（fallback 未必
-    真用这个模型，结合 AI_FALLBACK 日志可判断）。失败绝不影响主流程。"""
+    真用这个模型，结合 AI_FALLBACK 日志可判断）。失败绝不影响主流程。
+    S11-AUTO-04：context 行带 `nick`（有群昵称时），字母代称复盘分不清人。"""
     if not settings.auto_chat_tune_log_enabled:
         return
     try:
+        context_items = []
+        for row in context_rows:
+            item: dict[str, Any] = {
+                "user": row.user_id,
+                "text": row.message_text,
+                "bot_reply": row.ai_reply or None,
+            }
+            nick = (nicknames or {}).get(row.user_id)
+            if nick:
+                item["nick"] = nick
+            context_items.append(item)
         entry = {
             "ts": datetime.now(UTC).isoformat(),
             "group_id": group_id,
             "path": path,
             "model": model,
             "trigger": trigger,
-            "context": [
-                {
-                    "user": row.user_id,
-                    "text": row.message_text,
-                    "bot_reply": row.ai_reply or None,
-                }
-                for row in context_rows
-            ],
+            "context": context_items,
             "reply": list(reply_parts),
             "typo_applied": typo_applied,
         }
@@ -991,9 +1008,10 @@ def build_cold_user_prompt(
     recent_replies: Sequence[str] = (),
     *,
     persona_examples: Sequence[str] = (),
+    nicknames: Mapping[int, str] | None = None,
 ) -> str:
     lines = ["最近群消息（最后一条是最新消息）："]
-    lines.extend(_render_rows(rows))
+    lines.extend(_render_rows(rows, nicknames=nicknames))
     if persona_examples:
         lines.append(_PERSONA_EXAMPLES_SECTION_HEADER)
         lines.extend(f"- {text}" for text in persona_examples)
@@ -1019,6 +1037,7 @@ def schedule_cold_check(
     rng: Callable[[], float] = random.random,
     _request_completion: Any = None,
     _sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    nicknames: Mapping[int, str] | None = None,
 ) -> None:
     """发言后调度一次冷场检查（spec 第五节）。进程内 task，重启丢失可接受。
     仅当上一条机器人发言具有提问性质时才视为冷场——陈述句没人接话是常态。"""
@@ -1070,6 +1089,7 @@ def schedule_cold_check(
                                 bot_reply_text,
                                 recent_replies=_recent_replies(group_id),
                                 persona_examples=settings.persona_example_list,
+                                nicknames=nicknames,
                             )
                             + f"\n风格要求：{style_directive(random.random)}"
                         ),
@@ -1111,6 +1131,7 @@ def schedule_cold_check(
                 reply_parts=[reply],
                 group_id=group_id,
                 model=settings.auto_chat_reply_model or settings.ai_model,
+                nicknames=nicknames,
             )
             await send([reply])
             _cold("ok")
@@ -1214,6 +1235,7 @@ async def run_auto_chat(
     trigger_message_id: int | None = None,
     sticker_library: StickerLibrary | None = None,
     send_sticker: Callable[[Sticker], Awaitable[bool]] | None = None,
+    nicknames: Mapping[int, str] | None = None,
 ) -> None:
     """Full pipeline for one non-addressed group message (spec 一/二/三/四节).
 
@@ -1230,6 +1252,10 @@ async def run_auto_chat(
     ``sticker_library``/``send_sticker``（S10-HUMAN-P2 H10）：本地表情包库快照
     与发送回调。任一缺失（或库为空）时 sticker 通道不可用，候选块与指令都不进
     prompt，门给 action=sticker 也回落文本路径。
+
+    ``nicknames``（S11-AUTO-04）：群成员 id→群昵称映射（插件经 OneBot
+    拉取并缓存），进门/生成 prompt 与 tune log；None 或缺某人的昵称时该人
+    回落「用户A/B」字母代称。
 
     ``_request_completion`` is a test seam defaulting to the real
     ``request_completion``; production callers never pass it. Send and quota
@@ -1443,6 +1469,7 @@ async def run_auto_chat(
                     rows,
                     batch_rows=_batch_as_rows(items, group_id) if is_batch else (),
                     jargon_refs=jargon_refs,
+                    nicknames=nicknames,
                 )
                 + reaction_hint
                 + sticker_hint,
@@ -1588,6 +1615,7 @@ async def run_auto_chat(
                             jargon_refs=jargon_refs,
                             person_observe_refs=observe_refs,
                             persona_examples=settings.persona_example_list,
+                            nicknames=nicknames,
                         )
                         + f"\n风格要求：{style_directive(rng)}"
                     ),
@@ -1644,6 +1672,7 @@ async def run_auto_chat(
                                 jargon_refs=jargon_refs,
                                 person_observe_refs=observe_refs,
                                 persona_examples=settings.persona_example_list,
+                                nicknames=nicknames,
                             )
                             + "\n重写要求：你刚才的回复太长了。用 20 个字以内重说一遍，"
                             "只说最想说的那句，直接输出那句话。"
@@ -1737,6 +1766,7 @@ async def run_auto_chat(
         rng=rng,
         _request_completion=_request_completion,
         _sleep=_cold_sleep,
+        nicknames=nicknames,
     )
     parts = [reply] if plusone else split_casual_reply(reply, rng=rng)
     path_label = (
@@ -1761,6 +1791,7 @@ async def run_auto_chat(
         group_id=group_id,
         typo_applied=typo_applied,
         model=settings.auto_chat_reply_model or settings.ai_model,
+        nicknames=nicknames,
     )
     await send(parts)
     # 表达使用回写（S10-HUMAN-P1-04）：仅生成路径采样到 id 且真的发出去了才记；

@@ -45,6 +45,7 @@ from qq_bot.services.memory_prompt import (
     parse_memory_reference,
 )
 from qq_bot.services.message_formatting import replace_named_mentions
+from qq_bot.services.nicknames import NicknameDirectory
 from qq_bot.services.onebot_send import finish_with_send_errors_logged
 from qq_bot.services.sticker_library import Sticker, StickerStore
 from qq_bot.services.prompt import extract_ai_prompt
@@ -605,6 +606,7 @@ async def _maybe_auto_reply(
             if settings.auto_chat_sticker_enabled
             else None,
             send_sticker=send_sticker if settings.auto_chat_sticker_enabled else None,
+            nicknames=await _resolve_nicknames(event.group_id, settings),
         )
         return
     if bypass:
@@ -624,6 +626,7 @@ async def _maybe_auto_reply(
             if settings.auto_chat_sticker_enabled
             else None,
             send_sticker=send_sticker if settings.auto_chat_sticker_enabled else None,
+            nicknames=await _resolve_nicknames(event.group_id, settings),
         )
         return
     collector = _get_auto_chat_collector()
@@ -641,6 +644,33 @@ async def _maybe_auto_reply(
 
 
 _STICKER_STORE: StickerStore | None = None
+_NICKNAME_DIR: NicknameDirectory | None = None
+
+
+def _nickname_directory() -> NicknameDirectory:
+    """进程级群昵称目录单例（S11-AUTO-04）：OneBot `get_group_member_list`
+    拉全量成员，群名片优先、QQ 昵称兜底；内存缓存 10 分钟，不落盘。"""
+    global _NICKNAME_DIR
+    if _NICKNAME_DIR is None:
+
+        async def _fetch_members(group_id: int) -> object:
+            bot = _connected_onebot_bot()
+            if bot is None:
+                raise RuntimeError("no connected OneBot bot")
+            return await bot.call_api("get_group_member_list", group_id=group_id)
+
+        _NICKNAME_DIR = NicknameDirectory(_fetch_members)
+    return _NICKNAME_DIR
+
+
+async def _resolve_nicknames(group_id: int, settings: BotSettings) -> dict[int, str] | None:
+    """开关关闭或任何失败时返回 None（prompt/tune log 回落字母代称）。"""
+    if not settings.auto_chat_nicknames_enabled:
+        return None
+    try:
+        return await _nickname_directory().get(group_id)
+    except Exception:
+        return None
 
 
 def _sticker_store() -> StickerStore:
@@ -699,6 +729,7 @@ def _get_auto_chat_collector() -> AutoChatCollector:
                 # 消息"的语义要求，批次路径同样可用——库非空且开关开即注入候选。
                 sticker_library=_deliver_sticker_library(),
                 send_sticker=send_sticker,
+                nicknames=await _resolve_nicknames(group_id, get_settings()),
             )
             # 交付后刷新 pending gauge（批次已出队，恢复到当前全局挂起数）
             metrics.AUTO_CHAT_PENDING.set(

@@ -414,6 +414,10 @@ class BotSettings(BaseSettings):
     auto_chat_tune_log_enabled: bool = (
         True  # 记录自主回复上文+回复到 data/auto_chat_tune.jsonl 供复盘
     )
+    # S11-AUTO-04：prompt 与 tune log 用真实群昵称替换「用户A/B」字母代称
+    # （OneBot get_group_member_list，内存缓存 10 分钟；拉取失败/纯数字昵称
+    # 回落字母）。昵称是群内公开信息；原始 QQ 号仍不进模型 prompt。
+    auto_chat_nicknames_enabled: bool = False
     # P1（S10-HUMAN-P1）：表达学习 + 黑话词库（默认关）
     expression_learn_enabled: bool = False
     expression_min_active: int = 10

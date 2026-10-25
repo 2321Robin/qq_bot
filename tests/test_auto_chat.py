@@ -510,6 +510,7 @@ async def _run(
     react=None,
     sticker_library=None,
     send_sticker=None,
+    nicknames=None,
 ) -> None:
     await run_auto_chat(
         event=FakeEvent(),
@@ -528,6 +529,7 @@ async def _run(
         trigger_message_id=FakeEvent.message_id,
         sticker_library=sticker_library,
         send_sticker=send_sticker,
+        nicknames=nicknames,
     )
 
 
@@ -954,6 +956,27 @@ class TestPromptBotVisibility:
         # 未配人设（名字空白）时与静态提示词完全一致
         assert gate_system_prompt("  ") == GATE_SYSTEM_PROMPT
         assert gate_system_prompt("") == GATE_SYSTEM_PROMPT
+
+    def test_prompts_render_nicknames_with_letter_fallback(self) -> None:
+        """S11-AUTO-04（部署者裁决 2026-10-25）：有群昵称的群友用昵称渲染，
+        昵称缺失/纯数字（形似 QQ 号）回落字母；原始 id 任何情况下不进 prompt。"""
+        rows = [
+            _row("今天好累", user_id=2001, row_id=1),
+            _row("同累", user_id=2002, row_id=2),
+        ]
+        nicknames = {2001: "风哥", 2002: "424242"}
+
+        gate_prompt = build_gate_user_prompt(rows, nicknames=nicknames)
+        assert "风哥：今天好累" in gate_prompt
+        assert "用户A：同累" in gate_prompt
+        assert "2001" not in gate_prompt and "2002" not in gate_prompt
+
+        casual_prompt = build_casual_user_prompt(rows, nicknames=nicknames)
+        assert "风哥：今天好累" in casual_prompt
+        assert "用户A：同累" in casual_prompt
+
+        cold_prompt = build_cold_user_prompt(rows, "没人理我", nicknames=nicknames)
+        assert "风哥：今天好累" in cold_prompt
 
 
 # ---- 二期：冷场反应（S7-AUTO-P2-05）----
@@ -1389,6 +1412,36 @@ class TestTuneLog:
         assert entry["path"] in {"hot_reply", "gate_reply", "you_plural", "nicknamed", "plusone"}
         assert entry["reply"] and entry["trigger"] == "聊会"
         assert isinstance(entry["context"], list)
+
+    @pytest.mark.asyncio
+    async def test_tune_entry_records_nick_field(self, tmp_path) -> None:
+        """S11-AUTO-04：tune log context 行带 `nick`（有昵称时），复盘分得清人。"""
+        import json as _json
+
+        import qq_bot.services.auto_chat as m
+
+        tune_file = tmp_path / "tune-nick.jsonl"
+        m._TUNE_LOG_PATH = str(tune_file)
+        h = Harness(
+            ["聊会"], _run_settings(auto_chat_sample_rate=0.0, auto_chat_tune_log_enabled=True)
+        )
+        h.state.note_reply(1001, settings=h.settings)
+        await _run(h, raw_text="聊会", nicknames={2001: "风哥"})
+        entry = _json.loads(tune_file.read_text(encoding="utf-8").splitlines()[-1])
+        assert "风哥" in [c.get("nick") for c in entry["context"]]
+        # 未提供昵称映射时行为与旧版一致（无 nick 键）。换一条回复内容，
+        # 避免与上一跑同文被 _RECENT_REPLIES 自去重闸（模块级状态）拦下
+        m._TUNE_LOG_PATH = str(tmp_path / "tune-nonick.jsonl")
+        h2 = Harness(
+            ["聊会"], _run_settings(auto_chat_sample_rate=0.0, auto_chat_tune_log_enabled=True)
+        )
+        h2.state.note_reply(1001, settings=h2.settings)
+        h2.casual_content = "这波操作有点意思"
+        await _run(h2, raw_text="聊会")
+        entry2 = _json.loads(
+            (tmp_path / "tune-nonick.jsonl").read_text(encoding="utf-8").splitlines()[-1]
+        )
+        assert all("nick" not in c for c in entry2["context"])
 
     def test_tune_disabled_writes_nothing(self, tmp_path) -> None:
         import qq_bot.services.auto_chat as m

@@ -36,6 +36,7 @@ data/chat_memory.sqlite3*
 /data/manifests/
 /data/quarantine/
 /data/reports/
+/data/review/
 /data/dist/
 /data/.cache/
 /data/.staging/

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Iterable, Protocol
 
 from qq_bot.services.chat_memory import ChatMemoryRow
+from qq_bot.services.nicknames import sanitize_nickname
 
 
 class MessageSegmentLike(Protocol):
@@ -93,13 +94,29 @@ def _parse_natural_mentioned_user_reference(
     return MemoryReference(question=cleaned_question, user_id=mentioned_user_ids[0], limit=limit)
 
 
-def build_user_aliases(rows: Sequence[ChatMemoryRow]) -> dict[int, str]:
-    """Stable per-call aliases (用户A/B/C…) so raw QQ ids never reach the
-    model prompt — same rationale as the auto-chat gate (实测泄露问题)."""
+def build_user_aliases(
+    rows: Sequence[ChatMemoryRow],
+    *,
+    nicknames: Mapping[int, str] | None = None,
+) -> dict[int, str]:
+    """Stable per-call aliases so raw QQ ids never reach the model prompt —
+    same rationale as the auto-chat gate (实测泄露问题).
+
+    S11-AUTO-04（部署者裁决 2026-10-25）：有真实群昵称的群友直接用昵称
+    （群内公开信息，复盘记录分得清人、模型能自然称呼）；昵称缺失或脏数据
+    （空串/纯数字形似 QQ 号）时回落「用户A/B/C」字母，红线不变。字母序号
+    只按回落者计数，昵称用户不占字母位。"""
     alias: dict[int, str] = {}
+    letter_count = 0
     for row in rows:
-        if row.user_id not in alias:
-            alias[row.user_id] = f"用户{chr(ord('A') + len(alias) % 26)}"
+        if row.user_id in alias:
+            continue
+        cleaned = sanitize_nickname((nicknames or {}).get(row.user_id))
+        if cleaned is None:
+            alias[row.user_id] = f"用户{chr(ord('A') + letter_count % 26)}"
+            letter_count += 1
+        else:
+            alias[row.user_id] = cleaned
     return alias
 
 
@@ -115,8 +132,12 @@ def substitute_reference_tokens(text: str, alias: dict[int, str]) -> str:
     return _REF_TOKEN_RE.sub(lambda m: f"[引用 {alias.get(int(m.group(1)), '用户?')}:", text)
 
 
-def render_rows_with_aliases(rows: Sequence[ChatMemoryRow]) -> list[str]:
-    alias = build_user_aliases(rows)
+def render_rows_with_aliases(
+    rows: Sequence[ChatMemoryRow],
+    *,
+    nicknames: Mapping[int, str] | None = None,
+) -> list[str]:
+    alias = build_user_aliases(rows, nicknames=nicknames)
     lines: list[str] = []
     for row in rows:
         rendered = substitute_reference_tokens(row.message_text, alias)

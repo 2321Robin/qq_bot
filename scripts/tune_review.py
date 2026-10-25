@@ -80,7 +80,7 @@ function render() {
     if (label === "good") good++;
     if (label === "bad") bad++;
     const ctx = (e.context || []).map(c =>
-      (c.bot_reply ? "机器人：" : "用户" + c.user + "：") + c.text).join("\\n");
+      (c.bot_reply ? "机器人：" : (c.nick ? c.nick : "用户" + c.user) + "：") + c.text).join("\\n");
     const btn = (cls, val, text) =>
       `<button class="${cls} ${label === val ? "on" : ""}" onclick="mark('${e.id}','${val}')">${text}</button>`;
     return `<div class="card">
