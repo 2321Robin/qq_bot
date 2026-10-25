@@ -3318,3 +3318,75 @@ async def test_recall_note_reaches_model_prompt(
 
     assert captured["images"] == ("https://multimedia.example/meme.jpg",)
     assert "不是当前提问的用户发的" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_recalled_image_note_uses_group_nickname(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """昵称解析接通后，回捞注脚用真实群昵称而非"用户A/B"字母。"""
+    from qq_bot.services.vision_extract import RecalledImage
+
+    note = ai_chat_plugin._recalled_image_note(
+        RecalledImage(urls=("https://img.example/a.jpg",), sender_user_id=2002),
+        SimpleNamespace(user_id=2001, group_id=1001),
+        context_rows=[],
+        nicknames={2002: "阿伟"},
+    )
+    assert "阿伟" in note
+    assert "用户" not in note.split("不是当前提问的用户发的")[0]
+
+
+@pytest.mark.asyncio
+async def test_qa_chat_context_resolves_nicknames(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """端到端：AUTO_CHAT_NICKNAMES_ENABLED 开启时，@问答上下文按昵称渲染。"""
+    captured: dict = {}
+
+    async def fake_request_ai_reply(prompt, **kwargs) -> str:
+        captured["chat_context"] = kwargs.get("chat_context")
+        return "好"
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    class NicknameStore(EmptyMemoryStore):
+        async def recent_group_messages(self, *, group_id: int, limit: int):
+            return [
+                ChatMemoryRow(
+                    id=1,
+                    group_id=group_id,
+                    user_id=2002,
+                    message_text="哈哈",
+                    created_at="",
+                    is_ai_prompt=False,
+                    ai_reply="",
+                )
+            ]
+
+    async def fake_resolver(user_ids):
+        return {2002: "阿伟"}
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(
+            allowed_group_ids="1001", ai_api_key="secret", auto_chat_nicknames_enabled=True
+        ),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: NicknameStore())
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+    monkeypatch.setattr(
+        ai_chat_plugin, "_nickname_resolver", lambda group_id, settings: fake_resolver
+    )
+
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
+            FakeEvent(
+                "看得到吗", [FakeAtSegment(2880000001), FakeTextSegment("看得到吗")], to_me=True
+            )
+        )
+
+    assert "阿伟：哈哈" in captured["chat_context"]

@@ -1,9 +1,10 @@
 from datetime import UTC, datetime, timedelta
 import asyncio
 import random
+from collections.abc import Mapping, Sequence
 from types import SimpleNamespace
 from pathlib import Path
-from typing import Awaitable, Callable, Sequence
+from typing import Awaitable, Callable
 
 from nonebot import get_bots, logger, on_message
 from nonebot.adapters.onebot.v11 import Bot as OneBotV11Bot
@@ -307,8 +308,11 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
 
         chat_context = ""
         # 上下文行留给回捞图的归属标注（_recalled_image_note 用同一份行算
-        # 别名，保证注脚里的"用户X"与聊天上下文渲染一致）。
+        # 别名，保证注脚里的人称与聊天上下文渲染一致）。
         context_rows: Sequence[ChatMemoryRow] = ()
+        # 群昵称解析（S11-AUTO-04 同源）：@问答链的历史与回捞图注脚按真实
+        # 昵称渲染，模型不再把"用户A/B"字母喊进群里；解析失败回落字母。
+        qa_nicknames: Mapping[int, str] | None = None
         if memory_store is not None and not settings.agent_enabled:
             memory_span = tracer.start_span("memory.retrieve", trace_id=trace_id)
             try:
@@ -328,7 +332,15 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                         group_id=event.group_id, limit=limit
                     )
                 context_rows = rows
-                chat_context = format_chat_context(rows)
+                resolver = _nickname_resolver(event.group_id, settings)
+                if resolver is not None:
+                    try:
+                        qa_nicknames = await resolver(
+                            frozenset(row.user_id for row in rows) | {event.user_id}
+                        )
+                    except Exception:
+                        qa_nicknames = None
+                chat_context = format_chat_context(rows, nicknames=qa_nicknames)
             except Exception:
                 tracer.end_span(memory_span, status="error")
                 logger.exception("Chat memory read failed; continuing without chat context")
@@ -457,7 +469,7 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                             metrics.AI_VISION.labels("recalled").inc()
                             prompt_for_model = (
                                 f"{prompt_for_model} "
-                                f"{_recalled_image_note(recalled, event, context_rows)}"
+                                f"{_recalled_image_note(recalled, event, context_rows, qa_nicknames)}"
                             )
                     reply = await request_ai_reply(
                         prompt_for_model,
@@ -575,11 +587,12 @@ def _recalled_image_note(
     recalled: RecalledImage,
     event: GroupMessageEvent,
     context_rows: Sequence[ChatMemoryRow],
+    nicknames: Mapping[int, str] | None = None,
 ) -> str:
     """回捞图的归属注脚（S11-VISION-01）：模型看得到图但不知道是谁发的，
     会把提问者当成发图者回错对象。发送者=当前提问者时直说；别人发的用与
-    聊天上下文一致的"用户X"别名标注（同一份 context_rows + 发送者合成行
-    计算别名，保证两个渲染层的字母对得上；QQ 号照旧不进 prompt）。"""
+    聊天上下文一致的别名标注（同一份 context_rows + 同一套昵称解析，保证
+    两个渲染层人称对得上；QQ 号照旧不进 prompt）。"""
     if recalled.sender_user_id == event.user_id:
         return "（这张图就是当前提问的用户自己刚发的，已附在本条消息里）"
     synthetic = ChatMemoryRow(
@@ -591,7 +604,7 @@ def _recalled_image_note(
         is_ai_prompt=False,
         ai_reply="",
     )
-    alias = build_user_aliases([*context_rows, synthetic])
+    alias = build_user_aliases([*context_rows, synthetic], nicknames=nicknames)
     label = alias.get(recalled.sender_user_id or 0, "群友")
     return f"（这张图是群里的{label}刚发的、已附在本条消息里，不是当前提问的用户发的）"
 

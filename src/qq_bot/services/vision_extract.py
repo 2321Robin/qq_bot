@@ -443,17 +443,36 @@ class ParsedReply:
     dropped: int
 
 
+_BARE_FACE_RE = re.compile(r"\[([^\[\]]{1,12})\]")
+
+
+def _promote_bare_faces(reply: str) -> str:
+    """把裸的文字表情 [偷笑] 升级为 [发脸:偷笑] 标记（S11-VISION-01 线上
+    实测：模型习惯写 GLM 风格的 [名字] 文字表情，全格式标记反而少用）。
+    只升级白名单内的名字；[图片]/[发图:x]/[发脸:x] 与名单外的 [笑哭] 等
+    一律原样保留。"""
+
+    def _sub(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name in _FACE_NAME_TO_ID:
+            return f"[发脸:{name}]"
+        return match.group(0)
+
+    return _BARE_FACE_RE.sub(_sub, reply)
+
+
 def parse_reply_parts(
     reply: str, *, max_stickers: int = MAX_REPLY_STICKERS, max_faces: int = MAX_REPLY_FACES
 ) -> ParsedReply:
     """解析回复文本里的 [发图:ID]/[发脸:名字] 标记（支持全角冒号）。
 
-    标记之间的文本成为 text 段（保序）；未知/超额标记整段丢弃并计入
-    ``dropped``。没有任何标记时 parts 就是原回复本身，调用方走纯文本路径。"""
+    裸的 [偷笑] 文字表情先升级为发脸标记再解析。标记之间的文本成为 text
+    段（保序）；未知/超额标记整段丢弃并计入 ``dropped``。没有任何标记时
+    parts 就是原回复本身，调用方走纯文本路径。"""
     parts: list[ReplyPart] = []
     stickers = faces = dropped = 0
     cursor = 0
-    for match in _REPLY_MARKER_RE.finditer(reply):
+    for match in _REPLY_MARKER_RE.finditer(_promote_bare_faces(reply)):
         before = reply[cursor : match.start()].strip()
         if before:
             parts.append(ReplyPart(kind="text", value=before))

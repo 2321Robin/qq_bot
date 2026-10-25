@@ -147,10 +147,16 @@ def render_rows_with_aliases(
     return lines
 
 
-def format_chat_context(rows: list[ChatMemoryRow]) -> str:
+def format_chat_context(
+    rows: list[ChatMemoryRow], *, nicknames: Mapping[int, str] | None = None
+) -> str:
+    """@问答链的历史上下文渲染。``nicknames``（S11-VISION-01 follow-up）：
+    与自主插话同一套昵称解析——有真实群昵称的群友按昵称渲染（群内公开
+    信息，部署者已经 AUTO_CHAT_NICKNAMES_ENABLED 裁决），否则回落
+    用户A/B 字母。不给昵称时行为与历史版本逐字节一致。"""
     if not rows:
         return "没有找到相关历史聊天记录。"
-    return "\n".join(["历史聊天记录：", *render_rows_with_aliases(rows)])
+    return "\n".join(["历史聊天记录：", *render_rows_with_aliases(rows, nicknames=nicknames)])
 
 
 def _extract_keyword(head: str) -> str | None:

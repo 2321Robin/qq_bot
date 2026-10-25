@@ -243,3 +243,33 @@ def test_ordinary_text_with_letter_u_digits_untouched() -> None:
     """Fix Round 1：替换锚定完整标记头 `[引用 u<id>:`，普通文本里的
     "au999"/"u4200" 之类不被误替换。"""
     assert substitute_reference_tokens("au999 和 u4200", {}) == "au999 和 u4200"
+
+
+def test_format_chat_context_uses_nicknames_when_available() -> None:
+    """S11-VISION-01 follow-up：@问答链上下文按真实群昵称渲染（与自主插话
+    同一套解析），模型不再把"用户A/B"字母喊进群里；无昵称者仍回落字母。"""
+    rows = [
+        ChatMemoryRow(
+            id=1,
+            group_id=1,
+            user_id=2001,
+            message_text="早",
+            created_at="",
+            is_ai_prompt=False,
+            ai_reply="",
+        ),
+        ChatMemoryRow(
+            id=2,
+            group_id=1,
+            user_id=2002,
+            message_text="[图片]",
+            created_at="",
+            is_ai_prompt=False,
+            ai_reply="",
+        ),
+    ]
+
+    context = format_chat_context(rows, nicknames={2001: "阿伟"})
+
+    assert "阿伟：早" in context
+    assert "用户A：[图片]" in context  # 无昵称者回落字母，序号只按回落者计

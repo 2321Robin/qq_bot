@@ -309,3 +309,36 @@ def test_remember_ignores_empty_urls() -> None:
     buffer.remember(1001, [], sender_user_id=2001)
 
     assert buffer.recall(1001, ttl_seconds=300) is None
+
+
+# ---- 裸文字表情升级（S11-VISION-01：模型习惯写 [偷笑] 而非全格式标记）----
+
+
+def test_bare_face_bracket_promoted_to_marker() -> None:
+    parsed = parse_reply_parts("压力直接给到[偷笑]")
+    kinds = [part.kind for part in parsed.parts]
+    assert kinds == ["text", "face"]
+    assert parsed.parts[1].value == "偷笑"
+    assert parsed.faces == 1
+
+
+def test_bare_face_mixed_with_text_and_markers() -> None:
+    parsed = parse_reply_parts("哈哈[呲牙][发图:dog]没了[偷笑]")
+    kinds = [part.kind for part in parsed.parts]
+    assert kinds == ["text", "face", "sticker", "text", "face"]
+    assert parsed.parts[1].value == "呲牙"
+    assert parsed.parts[4].value == "偷笑"
+
+
+def test_non_whitelist_brackets_stay_text() -> None:
+    # [笑哭] 不在白名单、[图片] 是占位约定、[dog] 是任意词：一律不动
+    parsed = parse_reply_parts("[笑哭][图片][dog][偷笑]")
+    kinds = [part.kind for part in parsed.parts]
+    assert kinds == ["text", "face"]
+    assert parsed.parts[0].value == "[笑哭][图片][dog]"
+
+
+def test_bare_faces_count_toward_face_cap() -> None:
+    parsed = parse_reply_parts("[呲牙][偷笑][晕][大哭]")
+    assert parsed.faces == 3
+    assert parsed.dropped == 1
