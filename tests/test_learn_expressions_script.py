@@ -7,9 +7,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import asdict
 
+import httpx
 import pytest
 
 import scripts.learn_expressions as learn_script
@@ -180,6 +182,28 @@ def test_all_with_no_groups_exits_zero_with_note(monkeypatch, capsys) -> None:
     assert "没有群消息" in capsys.readouterr().out
     assert calls == []
     assert repo.closed
+
+
+def test_round_receives_complete_with_injected_http_client(monkeypatch, capsys) -> None:
+    """独立进程没有 NoneBot runtime：脚本必须给 request_completion 注入自带
+    client（2026-10-26 服务器实测 client=None 时五批全 ambiguous 的回归钉）。"""
+    settings = _settings(quota_enabled=False)
+    repo = _FakeRepository([1001])
+    calls = _install(monkeypatch, settings, repo)
+    seen: dict = {}
+
+    async def fake_completion(**kwargs):
+        seen.update(kwargs)
+        return "ok"
+
+    monkeypatch.setattr(learn_script, "request_completion", fake_completion)
+
+    assert main(["--all"]) == 0
+    complete = calls[0]["complete"]
+    assert callable(complete)
+    result = asyncio.run(complete(system_prompt="s", user_prompt="u", settings=settings))
+    assert result == "ok"
+    assert isinstance(seen["client"], httpx.AsyncClient)
 
 
 def test_missing_group_and_all_exits_one_via_argparse() -> None:

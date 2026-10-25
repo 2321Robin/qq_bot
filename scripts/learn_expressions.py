@@ -21,6 +21,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
 
+import httpx
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
@@ -73,6 +75,15 @@ async def _main(args: argparse.Namespace) -> int:
         settings.chat_memory_path, retention_days=settings.chat_memory_retention_days
     )
     await repository.open()
+    # 独立进程没有 NoneBot runtime：request_completion(client=None) 解析共享
+    # HTTP client 时会抛 AIReplyError（runtime 未初始化），_llm 把它归为
+    # ambiguous 静默吞掉——2026-10-26 服务器实测脚本模式五批全部提取失败的
+    # 根因。自建镜像 runtime.py 参数的 client 注入每次调用。
+    http = httpx.AsyncClient(timeout=httpx.Timeout(settings.ai_timeout_seconds))
+
+    async def complete(**kwargs):
+        return await request_completion(client=http, **kwargs)
+
     try:
         if args.all:
             groups = await repository.distinct_group_ids(
@@ -93,7 +104,7 @@ async def _main(args: argparse.Namespace) -> int:
                     group_id=group_id,
                     memory_store=repository,
                     settings=settings,
-                    complete=request_completion,
+                    complete=complete,
                     quota=quota,
                 )
             except Exception as exc:
@@ -112,6 +123,7 @@ async def _main(args: argparse.Namespace) -> int:
         return exit_code
     finally:
         await repository.close()
+        await http.aclose()
 
 
 def main(argv: list[str] | None = None) -> int:
