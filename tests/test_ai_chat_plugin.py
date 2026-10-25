@@ -3392,41 +3392,45 @@ async def test_qa_chat_context_resolves_nicknames(
     assert "阿伟：哈哈" in captured["chat_context"]
 
 
-def test_build_outgoing_reply_raw_face_id_resend(
+def test_build_outgoing_reply_raw_face_id_resend_client_known(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """[发脸:#489]：静态表没有名字的新表情也能原样回发。"""
+    """[发脸:#编号]：客户端认识的 id 可以原样回发（读侧占位自带 id）。"""
     monkeypatch.setattr(
         ai_chat_plugin, "_deliver_sticker_library", lambda: _sticker_library(tmp_path)
     )
     settings = BotSettings(ai_qa_sticker_enabled=True)
 
-    message = ai_chat_plugin._build_outgoing_reply("给[发脸:#489]", settings=settings)
+    message = ai_chat_plugin._build_outgoing_reply("给[发脸:#352]", settings=settings)
 
     assert isinstance(message, Message)
     assert [seg.type for seg in message] == ["text", "face"]
-    assert message[1].data["id"] == "489"
+    assert message[1].data["id"] == "352"
 
 
-def test_build_outgoing_reply_raw_face_id_out_of_range_dropped(
+def test_build_outgoing_reply_unknown_face_dropped(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """客户端不认识的 id（493>417）在解析层就拦下，段不会进消息。"""
     monkeypatch.setattr(
         ai_chat_plugin, "_deliver_sticker_library", lambda: _sticker_library(tmp_path)
     )
     settings = BotSettings(ai_qa_sticker_enabled=True)
 
-    message = ai_chat_plugin._build_outgoing_reply("给[发脸:#99999]", settings=settings)
+    message = ai_chat_plugin._build_outgoing_reply("给[发脸:#493]", settings=settings)
 
     assert message.extract_plain_text() == "给"
     assert all(seg.type != "face" for seg in message)
 
 
-def test_qa_sticker_hint_teaches_raw_id_resend(
+def test_qa_sticker_hint_does_not_promise_unknown_faces(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """提示词不教回发未知表情（发出去只会被客户端丢弃，制造"我说发了
+    你没看到"），并明确告知发不出来。"""
     monkeypatch.setattr(
         ai_chat_plugin, "_deliver_sticker_library", lambda: _sticker_library(tmp_path)
     )
     hint = ai_chat_plugin._qa_sticker_hint(BotSettings(ai_qa_sticker_enabled=True))
-    assert "[发脸:#编号]" in hint
+    assert "[发脸:#编号]" not in hint
+    assert "发不出来" in hint

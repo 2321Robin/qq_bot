@@ -355,14 +355,7 @@ def test_bare_faces_count_toward_face_cap() -> None:
     assert parsed.dropped == 1
 
 
-# ---- 原始 id 直发（QQ 新表情静态表收录永远滞后，读到 [表情#编号] 即可回发）----
-
-
-def test_parse_face_spec_raw_id_passthrough() -> None:
-    from qq_bot.services.vision_extract import parse_face_spec
-
-    assert parse_face_spec("#489") == 489  # 2026-10-25 实测：QQ 新表情无任何表收录
-    assert parse_face_spec("#0") == 0
+# ---- 发送闸门（客户端不认识的 face 段会被静默丢弃，见 CLIENT_KNOWN_FACE_IDS）----
 
 
 def test_parse_face_spec_rejects_out_of_range_and_garbage() -> None:
@@ -374,9 +367,19 @@ def test_parse_face_spec_rejects_out_of_range_and_garbage() -> None:
     assert parse_face_spec("#") is None
 
 
+def test_parse_face_spec_rejects_faces_the_client_cannot_send() -> None:
+    """2026-10-25 实测：模型正确输出 [发脸:#493] 且 API 成功，但客户端
+    （3.2.32）不认识 493，静默丢弃——群里什么都没出现。闸门必须拦住。"""
+    from qq_bot.services.vision_extract import parse_face_spec
+
+    assert parse_face_spec("#493") is None  # 超出客户端表（≤417）
+    assert parse_face_spec("收到") is None  # 428，客户端表没有
+    assert parse_face_spec("嗑到了") is None  # 313，QFace 有但客户端表没有
+
+
 def test_parse_face_spec_name_path_still_works() -> None:
     from qq_bot.services.vision_extract import parse_face_spec
 
     assert parse_face_spec("呲牙") == 13
-    assert parse_face_spec("咦") == 352
+    assert parse_face_spec("咦") == 352  # 客户端认识 352
     assert parse_face_spec("不存在的表情") is None
