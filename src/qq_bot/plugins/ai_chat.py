@@ -462,8 +462,7 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                     # 引用前缀（S11-QUOTE-02）：只进最终请求，不进搜索判别/
                     # 本地知识检索（与表情占位同一纪律）；无引用时空串原样。
                     prompt_for_model = (
-                        _qa_quote_prefix(quoted_ref, context_rows, qa_nicknames)
-                        + prompt_for_model
+                        _qa_quote_prefix(quoted_ref, context_rows, qa_nicknames) + prompt_for_model
                     )
                     if vision.face_tags:
                         prompt_for_model = f"{prompt_for_model} {' '.join(vision.face_tags)}"
@@ -721,8 +720,7 @@ def _qa_quote_prefix(
     label = alias.get(quoted_ref.ref_user_id, "用户?")
     if not quoted_ref.ref_text:
         return (
-            f"（这条消息引用了{label}发的消息，但引用部分没有文字内容或没取到，"
-            "不要编造引用内容）"
+            f"（这条消息引用了{label}发的消息，但引用部分没有文字内容或没取到，不要编造引用内容）"
         )
     return f"回复 [引用 {label}:{quoted_ref.ref_text}]："
 
