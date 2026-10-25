@@ -140,6 +140,7 @@ async def test_ai_client_accounts_tokens_and_cost(monkeypatch) -> None:
         api_key: str,
         model: str,
         breaker_name: str,
+        timeout_seconds: float | None = None,
     ) -> dict[str, object]:
         return {
             "choices": [{"message": {"content": "hi back"}}],
@@ -194,6 +195,7 @@ async def test_ai_client_no_usage_records_nothing(monkeypatch) -> None:
         api_key: str,
         model: str,
         breaker_name: str,
+        timeout_seconds: float | None = None,
     ) -> dict[str, object]:
         return {"choices": [{"message": {"content": "no usage"}}]}
 

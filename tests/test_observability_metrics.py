@@ -126,6 +126,8 @@ async def test_ai_chat_message_increments_messages_counter(monkeypatch) -> None:
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         return "ok"
 
@@ -270,6 +272,7 @@ async def test_fallback_counter_counts_only_primary_failure(monkeypatch) -> None
         api_key: str,
         model: str,
         breaker_name: str,
+        timeout_seconds: float | None = None,
     ) -> dict[str, object]:
         calls.append(breaker_name)
         if breaker_name == "ai_primary":
@@ -301,6 +304,7 @@ async def test_fallback_counter_counts_only_primary_failure(monkeypatch) -> None
         api_key: str,
         model: str,
         breaker_name: str,
+        timeout_seconds: float | None = None,
     ) -> dict[str, object]:
         calls.append(breaker_name)
         return {"choices": [{"message": {"content": "primary ok"}}]}

@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 from datetime import UTC, datetime
 
 import pytest
@@ -141,6 +142,8 @@ async def test_ai_chat_formats_named_mentions_in_final_reply(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         assert prompt == "提醒我"
         assert settings.ai_api_key == "secret"
@@ -193,6 +196,8 @@ async def test_ai_chat_replies_when_group_message_mentions_bot_without_to_me(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         assert prompt == "你好"
         return "你好呀"
@@ -295,6 +300,8 @@ async def test_ai_chat_ignores_self_mention_for_explicit_user_history(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         assert prompt == "总结他的观点"
         assert "用户A：他的观点" in chat_context
@@ -350,6 +357,8 @@ async def test_ai_chat_uses_search_context_for_search_trigger(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         assert prompt == "今天 DeepSeek 有什么新闻"
         assert "DeepSeek News" in search_context
@@ -398,6 +407,8 @@ async def test_ai_chat_skips_search_for_normal_chat(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         assert prompt == "讲个笑话"
         assert search_context == ""
@@ -448,6 +459,8 @@ async def test_ai_chat_falls_back_when_search_fails(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         assert prompt == "今天 DeepSeek 有什么新闻"
         assert search_context == ""
@@ -566,6 +579,8 @@ async def test_ai_chat_passes_roco_context_for_roco_question(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         assert prompt == "画精灵怎么进化？"
         assert search_context == ""
@@ -620,6 +635,8 @@ async def test_legacy_path_skips_roco_context_when_disabled(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         assert prompt == "画精灵怎么进化？"
         assert roco_context == ""
@@ -679,6 +696,8 @@ async def test_ai_chat_passes_default_group_memory_context(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         assert prompt == "继续"
         assert "用户A：之前的问题" in chat_context
@@ -739,6 +758,8 @@ async def test_ai_chat_uses_recent_group_messages_by_default(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         assert prompt == "刚才大家在说什么"
         assert "用户A：普通群友发言" in chat_context
@@ -795,6 +816,8 @@ async def test_ai_chat_uses_explicit_recent_group_history(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         assert prompt == "总结"
         assert chat_context == "没有找到相关历史聊天记录。"
@@ -856,6 +879,8 @@ async def test_ai_chat_uses_actual_at_segment_for_explicit_user_history(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         assert prompt == "总结他的观点"
         assert "用户A：他的观点" in chat_context
@@ -926,6 +951,8 @@ async def test_ai_chat_summarizes_mentioned_user_recent_messages_in_natural_prom
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         assert prompt == "总结 最近三条消息"
         assert "用户A：目标用户的信息" in chat_context
@@ -989,6 +1016,8 @@ async def test_ai_chat_does_not_scope_group_history_to_at_after_separator(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         assert prompt == "你怎么看"
         assert "用户A：群聊观点" in chat_context
@@ -1042,6 +1071,8 @@ async def test_ai_chat_memory_failure_does_not_block_reply(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         assert prompt == "你好"
         assert chat_context == ""
@@ -1082,6 +1113,8 @@ async def test_ai_chat_memory_store_construction_failure_does_not_block_reply(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         assert prompt == "你好"
         assert chat_context == ""
@@ -1215,6 +1248,8 @@ async def test_ai_chat_excludes_current_prompt_from_memory_context(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         assert prompt == "继续"
         assert "旧问题" in chat_context
@@ -1256,6 +1291,8 @@ async def test_ai_chat_rejects_empty_question_after_memory_reference(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         raise AssertionError("AI should not be called")
 
@@ -1316,6 +1353,8 @@ async def test_concurrent_events_reuse_same_repository(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         return f"回复：{prompt[:2]}"
 
@@ -1664,6 +1703,8 @@ async def test_agent_flag_off_keeps_legacy_path(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         assert prompt == "你好"
         return "你好呀"
@@ -2030,11 +2071,14 @@ async def test_auto_chat_collect_route_stashes_hooks_and_submits_batch_item(
     assert item.sender_user_id == 2001
     assert item.row_id == 777
     assert 1001 in ai_chat_plugin._PENDING_AUTO_HOOKS
-    quota_check, send, react, send_sticker = ai_chat_plugin._PENDING_AUTO_HOOKS[1001]
+    quota_check, send, react, send_sticker, trigger_images = ai_chat_plugin._PENDING_AUTO_HOOKS[
+        1001
+    ]
     assert callable(quota_check)
     assert callable(send)
     assert callable(react)
     assert callable(send_sticker)
+    assert trigger_images == ()  # 普通文本消息无图，触发图占位为空元组
 
 
 @pytest.mark.asyncio
@@ -2194,7 +2238,15 @@ async def test_addressed_reply_registers_note_and_cold_check(
             calls["activity"].append((group_id, weight, boost, half_life))
 
     async def fake_request_ai_reply(
-        prompt, *, settings, client=None, search_context="", chat_context="", roco_context=""
+        prompt,
+        *,
+        settings,
+        client=None,
+        search_context="",
+        chat_context="",
+        roco_context="",
+        images=(),
+        extra_system_prompt="",
     ):
         return "你好呀"
 
@@ -2513,6 +2565,8 @@ async def test_quoted_reply_with_ai_prefix_still_explicit_command(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         captured["prompt"] = prompt
         return "帮你看了"
@@ -2572,6 +2626,8 @@ async def test_quoted_reply_addressed_to_bot_prompt_has_no_token(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         captured["prompt"] = prompt
         return "看到了"
@@ -2699,6 +2755,8 @@ async def test_ai_chat_search_gate_searches_with_model_query(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         assert prompt == "评价一下kimi k3.1pro"
         assert "K3.1Pro 发布" in search_context
@@ -2750,6 +2808,8 @@ async def test_ai_chat_search_gate_skips_when_model_says_no(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         assert search_context == ""
         return "随便聊聊。"
@@ -2797,6 +2857,8 @@ async def test_ai_chat_search_gate_fail_open_on_gate_error(
         search_context: str = "",
         chat_context: str = "",
         roco_context: str = "",
+        images: tuple[str, ...] = (),
+        extra_system_prompt: str = "",
     ) -> str:
         assert search_context == ""
         return "这个本鸡真不知道。"
@@ -2824,3 +2886,186 @@ async def test_ai_chat_search_gate_fail_open_on_gate_error(
 
     with pytest.raises(FinishCalled):
         await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 评价一下kimi k3.1pro"))  # type: ignore[arg-type]
+
+
+# ---- 视觉（S11-VISION-01）：@问答读图 / 回复发图发表情 ----
+
+
+class FakeImageSegment:
+    type = "image"
+
+    def __init__(self, url: str):
+        self.data = {"url": url}
+
+
+def _sticker_library(tmp_path: Path):
+    from qq_bot.services.sticker_library import StickerLibrary
+
+    sticker_path = tmp_path / "dog.png"
+    sticker_path.write_bytes(b"png")
+    return StickerLibrary(stickers=(Sticker(id="dog", path=sticker_path, description="一只狗"),))
+
+
+@pytest.mark.asyncio
+async def test_ai_chat_passes_images_and_attachment_placeholder_to_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """@机器人 + 只发一张图：占位文案进 prompt，图片 URL 随请求发出，
+    记忆行保留 [图片] 占位。"""
+    captured: dict = {}
+    stored: list[dict] = []
+
+    class RecordingStore(EmptyMemoryStore):
+        async def add_message(self, **kwargs) -> int:
+            stored.append(kwargs)
+            return 55
+
+    async def fake_request_ai_reply(prompt, **kwargs) -> str:
+        captured.update(kwargs)
+        captured["prompt"] = prompt
+        return "这是张梗图"
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: RecordingStore())
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    event = FakeEvent(
+        "",
+        [FakeImageSegment("https://multimedia.example/meme.jpg")],
+        to_me=True,
+    )
+    with pytest.raises(FinishCalled) as exc_info:
+        await ai_chat_plugin.handle_ai_chat(event)  # type: ignore[arg-type]
+
+    assert captured["prompt"] == "[图片]"
+    assert captured["images"] == ("https://multimedia.example/meme.jpg",)
+    assert stored and stored[0]["message_text"].endswith("[图片]")
+    assert exc_info.value.message.extract_plain_text() == "这是张梗图"
+
+
+@pytest.mark.asyncio
+async def test_ai_chat_face_segment_becomes_tag_in_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """QQ 经典表情渲染成 [表情:名字] 占位随问题进模型。"""
+    captured: dict = {}
+
+    async def fake_request_ai_reply(prompt, **kwargs) -> str:
+        captured["prompt"] = prompt
+        captured["images"] = kwargs.get("images")
+        return "哈哈"
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    face_segment = SimpleNamespace(type="face", data={"id": "21", "text": "白眼"})
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
+            FakeEvent("这什么意思", [FakeTextSegment("这什么意思"), face_segment], to_me=True)
+        )
+
+    assert captured["prompt"] == "这什么意思 [表情:白眼]"
+    assert captured["images"] == ()
+
+
+def test_build_outgoing_reply_plain_text_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = BotSettings()
+    monkeypatch.setattr(ai_chat_plugin, "_deliver_sticker_library", lambda: None)
+    message = ai_chat_plugin._build_outgoing_reply("就一句话", settings=settings)
+    assert isinstance(message, Message)
+    assert message.extract_plain_text() == "就一句话"
+
+
+def test_build_outgoing_reply_sticker_marker_becomes_image_segment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        ai_chat_plugin, "_deliver_sticker_library", lambda: _sticker_library(tmp_path)
+    )
+    settings = BotSettings(ai_qa_sticker_enabled=True)
+
+    message = ai_chat_plugin._build_outgoing_reply("哈哈[发图:dog]", settings=settings)
+
+    assert isinstance(message, Message)
+    assert [seg.type for seg in message] == ["text", "image"]
+    assert message[0].data["text"] == "哈哈"
+    assert message[1].data["file"].startswith("file:///")
+    assert message[1].data["file"].endswith("dog.png")
+
+
+def test_build_outgoing_reply_face_marker_becomes_face_segment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        ai_chat_plugin, "_deliver_sticker_library", lambda: _sticker_library(tmp_path)
+    )
+    settings = BotSettings(ai_qa_sticker_enabled=True)
+
+    message = ai_chat_plugin._build_outgoing_reply("[发脸:呲牙]没了", settings=settings)
+
+    assert isinstance(message, Message)
+    assert [seg.type for seg in message] == ["face", "text"]
+    assert message[0].data["id"] == "13"
+    assert message[1].data["text"] == "没了"
+
+
+def test_build_outgoing_reply_unknown_markers_are_stripped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """库缺条目/白名单外表情名：标记整段丢弃，绝不出现在群消息里。"""
+    monkeypatch.setattr(
+        ai_chat_plugin, "_deliver_sticker_library", lambda: _sticker_library(tmp_path)
+    )
+    settings = BotSettings(ai_qa_sticker_enabled=True)
+
+    message = ai_chat_plugin._build_outgoing_reply("哈哈[发图:cat][发脸:菜刀]", settings=settings)
+
+    assert message.extract_plain_text() == "哈哈"
+    assert all(seg.type != "image" and seg.type != "face" for seg in message)
+
+
+def test_build_outgoing_reply_disabled_channel_still_strips_markers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """开关关掉后模型漏出的标记也不许原文进群（剥掉，只发文本）。"""
+    monkeypatch.setattr(
+        ai_chat_plugin, "_deliver_sticker_library", lambda: _sticker_library(tmp_path)
+    )
+    settings = BotSettings(ai_qa_sticker_enabled=False)
+
+    message = ai_chat_plugin._build_outgoing_reply("哈哈[发图:dog]", settings=settings)
+
+    assert message.extract_plain_text() == "哈哈"
+    assert all(seg.type != "image" for seg in message)
+
+
+def test_qa_sticker_hint_empty_when_library_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(ai_chat_plugin, "_deliver_sticker_library", lambda: None)
+    assert ai_chat_plugin._qa_sticker_hint(BotSettings(ai_qa_sticker_enabled=True)) == ""
+
+
+def test_qa_sticker_hint_lists_candidates(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        ai_chat_plugin, "_deliver_sticker_library", lambda: _sticker_library(tmp_path)
+    )
+    hint = ai_chat_plugin._qa_sticker_hint(BotSettings(ai_qa_sticker_enabled=True))
+    assert "[发图:dog]" in hint or "发图" in hint
+    assert "一只狗" in hint
+    assert "呲牙" in hint

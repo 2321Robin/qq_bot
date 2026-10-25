@@ -7,7 +7,7 @@ from typing import Awaitable, Callable, Sequence
 
 from nonebot import get_bots, logger, on_message
 from nonebot.adapters.onebot.v11 import Bot as OneBotV11Bot
-from nonebot.adapters.onebot.v11 import GroupMessageEvent, MessageSegment
+from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message, MessageSegment
 from nonebot.exception import FinishedException
 
 from qq_bot.agent.evidence import EvidenceStore, render_answer
@@ -59,6 +59,14 @@ from qq_bot.services.search import (
     parse_search_intent,
     prompt_needs_search,
     search_web,
+)
+from qq_bot.services.vision_extract import (
+    QA_FACE_WHITELIST,
+    append_attachment_tags,
+    extract_vision_inputs,
+    face_id_for_name,
+    parse_reply_parts,
+    strip_reply_markers,
 )
 
 
@@ -141,6 +149,22 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
 
             raw_text = event.get_message().extract_plain_text().strip()
 
+            # 视觉提取（S11-VISION-01）：图片/表情段在进入任何分支前一次性
+            # 提取——@问答链携带图片与表情占位，自主插话链携带触发图与
+            # [图片] 记忆占位；视觉关闭时 images 为空、行为与纯文本版一致。
+            vision = extract_vision_inputs(
+                event.get_message(),
+                vision_enabled=settings.ai_qa_vision_enabled,
+                max_images=settings.ai_qa_vision_max_images,
+            )
+            if vision.dropped_images:
+                metrics.AI_VISION.labels("dropped").inc(vision.dropped_images)
+            # 记忆/批次文本用占位：历史轮次知道"这里有一张图/一个表情"，
+            # 原始图片不入库（隐私红线与 token 成本，V2 设计决策）。
+            attachment_text = ("[图片]" if vision.image_segments else "") + "".join(
+                vision.face_tags
+            )
+
             # 群兴趣度计分（S10-HUMAN-P2 H7）：放在 ignored 检查之后、prompt 分支
             # 之前，普通消息与被 @ 问答两条路径共用同一入口，每条消息只记一次。
             # 权重来自纯函数 activity_weight（含"你/你们"/疑问加权），boost 与
@@ -181,6 +205,7 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                     quoted_ref = None  # self 引用必回，但不渲染标记
                 if quoted_ref is not None:
                     stored_text = render_quoted_raw_text(raw_text, quoted_ref)
+            stored_text = append_attachment_tags(stored_text, vision)
 
             prompt = extract_ai_prompt(raw_text, prefix=settings.ai_prefix)
 
@@ -190,6 +215,10 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                 prompt = raw_text
                 if mentioned_self:
                     prompt = _strip_leading_self_mention_text(event).strip()
+                if not prompt and attachment_text:
+                    # @机器人 + 只发图/表情：以占位文案进入问答链，模型看到
+                    # 附带图片本身，仍能自然接话（V1 验收场景）。
+                    prompt = attachment_text
 
             is_ai_prompt = prompt is not None or addressed_to_bot
             metrics.MESSAGES.labels("ai_prompt" if is_ai_prompt else "plain").inc()
@@ -217,14 +246,20 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                                 http_client=http_client,
                                 row_id=stored_row_id,
                                 quoted_self=quoted_self,
+                                trigger_images=vision.images
+                                if settings.auto_chat_vision_enabled
+                                else (),
                             )
                 return
 
             if not prompt:
-                await finish_with_send_errors_logged(
-                    ai_chat,
-                    f"请在 {settings.ai_prefix} 后面输入要问的问题。",
-                )
+                if attachment_text:
+                    prompt = attachment_text
+                else:
+                    await finish_with_send_errors_logged(
+                        ai_chat,
+                        f"请在 {settings.ai_prefix} 后面输入要问的问题。",
+                    )
 
             if not settings.has_ai_config():
                 await finish_with_send_errors_logged(ai_chat, "AI 功能还没有配置 API Key。")
@@ -240,7 +275,10 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
             prompt = memory_reference.question
 
             if not prompt:
-                await finish_with_send_errors_logged(ai_chat, "请输入要问的问题")
+                if attachment_text:
+                    prompt = attachment_text
+                else:
+                    await finish_with_send_errors_logged(ai_chat, "请输入要问的问题")
 
             # Quota admission (S4-QUOTA-02/03): gate both agent and legacy
             # paths at the entry; explicit commands never route through here.
@@ -389,13 +427,20 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                 reply = agent_reply
             else:
                 with quota_scope("group", event.group_id):
+                    # 表情占位并入模型问题文本（图片本身随 images 走多模态块）；
+                    # 提示词占位只进最终请求，不进搜索判别/本地知识检索。
+                    prompt_for_model = prompt
+                    if vision.face_tags:
+                        prompt_for_model = f"{prompt} {' '.join(vision.face_tags)}"
                     reply = await request_ai_reply(
-                        prompt,
+                        prompt_for_model,
                         settings=settings,
                         client=http_client,
                         search_context=search_context,
                         chat_context=chat_context,
                         roco_context=roco_context,
+                        images=vision.images,
+                        extra_system_prompt=_qa_sticker_hint(settings),
                     )
         except AIReplyError:
             await finish_with_send_errors_logged(ai_chat, _pick_variants(_UNAVAILABLE_MESSAGES))
@@ -424,10 +469,69 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
             )
 
         await finish_with_send_errors_logged(
-            ai_chat, replace_named_mentions(reply, settings.named_mention_replacement_map)
+            ai_chat, _build_outgoing_reply(reply, settings=settings)
         )
     finally:
         tracer.end_span(total_span)
+
+
+def _build_outgoing_reply(reply: str, *, settings: BotSettings) -> Message:
+    """把模型回复变成可发送的 Message（S11-VISION-01）。
+
+    无发图标记时与历史路径一致：整条过 named-mention 替换；有
+    ``[发图:ID]``/``[发脸:名字]`` 标记时按出现顺序拼装 text/image/face 段。
+    通道关闭、库缺条目、表情名不在白名单的标记整段丢弃并计数——标记原文
+    绝不发到群里；全部标记不可用时回落剥标记后的纯文本。"""
+    mentions = settings.named_mention_replacement_map
+    parsed = parse_reply_parts(reply)
+    if parsed.stickers == 0 and parsed.faces == 0:
+        return replace_named_mentions(reply, mentions)
+    if parsed.dropped:
+        metrics.QA_EXPRESSIONS.labels("marker", "dropped").inc(parsed.dropped)
+    channel_available = settings.ai_qa_sticker_enabled
+    library = _deliver_sticker_library()
+    message = Message()
+    for part in parsed.parts:
+        if part.kind == "text":
+            message.extend(replace_named_mentions(part.value, mentions))
+        elif part.kind == "sticker":
+            sticker = library.get(part.value) if channel_available and library else None
+            if sticker is None:
+                metrics.QA_EXPRESSIONS.labels("sticker", "dropped").inc()
+                continue
+            message.append(MessageSegment.image(f"file:///{sticker.path.resolve().as_posix()}"))
+            metrics.QA_EXPRESSIONS.labels("sticker", "included").inc()
+        else:
+            face_id = face_id_for_name(part.value) if channel_available else None
+            if face_id is None:
+                metrics.QA_EXPRESSIONS.labels("face", "dropped").inc()
+                continue
+            message.append(MessageSegment.face(face_id))
+            metrics.QA_EXPRESSIONS.labels("face", "included").inc()
+    if not message:
+        stripped = strip_reply_markers(reply)
+        return replace_named_mentions(stripped or reply, mentions)
+    return message
+
+
+def _qa_sticker_hint(settings: BotSettings) -> str:
+    """@问答的表情通道提示（S11-VISION-01）：库非空且开关开时才注入候选块
+    与标记用法——通道不可用的部署不为它付 prompt token。与自主插话共用
+    同一份表情包库与候选上限；QQ 经典表情用固定白名单。"""
+    if not settings.ai_qa_sticker_enabled:
+        return ""
+    library = _deliver_sticker_library()
+    if library is None or not library.stickers:
+        return ""
+    candidates = library.candidates(settings.auto_chat_sticker_max_candidates)
+    listed = "\n".join(f"- {item.id}：{item.description}" for item in candidates)
+    faces = "、".join(QA_FACE_WHITELIST)
+    return (
+        "回复时可以带表情：想发一张表情包图片就在文本中插入 [发图:ID]，"
+        "想回一个QQ经典小表情就在文本中插入 [发脸:名字]；标记可与文字混排，"
+        "一条回复最多两张表情包；没有合适的就不要插标记，也不要发明候选之外的 ID 或名字。"
+        f"表情包候选（ID：描述）：\n{listed}\n可用QQ表情名：{faces}"
+    )
 
 
 async def _handle_agent_chat(
@@ -615,6 +719,7 @@ async def _maybe_auto_reply(
     http_client: object | None,
     row_id: int | None = None,
     quoted_self: bool = False,
+    trigger_images: Sequence[str] = (),
 ) -> None:
     """Bridge from the plugin into the auto-chat pipeline (S7-AUTO-07).
     Send/quota are injected so the service stays matcher- and runtime-free.
@@ -622,10 +727,13 @@ async def _maybe_auto_reply(
     入口分流（S10-HUMAN-P0 H1）：点名/引用/"你们"旁路直达管道（等不了话尾）；
     其余普通消息在 `auto_chat_collect_enabled` 时先进收集窗口，静默到期后
     整批交付，防抢答。`quoted_self` 来自 handler 的 reply 段解析
-    （S10-HUMAN-P0-06）：引用机器人自己的消息必回，走 QUOTED 旁路。"""
+    （S10-HUMAN-P0-06）：引用机器人自己的消息必回，走 QUOTED 旁路。
+    `trigger_images`（S11-VISION-01）：触发消息里的图片源，仅当
+    auto_chat_vision_enabled 开启时非空，随生成请求发给模型。"""
     load_persona(settings)  # 前置校验：人设配置可解析（坏配置早失败）
 
     quota_check, send, react, send_sticker = _build_auto_chat_hooks(event, settings)
+    trigger_images = tuple(trigger_images)
 
     category = classify_trigger(raw_text, settings=settings, quoted_self=quoted_self)
     bypass = category in (
@@ -652,6 +760,7 @@ async def _maybe_auto_reply(
             else None,
             send_sticker=send_sticker if settings.auto_chat_sticker_enabled else None,
             nickname_resolver=_nickname_resolver(event.group_id, settings),
+            trigger_images=trigger_images,
         )
         return
     if bypass:
@@ -672,10 +781,13 @@ async def _maybe_auto_reply(
             else None,
             send_sticker=send_sticker if settings.auto_chat_sticker_enabled else None,
             nickname_resolver=_nickname_resolver(event.group_id, settings),
+            trigger_images=trigger_images,
         )
         return
     collector = _get_auto_chat_collector()
-    _PENDING_AUTO_HOOKS.setdefault(event.group_id, (quota_check, send, react, send_sticker))
+    _PENDING_AUTO_HOOKS.setdefault(
+        event.group_id, (quota_check, send, react, send_sticker, trigger_images)
+    )
     await collector.submit(
         event.group_id,
         BatchItem(
@@ -756,7 +868,16 @@ def _get_auto_chat_collector() -> AutoChatCollector:
 
         async def _deliver(group_id: int, batch: CollectedBatch) -> None:
             hooks = _PENDING_AUTO_HOOKS.pop(group_id, None)
-            quota_check, send, react, send_sticker = hooks if hooks else (None, None, None, None)
+            if hooks:
+                quota_check, send, _react, send_sticker, trigger_images = hooks
+            else:
+                quota_check, send, _react, send_sticker, trigger_images = (
+                    None,
+                    None,
+                    None,
+                    None,
+                    (),
+                )
             try:
                 memory_store = get_chat_repository()
                 http_client = get_http_client()
@@ -783,6 +904,9 @@ def _get_auto_chat_collector() -> AutoChatCollector:
                 sticker_library=_deliver_sticker_library(),
                 send_sticker=send_sticker,
                 nickname_resolver=_nickname_resolver(group_id, get_settings()),
+                # 触发图（S11-VISION-01）：批次末条（触发消息）携带的图片源；
+                # run_auto_chat 内部按 auto_chat_vision_enabled 决定是否带上。
+                trigger_images=trigger_images,
             )
             # 交付后刷新 pending gauge（批次已出队，恢复到当前全局挂起数）
             metrics.AUTO_CHAT_PENDING.set(

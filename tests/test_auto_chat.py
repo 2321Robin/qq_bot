@@ -511,6 +511,7 @@ async def _run(
     sticker_library=None,
     send_sticker=None,
     nicknames=None,
+    trigger_images=(),
 ) -> None:
     async def _nick_resolver(user_ids):
         return nicknames
@@ -533,6 +534,7 @@ async def _run(
         sticker_library=sticker_library,
         send_sticker=send_sticker,
         nickname_resolver=_nick_resolver if nicknames is not None else None,
+        trigger_images=trigger_images,
     )
 
 
@@ -3013,3 +3015,31 @@ def test_gate_parse_sticker_id_must_be_string() -> None:
     assert decision is not None
     assert decision.action == "sticker"
     assert decision.sticker_id == ""
+
+
+# ---- 视觉（S11-VISION-01，V2-lite）：触发图只进生成链、决策门保持纯文本 ----
+
+
+@pytest.mark.asyncio
+async def test_trigger_images_reach_generation_but_not_gate_when_enabled() -> None:
+    h = Harness(["在吗", "看图"], _run_settings(auto_chat_vision_enabled=True))
+    await _run(h, raw_text="看图 [图片]", trigger_images=("https://img.example/a.jpg",))
+
+    gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
+    casual_calls = [c for c in h.completions if "决策器" not in c["system_prompt"]]
+    assert len(gate_calls) == 1
+    assert len(casual_calls) == 1
+    assert "images" not in gate_calls[0]  # 决策门请求不带图
+    assert casual_calls[0]["images"] == ("https://img.example/a.jpg",)
+    assert "结合图片内容" in casual_calls[0]["user_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_trigger_images_stay_out_when_vision_disabled() -> None:
+    h = Harness(["在吗", "看图"], _run_settings())
+    await _run(h, raw_text="看图 [图片]", trigger_images=("https://img.example/a.jpg",))
+
+    casual_calls = [c for c in h.completions if "决策器" not in c["system_prompt"]]
+    assert len(casual_calls) == 1
+    assert casual_calls[0]["images"] == ()
+    assert "结合图片内容" not in casual_calls[0]["user_prompt"]

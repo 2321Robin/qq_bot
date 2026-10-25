@@ -53,7 +53,7 @@ class SequenceClient:
     async def post(
         self, url: str, *, headers: dict, json: dict, timeout: float | None = None
     ) -> FakeResponse:
-        self.calls.append({"url": url, "headers": headers, "json": json})
+        self.calls.append({"url": url, "headers": headers, "json": json, "timeout": timeout})
         return self.responses.pop(0)
 
 
@@ -71,7 +71,7 @@ class FakeClient:
     async def post(
         self, url: str, *, headers: dict, json: dict, timeout: float | None = None
     ) -> FakeResponse:
-        self.calls.append({"url": url, "headers": headers, "json": json})
+        self.calls.append({"url": url, "headers": headers, "json": json, "timeout": timeout})
         return self.response
 
 
@@ -1037,3 +1037,192 @@ async def test_request_completion_without_flag_omits_thinking_param() -> None:
     )
 
     assert "thinking" not in client.calls[0]["json"]
+
+
+# ---- 视觉（S11-VISION-01）：多模态载荷 / 降级 / 备用链不带图 ----
+
+
+def test_build_chat_payload_with_images_builds_multimodal_content() -> None:
+    settings = BotSettings(ai_model="test-model")
+
+    payload = build_chat_payload("这是什么梗", settings, images=["https://img.example/a.jpg"])
+
+    user_content = payload["messages"][-1]["content"]
+    assert isinstance(user_content, list)
+    assert user_content[0] == {"type": "text", "text": "这是什么梗"}
+    assert user_content[1] == {
+        "type": "image_url",
+        "image_url": {"url": "https://img.example/a.jpg"},
+    }
+    assert "图片" in payload["messages"][0]["content"]
+
+
+def test_build_chat_payload_without_images_keeps_plain_string() -> None:
+    payload = build_chat_payload("你好", BotSettings(ai_model="test-model"))
+    assert payload["messages"][-1]["content"] == "你好"
+
+
+def test_build_chat_payload_extra_system_prompt_appended() -> None:
+    payload = build_chat_payload(
+        "你好", BotSettings(ai_model="test-model"), extra_system_prompt="可用表情候选"
+    )
+    assert "可用表情候选" in payload["messages"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_request_ai_reply_sends_images_and_relaxed_timeout() -> None:
+    settings = BotSettings(
+        ai_api_key="secret",
+        ai_model="test-model",
+        ai_timeout_seconds=30.0,
+        ai_qa_vision_timeout_seconds=91.0,
+    )
+    client = FakeClient(FakeResponse({"choices": [{"message": {"content": "看到图了"}}]}))
+
+    reply = await request_ai_reply(
+        "看这张图", settings=settings, client=client, images=["https://img.example/a.jpg"]
+    )
+
+    assert reply == "看到图了"
+    user_content = client.calls[0]["json"]["messages"][-1]["content"]
+    assert isinstance(user_content, list)
+    assert any(
+        block.get("type") == "image_url"
+        and block["image_url"]["url"] == "https://img.example/a.jpg"
+        for block in user_content
+    )
+    assert client.calls[0]["timeout"] == 91.0
+
+
+@pytest.mark.asyncio
+async def test_request_ai_reply_without_images_keeps_default_timeout() -> None:
+    settings = BotSettings(ai_api_key="secret", ai_model="test-model")
+    client = FakeClient(FakeResponse({"choices": [{"message": {"content": "ok"}}]}))
+
+    await request_ai_reply("你好", settings=settings, client=client)
+
+    assert client.calls[0]["timeout"] is None
+
+
+@pytest.mark.asyncio
+async def test_request_ai_reply_degrades_to_text_when_vision_permanently_rejected() -> None:
+    """4xx（模型无视觉/图片源失效）→ 同链路去图重试一次，问答不中断。"""
+    settings = BotSettings(
+        ai_api_key="secret",
+        ai_model="test-model",
+        ai_max_attempts=2,
+        ai_retry_base_delay_seconds=0.001,
+        ai_retry_max_delay_seconds=0.002,
+        retry_jitter_ratio=0.0,
+    )
+    client = SequenceClient(
+        [
+            FakeResponse({"error": "model does not support image input"}, status_code=400),
+            FakeResponse({"choices": [{"message": {"content": "文字版回答"}}]}),
+        ]
+    )
+
+    reply = await request_ai_reply(
+        "看这张图", settings=settings, client=client, images=["https://img.example/a.jpg"]
+    )
+
+    assert reply == "文字版回答"
+    assert len(client.calls) == 2
+    first_content = client.calls[0]["json"]["messages"][-1]["content"]
+    second_content = client.calls[1]["json"]["messages"][-1]["content"]
+    assert isinstance(first_content, list)
+    assert isinstance(second_content, str)
+    assert not client.calls[1].get("timeout")  # 纯文本重试不再放宽读超时
+
+
+@pytest.mark.asyncio
+async def test_request_ai_reply_transient_failure_keeps_images_through_retries() -> None:
+    """瞬时失败走既有重试，不触发降级（图片仍在重试请求里）。"""
+    settings = BotSettings(
+        ai_api_key="secret",
+        ai_model="test-model",
+        ai_max_attempts=2,
+        ai_retry_base_delay_seconds=0.001,
+        ai_retry_max_delay_seconds=0.002,
+        retry_jitter_ratio=0.0,
+    )
+    client = SequenceClient(
+        [
+            FakeResponse({"error": "boom"}, status_code=500),
+            FakeResponse({"choices": [{"message": {"content": "重试成功"}}]}),
+        ]
+    )
+
+    reply = await request_ai_reply(
+        "看这张图", settings=settings, client=client, images=["https://img.example/a.jpg"]
+    )
+
+    assert reply == "重试成功"
+    assert len(client.calls) == 2
+    assert isinstance(client.calls[1]["json"]["messages"][-1]["content"], list)
+
+
+@pytest.mark.asyncio
+async def test_request_ai_reply_fallback_drops_images() -> None:
+    """备用模型不承诺视觉：落备用时去掉图片，宁可纯文本也别把问答打死。"""
+    settings = BotSettings(
+        ai_api_key="primary-secret",
+        ai_base_url="https://primary.example.com/v1",
+        ai_model="primary-model",
+        ai_fallback_api_key="fallback-secret",
+        ai_fallback_base_url="https://fallback.example.com/v1",
+        ai_fallback_model="fallback-model",
+        ai_max_attempts=1,
+        ai_retry_base_delay_seconds=0.001,
+        ai_retry_max_delay_seconds=0.002,
+        retry_jitter_ratio=0.0,
+    )
+    client = SequenceClient(
+        [
+            FakeResponse({"error": "down"}, status_code=500),
+            FakeResponse({"choices": [{"message": {"content": "备用回答"}}]}),
+        ]
+    )
+
+    reply = await request_ai_reply(
+        "看这张图", settings=settings, client=client, images=["https://img.example/a.jpg"]
+    )
+
+    assert reply == "备用回答"
+    fallback_call = client.calls[1]
+    assert fallback_call["json"]["model"] == "fallback-model"
+    assert fallback_call["json"]["messages"][-1]["content"] == "看这张图"
+
+
+@pytest.mark.asyncio
+async def test_request_completion_with_images_builds_multimodal_and_fallback_drops() -> None:
+    settings = BotSettings(
+        ai_api_key="primary-secret",
+        ai_base_url="https://primary.example.com/v1",
+        ai_model="primary-model",
+        ai_fallback_api_key="fallback-secret",
+        ai_fallback_base_url="https://fallback.example.com/v1",
+        ai_fallback_model="fallback-model",
+        ai_max_attempts=1,
+        ai_retry_base_delay_seconds=0.001,
+        ai_retry_max_delay_seconds=0.002,
+        retry_jitter_ratio=0.0,
+    )
+    client = SequenceClient(
+        [
+            FakeResponse({"error": "down"}, status_code=503),
+            FakeResponse({"choices": [{"message": {"content": "带图生成成功不了，纯文本"}}]}),
+        ]
+    )
+
+    reply = await ai_client.request_completion(
+        system_prompt="sys",
+        user_prompt="最新消息 [图片]",
+        settings=settings,
+        client=client,
+        images=["https://img.example/a.jpg"],
+    )
+
+    assert reply == "带图生成成功不了，纯文本"
+    assert isinstance(client.calls[0]["json"]["messages"][-1]["content"], list)
+    assert client.calls[1]["json"]["messages"][-1]["content"] == "最新消息 [图片]"

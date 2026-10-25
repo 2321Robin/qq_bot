@@ -1237,6 +1237,7 @@ async def run_auto_chat(
     send_sticker: Callable[[Sticker], Awaitable[bool]] | None = None,
     nickname_resolver: Callable[[frozenset[int]], Awaitable[Mapping[int, str] | None]]
     | None = None,
+    trigger_images: Sequence[str] = (),
 ) -> None:
     """Full pipeline for one non-addressed group message (spec 一/二/三/四节).
 
@@ -1259,7 +1260,11 @@ async def run_auto_chat(
     上下文行加载后调用一次，结果进门/生成 prompt 与 tune log；None 或缺
     某人的昵称时该人回落「用户A/B」字母代称。    ``_request_completion`` is a test seam defaulting to the real
     ``request_completion``; production callers never pass it. Send and quota
-    are injected so this service stays matcher- and runtime-free."""
+    are injected so this service stays matcher- and runtime-free.
+
+    ``trigger_images``（S11-VISION-01，V2-lite）：触发消息携带的图片源。
+    决策门永远纯文本（控成本）；生成链仅在 ``auto_chat_vision_enabled`` 开启
+    时把图随请求发给模型，关闭时上下文里只有历史遗留的 ``[图片]`` 占位。"""
     from qq_bot.services.ai_client import request_completion as _real_completion
 
     complete = _request_completion or _real_completion
@@ -1614,6 +1619,13 @@ async def run_auto_chat(
                 settings=settings,
             )
 
+            generation_images = tuple(trigger_images) if settings.auto_chat_vision_enabled else ()
+            vision_note = (
+                "\n（最新那条消息里的 [图片] 已随本条请求附给你，回应要结合图片内容。）"
+                if generation_images
+                else ""
+            )
+
             async def _generate() -> str:
                 return await complete(
                     system_prompt=casual_system_prompt(persona),
@@ -1629,12 +1641,14 @@ async def run_auto_chat(
                             nicknames=nicknames,
                         )
                         + f"\n风格要求：{style_directive(rng)}"
+                        + vision_note
                     ),
                     settings=settings,
                     client=client,
                     model=settings.auto_chat_reply_model or settings.ai_model,
                     max_tokens=256,
                     temperature=settings.auto_chat_reply_temperature,
+                    images=generation_images,
                 )
 
             gen = asyncio.ensure_future(_generate())

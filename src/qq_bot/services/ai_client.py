@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -23,6 +24,11 @@ from qq_bot.services.reliability import (
     build_retry_policy,
     classify_exception,
     wrap_http_error,
+)
+
+_IMAGE_PROMPT_INSTRUCTION = (
+    "用户可能随消息附带图片或表情包：结合图片内容回答，先看清关键细节再说话；"
+    "图片看不清或打不开就直接说明，不要编造图片里没有的内容。"
 )
 
 _WEEKDAY_NAMES = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
@@ -117,6 +123,17 @@ def _thinking_payload_extra(
     return {"thinking": {"type": "disabled"}}
 
 
+def _user_content_for(text: str, images: Sequence[str]) -> str | list[dict[str, Any]]:
+    """OpenAI 风格多模态 content：无图保持纯字符串（与历史版本逐字节一致），
+    带图时切换为 text + image_url 块数组（图片走公网 URL 或 base64 data URL）。"""
+    if not images:
+        return text
+    blocks: list[dict[str, Any]] = [{"type": "text", "text": text}]
+    for image in images:
+        blocks.append({"type": "image_url", "image_url": {"url": image}})
+    return blocks
+
+
 def build_chat_payload(
     prompt: str,
     settings: BotSettings,
@@ -125,6 +142,8 @@ def build_chat_payload(
     chat_context: str = "",
     roco_context: str = "",
     current_time: str | None = None,
+    images: Sequence[str] = (),
+    extra_system_prompt: str = "",
 ) -> dict[str, Any]:
     cleaned_prompt = prompt.strip()
     if not cleaned_prompt:
@@ -159,6 +178,11 @@ def build_chat_payload(
     cleaned_chat_context = chat_context.strip()
     cleaned_roco_context = roco_context.strip()
     user_sections = [f"当前用户问题：{cleaned_prompt}"]
+    if images:
+        system_prompt += f" {_IMAGE_PROMPT_INSTRUCTION}"
+    extra = extra_system_prompt.strip()
+    if extra:
+        system_prompt += f" {extra}"
     if cleaned_chat_context:
         system_prompt += (
             " 如果提供了历史聊天记录，只把它作为理解前文和用户意图的参考。"
@@ -195,7 +219,7 @@ def build_chat_payload(
         "model": settings.ai_model,
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
+            {"role": "user", "content": _user_content_for(user_content, images)},
         ],
         "temperature": 0.7,
         "max_tokens": 1200,
@@ -234,6 +258,8 @@ async def request_ai_reply(
     search_context: str = "",
     chat_context: str = "",
     roco_context: str = "",
+    images: Sequence[str] = (),
+    extra_system_prompt: str = "",
 ) -> str:
     active_settings = settings or get_settings()
     if not active_settings.has_ai_config():
@@ -255,6 +281,8 @@ async def request_ai_reply(
             search_context=search_context,
             chat_context=chat_context,
             roco_context=roco_context,
+            images=images,
+            extra_system_prompt=extra_system_prompt,
         )
     except AIReplyError:
         if not active_settings.has_ai_fallback_config():
@@ -267,6 +295,11 @@ async def request_ai_reply(
             active_settings.ai_model,
             active_settings.ai_fallback_model,
         )
+        if images:
+            # 备用模型不承诺视觉（当前 fallback=glm-4-flash 无视觉）：带图重试
+            # 注定 4xx，还会把本可回答的问题拖成"服务不可用"。落备用时一律
+            # 纯文本回答（模型至少能围绕文字回应），并留指标可查。
+            metrics.AI_VISION.labels("fallback_text").inc()
         return await _call_provider(
             prompt,
             settings=active_settings,
@@ -278,6 +311,7 @@ async def request_ai_reply(
             search_context=search_context,
             chat_context=chat_context,
             roco_context=roco_context,
+            extra_system_prompt=extra_system_prompt,
         )
 
 
@@ -291,24 +325,28 @@ async def request_completion(
     max_tokens: int = 512,
     temperature: float = 0.7,
     json_mode: bool = False,
+    images: Sequence[str] = (),
 ) -> str:
     """Single-turn completion with primary->fallback switching (S7-AUTO).
 
     Used by the auto-chat gate (json_mode + router model) and the casual
     persona replies. Separated from ``request_ai_reply`` because these calls
-    carry no search/memory/roco context blocks."""
+    carry no search/memory/roco context blocks.
+
+    ``images``（S11-VISION-01）：自主插话生成链的触发图（决策门永不带图）；
+    落备用时与 request_ai_reply 同规则一律去掉图片。"""
     active_settings = settings or get_settings()
     if not active_settings.has_ai_config():
         raise AIReplyError("AI_API_KEY is not configured")
     active_client = _resolve_client(client)
     chosen_model = model.strip() or active_settings.ai_model
 
-    def _payload(for_model: str) -> dict[str, Any]:
+    def _payload(for_model: str, for_images: Sequence[str]) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": for_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
+                {"role": "user", "content": _user_content_for(user_prompt, for_images)},
             ],
             "temperature": temperature,
             "max_tokens": max_tokens,
@@ -320,13 +358,14 @@ async def request_completion(
 
     try:
         return await _call_small_provider(
-            _payload(chosen_model),
+            _payload(chosen_model, images),
             settings=active_settings,
             client=active_client,
             base_url=active_settings.normalized_ai_base_url,
             api_key=active_settings.ai_api_key,
             model=chosen_model,
             breaker_name=BREAKER_AI_PRIMARY,
+            timeout_seconds=(active_settings.ai_qa_vision_timeout_seconds if images else None),
         )
     except AIReplyError:
         if not active_settings.has_ai_fallback_config():
@@ -340,8 +379,10 @@ async def request_completion(
         )
         # 备用侧永远用 ai_fallback_model（与 _call_provider 一致）：
         # 显式指定的主侧模型（如 router 便宜模型）在备用商可能不存在。
+        if images:
+            metrics.AI_VISION.labels("fallback_text").inc()
         return await _call_small_provider(
-            _payload(effective),
+            _payload(effective, ()),
             settings=active_settings,
             client=active_client,
             base_url=active_settings.normalized_ai_fallback_base_url,
@@ -360,6 +401,7 @@ async def _call_small_provider(
     api_key: str,
     model: str,
     breaker_name: str,
+    timeout_seconds: float | None = None,
 ) -> str:
     data = await _post_chat_completion(
         payload,
@@ -369,6 +411,7 @@ async def _call_small_provider(
         api_key=api_key,
         model=model,
         breaker_name=breaker_name,
+        timeout_seconds=timeout_seconds,
     )
     normalized = _normalize_response(data)
     await _account_usage(model, normalized.usage)
@@ -389,25 +432,62 @@ async def _call_provider(
     search_context: str,
     chat_context: str,
     roco_context: str,
+    images: Sequence[str] = (),
+    extra_system_prompt: str = "",
 ) -> str:
     """Run one provider under its own retry policy and breaker. Any provider
-    failure raises ``AIReplyError``; the caller decides about fallback."""
+    failure raises ``AIReplyError``; the caller decides about fallback.
+
+    视觉降级（S11-VISION-01）：带图请求被主模型**永久性拒绝**（4xx——模型
+    无视觉/图片源拉取失败/图片超限）时，同链路去掉图片重试一次纯文本，
+    问答主流程不中断（fail-open）；瞬时失败保持带图走既有重试与主备切换。"""
+    if images:
+        metrics.AI_VISION.labels("request").inc()
     payload = build_chat_payload(
         prompt,
         settings.model_copy(update={"ai_model": model}),
         search_context=search_context,
         chat_context=chat_context,
         roco_context=roco_context,
+        images=images,
+        extra_system_prompt=extra_system_prompt,
     )
-    data = await _post_chat_completion(
-        payload,
-        settings=settings,
-        client=client,
-        base_url=base_url,
-        api_key=api_key,
-        model=model,
-        breaker_name=breaker_name,
-    )
+    timeout_seconds = settings.ai_qa_vision_timeout_seconds if images else None
+    try:
+        data = await _post_chat_completion(
+            payload,
+            settings=settings,
+            client=client,
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            breaker_name=breaker_name,
+            timeout_seconds=timeout_seconds,
+        )
+    except AIReplyError as exc:
+        if not images or not isinstance(exc.__cause__, PermanentDependencyError):
+            raise
+        metrics.AI_VISION.labels("degraded").inc()
+        logger.warning(
+            "vision request permanently rejected; retrying same provider without images: model=%s",
+            model,
+        )
+        data = await _post_chat_completion(
+            build_chat_payload(
+                prompt,
+                settings.model_copy(update={"ai_model": model}),
+                search_context=search_context,
+                chat_context=chat_context,
+                roco_context=roco_context,
+                extra_system_prompt=extra_system_prompt,
+            ),
+            settings=settings,
+            client=client,
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            breaker_name=breaker_name,
+        )
     normalized = _normalize_response(data)
     await _account_usage(model, normalized.usage)
     if normalized.text is None:
@@ -424,9 +504,11 @@ async def _post_chat_completion(
     api_key: str,
     model: str,
     breaker_name: str,
+    timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
     """POST one chat completion under the stage-1 retry policy and breaker.
-    Returns the parsed JSON body; content extraction is the caller's job."""
+    Returns the parsed JSON body; content extraction is the caller's job.
+    ``timeout_seconds`` 覆盖共享客户端的读超时（视觉请求单独放宽用）。"""
     breaker = _breaker_for(breaker_name)
     provider = "primary" if breaker_name == BREAKER_AI_PRIMARY else "fallback"
     tracer = get_tracer()
@@ -458,6 +540,7 @@ async def _post_chat_completion(
                         base_url=base_url,
                         api_key=api_key,
                         model=model,
+                        timeout_seconds=timeout_seconds,
                     )
                 except AIReplyError:
                     # Invalid response / empty content: permanent, not
@@ -489,8 +572,14 @@ async def _post_once(
     base_url: str,
     api_key: str,
     model: str,
+    timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
     try:
+        kwargs: dict[str, Any] = {}
+        if timeout_seconds is not None:
+            # 显式覆盖读超时；注意 httpx 传 timeout=None 会变成"无限等待"，
+            # 只在确有覆盖值时才携带该参数。
+            kwargs["timeout"] = timeout_seconds
         response = await client.post(
             f"{base_url}/chat/completions",
             headers={
@@ -498,6 +587,7 @@ async def _post_once(
                 "Content-Type": "application/json",
             },
             json={**payload, "model": model},
+            **kwargs,
         )
         response.raise_for_status()
         data = response.json()

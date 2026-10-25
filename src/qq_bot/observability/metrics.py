@@ -273,6 +273,20 @@ _define(
     "Auto chat sticker send outcomes",
     ["result"],
 )
+_define(
+    "AI_VISION",
+    Counter,
+    "qq_bot_ai_vision_total",
+    "Vision request accounting (S11-VISION-01): request/degraded/fallback_text/dropped",
+    ["result"],
+)
+_define(
+    "QA_EXPRESSIONS",
+    Counter,
+    "qq_bot_qa_expressions_total",
+    "QA reply sticker/face marker outcomes (S11-VISION-01)",
+    ["kind", "result"],
+)
 
 
 def set_metrics_enabled(enabled: bool) -> None:

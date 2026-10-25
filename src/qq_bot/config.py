@@ -232,6 +232,21 @@ class BotSettings(BaseSettings):
     # （抢答场景快比深重要）。思考 token 计入 max_tokens（Q&A 上限 1200 足够）。
     ai_qa_thinking_enabled: bool = False
 
+    # ---- 视觉能力（S11-VISION-01）----
+    # @问答看图：消息里带 image/mface 段时转成 OpenAI 风格 image_url 块随
+    # 请求发出；模型拒绝/图片源不可用自动降级纯文本（fail-open）。关闭后
+    # 行为与纯文本版完全一致。
+    ai_qa_vision_enabled: bool = True
+    ai_qa_vision_max_images: int = 2  # 单条消息最多携带图片数，超出丢弃并计数
+    # 带图请求的读超时（图片下载 + 视觉推理比纯文本慢；仅覆盖带图请求）
+    ai_qa_vision_timeout_seconds: float = 90.0
+    # @问答回复可发表情：模型在回复里插 [发图:ID]/[发脸:名字] 标记，插件
+    # 确定性解析后发送；与自主插话共用本地表情包库（库为空时通道自然不生效）
+    ai_qa_sticker_enabled: bool = True
+    # 自主插话生成链带触发图（V2-lite）：开 = 触发消息里的图片随生成请求
+    # 发给模型（决策门仍纯文本，控成本）；关 = 仅 [图片] 占位进上下文
+    auto_chat_vision_enabled: bool = False
+
     chat_memory_path: str = "data/chat_memory.sqlite3"
     chat_memory_retention_days: int = 3
     chat_memory_default_turns: int = 10
@@ -781,6 +796,20 @@ class BotSettings(BaseSettings):
     def validate_ai_briefing_detail_chars(cls, value: int) -> int:
         if value < 0 or value > 2000:
             raise ValueError("ai_briefing_detail_chars must be between 0 and 2000")
+        return value
+
+    @field_validator("ai_qa_vision_max_images")
+    @classmethod
+    def validate_ai_qa_vision_max_images(cls, value: int) -> int:
+        if not 1 <= value <= 4:
+            raise ValueError("ai_qa_vision_max_images must be between 1 and 4")
+        return value
+
+    @field_validator("ai_qa_vision_timeout_seconds")
+    @classmethod
+    def validate_ai_qa_vision_timeout_seconds(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("ai_qa_vision_timeout_seconds must be greater than 0")
         return value
 
     @field_validator("ai_briefing_ai_provider")
