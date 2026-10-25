@@ -78,11 +78,13 @@ async def _main(args: argparse.Namespace) -> int:
     # 独立进程没有 NoneBot runtime：request_completion(client=None) 解析共享
     # HTTP client 时会抛 AIReplyError（runtime 未初始化），_llm 把它归为
     # ambiguous 静默吞掉——2026-10-26 服务器实测脚本模式五批全部提取失败的
-    # 根因。自建镜像 runtime.py 参数的 client 注入每次调用。
+    # 根因。自建镜像 runtime.py 参数的 client 注入每次调用；用赋值而非
+    # 追加，因为 _llm 的调用形状本来就带 client=None 关键字参数。
     http = httpx.AsyncClient(timeout=httpx.Timeout(settings.ai_timeout_seconds))
 
     async def complete(**kwargs):
-        return await request_completion(client=http, **kwargs)
+        kwargs["client"] = http
+        return await request_completion(**kwargs)
 
     try:
         if args.all:

@@ -201,7 +201,11 @@ def test_round_receives_complete_with_injected_http_client(monkeypatch, capsys) 
     assert main(["--all"]) == 0
     complete = calls[0]["complete"]
     assert callable(complete)
-    result = asyncio.run(complete(system_prompt="s", user_prompt="u", settings=settings))
+    # _llm 的调用形状本来就带 client=None：注入必须覆盖而不是追加
+    # （追加会 TypeError: multiple values for keyword argument 'client'）。
+    result = asyncio.run(
+        complete(system_prompt="s", user_prompt="u", settings=settings, client=None)
+    )
     assert result == "ok"
     assert isinstance(seen["client"], httpx.AsyncClient)
 
