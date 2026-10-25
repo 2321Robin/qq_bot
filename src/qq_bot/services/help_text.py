@@ -1,4 +1,4 @@
-def build_help_text(ai_prefix: str, *, roco_enabled: bool = True) -> str:
+def build_help_text(*, roco_enabled: bool = True) -> str:
     lines = [
         "可用功能：",
         "",
@@ -7,7 +7,6 @@ def build_help_text(ai_prefix: str, *, roco_enabled: bool = True) -> str:
         "/version 或 /版本 - 查看当前机器人版本",
         "",
         "AI 问答：",
-        f"{ai_prefix} <问题> - 直接提问，如「{ai_prefix} 今天玩什么」",
         "@机器人 <问题> - 点名提问，可发图、引用消息追问",
         "",
         "早晚报：",
