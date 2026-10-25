@@ -109,7 +109,7 @@ def test_face_tag_prefers_provider_text() -> None:
 
 def test_face_tag_falls_back_to_builtin_map() -> None:
     vision = extract_vision_inputs(
-        [segment("face", id="21")],
+        [segment("face", id="22")],
         vision_enabled=True,
         max_images=2,
     )
@@ -208,12 +208,23 @@ def test_strip_reply_markers_keeps_text() -> None:
 
 def test_face_id_for_name_resolves_whitelist() -> None:
     assert face_id_for_name("呲牙") == 13
-    assert face_id_for_name(" OK ") == 84
+    assert face_id_for_name(" OK ") == 124
+
+
+def test_face_id_for_name_modern_faces() -> None:
+    """2026-10-25 重建：整表取 NapCat/QFace 腾讯官方数据，新版编号（0=惊讶、
+    14=微笑，与 CoolQ 旧口径不同）；现代表情咦=352。"""
+    assert face_id_for_name("咦") == 352
+    assert face_id_for_name("吃瓜") == 271
+    assert QQ_FACE_NAMES[0] == "惊讶"
+    assert QQ_FACE_NAMES[14] == "微笑"
+    assert QQ_FACE_NAMES[20] == "偷笑"
+    assert QQ_FACE_NAMES[22] == "白眼"
 
 
 def test_face_id_for_name_rejects_outside_whitelist() -> None:
     # 菜刀在完整表里但不在机器人回表情的白名单里
-    assert QQ_FACE_NAMES.get(50) == "菜刀"
+    assert QQ_FACE_NAMES.get(112) == "菜刀"
     assert face_id_for_name("菜刀") is None
     assert face_id_for_name("不存在的表情") is None
 
@@ -331,11 +342,11 @@ def test_bare_face_mixed_with_text_and_markers() -> None:
 
 
 def test_non_whitelist_brackets_stay_text() -> None:
-    # [笑哭] 不在白名单、[图片] 是占位约定、[dog] 是任意词：一律不动
-    parsed = parse_reply_parts("[笑哭][图片][dog][偷笑]")
+    # [无语] 在表情表但不在白名单、[图片] 是占位约定、[dog] 是任意词：一律不动
+    parsed = parse_reply_parts("[无语][图片][dog][偷笑]")
     kinds = [part.kind for part in parsed.parts]
     assert kinds == ["text", "face"]
-    assert parsed.parts[0].value == "[笑哭][图片][dog]"
+    assert parsed.parts[0].value == "[无语][图片][dog]"
 
 
 def test_bare_faces_count_toward_face_cap() -> None:
