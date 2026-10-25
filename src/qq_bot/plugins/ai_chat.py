@@ -36,9 +36,10 @@ from qq_bot.services.auto_chat import (
     typing_intervals,
 )
 from qq_bot.services.auto_chat_collector import AutoChatCollector, CollectedBatch
-from qq_bot.services.chat_memory import ChatMemoryRepository
+from qq_bot.services.chat_memory import ChatMemoryRepository, ChatMemoryRow
 from qq_bot.services.persona import load_persona
 from qq_bot.services.memory_prompt import (
+    build_user_aliases,
     extract_at_user_ids,
     extract_at_user_ids_before_separator,
     format_chat_context,
@@ -62,6 +63,7 @@ from qq_bot.services.search import (
 )
 from qq_bot.services.vision_extract import (
     QA_FACE_WHITELIST,
+    RecalledImage,
     append_attachment_tags,
     extract_vision_inputs,
     face_id_for_name,
@@ -164,7 +166,7 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
             # 说话"——带图消息先进缓冲，@问答链自己没带图时回捞 TTL 内最近
             # 一张（见 QA 分支）。只存进程内存，重启即空。
             if vision.images:
-                shared_image_recall().remember(event.group_id, vision.images)
+                shared_image_recall().remember(event.group_id, vision.images, event.user_id)
             # 记忆/批次文本用占位：历史轮次知道"这里有一张图/一个表情"，
             # 原始图片不入库（隐私红线与 token 成本，V2 设计决策）。
             attachment_text = ("[图片]" if vision.image_segments else "") + "".join(
@@ -304,6 +306,9 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
             tracer.end_span(receive_span)
 
         chat_context = ""
+        # 上下文行留给回捞图的归属标注（_recalled_image_note 用同一份行算
+        # 别名，保证注脚里的"用户X"与聊天上下文渲染一致）。
+        context_rows: Sequence[ChatMemoryRow] = ()
         if memory_store is not None and not settings.agent_enabled:
             memory_span = tracer.start_span("memory.retrieve", trace_id=trace_id)
             try:
@@ -322,6 +327,7 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                     rows = await memory_store.recent_group_messages(
                         group_id=event.group_id, limit=limit
                     )
+                context_rows = rows
                 chat_context = format_chat_context(rows)
             except Exception:
                 tracer.end_span(memory_span, status="error")
@@ -438,18 +444,20 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                     prompt_for_model = prompt
                     if vision.face_tags:
                         prompt_for_model = f"{prompt} {' '.join(vision.face_tags)}"
-                    # 本条消息没带图时回捞最近一张（跨消息"先发图再 @"场景）。
+                    # 本条消息没带图时回捞最近一张（跨消息"先发图再 @"场景）；
+                    # 注脚带上发送者身份，模型才知道图归谁（回错对象教训）。
                     request_images = vision.images
                     if not request_images and settings.ai_qa_vision_recall_seconds > 0:
                         recalled = shared_image_recall().recall(
                             event.group_id,
                             ttl_seconds=settings.ai_qa_vision_recall_seconds,
                         )
-                        if recalled:
-                            request_images = recalled
+                        if recalled is not None:
+                            request_images = recalled.urls
                             metrics.AI_VISION.labels("recalled").inc()
                             prompt_for_model = (
-                                f"{prompt_for_model} （你刚发的那张图已附在本条消息里）"
+                                f"{prompt_for_model} "
+                                f"{_recalled_image_note(recalled, event, context_rows)}"
                             )
                     reply = await request_ai_reply(
                         prompt_for_model,
@@ -534,23 +542,58 @@ def _build_outgoing_reply(reply: str, *, settings: BotSettings) -> Message:
 
 
 def _qa_sticker_hint(settings: BotSettings) -> str:
-    """@问答的表情通道提示（S11-VISION-01）：库非空且开关开时才注入候选块
-    与标记用法——通道不可用的部署不为它付 prompt token。与自主插话共用
-    同一份表情包库与候选上限；QQ 经典表情用固定白名单。"""
+    """@问答的表情通道提示（S11-VISION-01）。
+
+    QQ 经典小表情（[发脸:名字]）不依赖表情包库——只要开关开就提示，否则
+    库为空的部署连表情都发不了（2026-10-25 线上实测：服务器没建库，整块
+    提示被吞，模型根本不知道有这个能力）。表情包候选块（[发图:ID]）只在
+    库非空时注入——通道不可用的部署不为它付 prompt token。"""
     if not settings.ai_qa_sticker_enabled:
         return ""
+    faces = "、".join(QA_FACE_WHITELIST)
+    hint = (
+        "回复时可以带表情：想回一个QQ经典小表情就在文本中插入 [发脸:名字]，"
+        "名字必须从可用名单里选；标记可与文字混排，没有合适的就不要插标记，"
+        "也不要发明名单之外的名字。"
+        f"可用QQ表情名：{faces}"
+    )
     library = _deliver_sticker_library()
     if library is None or not library.stickers:
-        return ""
+        return hint
     candidates = library.candidates(settings.auto_chat_sticker_max_candidates)
     listed = "\n".join(f"- {item.id}：{item.description}" for item in candidates)
-    faces = "、".join(QA_FACE_WHITELIST)
     return (
         "回复时可以带表情：想发一张表情包图片就在文本中插入 [发图:ID]，"
         "想回一个QQ经典小表情就在文本中插入 [发脸:名字]；标记可与文字混排，"
-        "一条回复最多两张表情包；没有合适的就不要插标记，也不要发明候选之外的 ID 或名字。"
+        "一条回复最多两张表情包；没有合适的就不要插标记，"
+        "也不要发明候选之外的 ID 或名字。"
         f"表情包候选（ID：描述）：\n{listed}\n可用QQ表情名：{faces}"
     )
+
+
+def _recalled_image_note(
+    recalled: RecalledImage,
+    event: GroupMessageEvent,
+    context_rows: Sequence[ChatMemoryRow],
+) -> str:
+    """回捞图的归属注脚（S11-VISION-01）：模型看得到图但不知道是谁发的，
+    会把提问者当成发图者回错对象。发送者=当前提问者时直说；别人发的用与
+    聊天上下文一致的"用户X"别名标注（同一份 context_rows + 发送者合成行
+    计算别名，保证两个渲染层的字母对得上；QQ 号照旧不进 prompt）。"""
+    if recalled.sender_user_id == event.user_id:
+        return "（这张图就是当前提问的用户自己刚发的，已附在本条消息里）"
+    synthetic = ChatMemoryRow(
+        id=-1,
+        group_id=event.group_id,
+        user_id=recalled.sender_user_id or 0,
+        message_text="[图片]",
+        created_at="",
+        is_ai_prompt=False,
+        ai_reply="",
+    )
+    alias = build_user_aliases([*context_rows, synthetic])
+    label = alias.get(recalled.sender_user_id or 0, "群友")
+    return f"（这张图是群里的{label}刚发的、已附在本条消息里，不是当前提问的用户发的）"
 
 
 async def _handle_agent_chat(

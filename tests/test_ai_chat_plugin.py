@@ -3063,9 +3063,17 @@ def test_build_outgoing_reply_disabled_channel_still_strips_markers(
     assert all(seg.type != "image" for seg in message)
 
 
-def test_qa_sticker_hint_empty_when_library_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_qa_sticker_hint_face_channel_survives_empty_library(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """QQ 小表情不依赖表情包库：库为空时 [发脸] 提示必须在，表情包候选块缺席
+    （2026-10-25 线上教训：服务器没建库，整块提示被吞，模型发不了表情）。"""
     monkeypatch.setattr(ai_chat_plugin, "_deliver_sticker_library", lambda: None)
-    assert ai_chat_plugin._qa_sticker_hint(BotSettings(ai_qa_sticker_enabled=True)) == ""
+    hint = ai_chat_plugin._qa_sticker_hint(BotSettings(ai_qa_sticker_enabled=True))
+    assert "[发脸:名字]" in hint
+    assert "呲牙" in hint
+    assert "表情包候选" not in hint
+    assert "[发图:ID]" not in hint
 
 
 def test_qa_sticker_hint_lists_candidates(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -3176,7 +3184,7 @@ async def test_ai_chat_own_image_wins_over_recall(
 
     captured: dict = {}
     recall_buffer = ImageRecallBuffer()
-    recall_buffer.remember(1001, ["https://multimedia.example/old.jpg"])
+    recall_buffer.remember(1001, ["https://multimedia.example/old.jpg"], sender_user_id=2002)
 
     async def fake_request_ai_reply(prompt, **kwargs) -> str:
         captured["images"] = kwargs.get("images")
@@ -3209,3 +3217,104 @@ async def test_ai_chat_own_image_wins_over_recall(
         )
 
     assert captured["images"] == ("https://multimedia.example/fresh.jpg",)
+
+
+# ---- 回捞图归属（S11-VISION-01：模型看得到图但不知道是谁发的）----
+
+
+@pytest.mark.asyncio
+async def test_recalled_image_note_attributes_other_sender(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """别人发的图 + 我来提问：注脚用上下文一致的"用户X"标注，并点明不是提问者发的。"""
+    from qq_bot.services.vision_extract import RecalledImage
+
+    note = ai_chat_plugin._recalled_image_note(
+        RecalledImage(urls=("https://img.example/a.jpg",), sender_user_id=2002),
+        SimpleNamespace(user_id=2001, group_id=1001),
+        context_rows=[],
+    )
+    assert "用户A" in note
+    assert "不是当前提问的用户发的" in note
+
+    # 发送者已在上下文行里时，别名与上下文渲染一致
+    row = ChatMemoryRow(
+        id=1,
+        group_id=1001,
+        user_id=2002,
+        message_text="[图片]",
+        created_at="",
+        is_ai_prompt=False,
+        ai_reply="",
+    )
+    note2 = ai_chat_plugin._recalled_image_note(
+        RecalledImage(urls=("https://img.example/a.jpg",), sender_user_id=2002),
+        SimpleNamespace(user_id=2001, group_id=1001),
+        context_rows=[row],
+    )
+    assert "用户A" in note2  # 2002 在上下文里排第一个 → 用户A
+
+
+@pytest.mark.asyncio
+async def test_recalled_image_note_attributes_current_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from qq_bot.services.vision_extract import RecalledImage
+
+    note = ai_chat_plugin._recalled_image_note(
+        RecalledImage(urls=("https://img.example/a.jpg",), sender_user_id=2001),
+        SimpleNamespace(user_id=2001, group_id=1001),
+        context_rows=[],
+    )
+    assert "当前提问的用户自己刚发的" in note
+
+
+@pytest.mark.asyncio
+async def test_recall_note_reaches_model_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """端到端：B 发图 → A @提问，注脚（含归属）进 prompt，图片随请求发出。"""
+    from qq_bot.services.vision_extract import ImageRecallBuffer
+
+    captured: dict = {}
+    recall_buffer = ImageRecallBuffer()
+
+    async def fake_request_ai_reply(prompt, **kwargs) -> str:
+        captured["prompt"] = prompt
+        captured["images"] = kwargs.get("images")
+        return "看到了"
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    monkeypatch.setattr(
+        ai_chat_plugin,
+        "get_settings",
+        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
+    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+    monkeypatch.setattr(ai_chat_plugin, "shared_image_recall", lambda: recall_buffer)
+
+    # B（2002）发图
+    await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
+        FakeEvent(
+            "",
+            [FakeImageSegment("https://multimedia.example/meme.jpg")],
+            user_id=2002,
+        )
+    )
+    # A（2001）@提问
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
+            FakeEvent(
+                "看得到吗",
+                [FakeAtSegment(2880000001), FakeTextSegment("看得到吗")],
+                to_me=True,
+                user_id=2001,
+            )
+        )
+
+    assert captured["images"] == ("https://multimedia.example/meme.jpg",)
+    assert "不是当前提问的用户发的" in captured["prompt"]

@@ -239,9 +239,12 @@ def test_recall_returns_recent_urls_within_ttl() -> None:
 
     clock = _FakeClock()
     buffer = ImageRecallBuffer(clock=clock)
-    buffer.remember(1001, ["https://img.example/a.jpg"])
+    buffer.remember(1001, ["https://img.example/a.jpg"], sender_user_id=2001)
 
-    assert buffer.recall(1001, ttl_seconds=300) == ("https://img.example/a.jpg",)
+    recalled = buffer.recall(1001, ttl_seconds=300)
+    assert recalled is not None
+    assert recalled.urls == ("https://img.example/a.jpg",)
+    assert recalled.sender_user_id == 2001
 
 
 def test_recall_expires_after_ttl() -> None:
@@ -249,10 +252,10 @@ def test_recall_expires_after_ttl() -> None:
 
     clock = _FakeClock()
     buffer = ImageRecallBuffer(clock=clock)
-    buffer.remember(1001, ["https://img.example/a.jpg"])
+    buffer.remember(1001, ["https://img.example/a.jpg"], sender_user_id=2001)
     clock.now += 301
 
-    assert buffer.recall(1001, ttl_seconds=300) == ()
+    assert buffer.recall(1001, ttl_seconds=300) is None
 
 
 def test_recall_isolated_per_group_and_prefers_latest() -> None:
@@ -260,14 +263,18 @@ def test_recall_isolated_per_group_and_prefers_latest() -> None:
 
     clock = _FakeClock()
     buffer = ImageRecallBuffer(clock=clock)
-    buffer.remember(1001, ["https://img.example/old.jpg"])
+    buffer.remember(1001, ["https://img.example/old.jpg"], sender_user_id=2001)
     clock.now += 10
-    buffer.remember(1001, ["https://img.example/new.jpg"])
-    buffer.remember(2002, ["https://img.example/other.jpg"])
+    buffer.remember(1001, ["https://img.example/new.jpg"], sender_user_id=2002)
+    buffer.remember(2002, ["https://img.example/other.jpg"], sender_user_id=2003)
 
-    assert buffer.recall(1001, ttl_seconds=300) == ("https://img.example/new.jpg",)
-    assert buffer.recall(2002, ttl_seconds=300) == ("https://img.example/other.jpg",)
-    assert buffer.recall(3003, ttl_seconds=300) == ()
+    recalled = buffer.recall(1001, ttl_seconds=300)
+    assert recalled is not None
+    assert recalled.urls == ("https://img.example/new.jpg",)
+    assert recalled.sender_user_id == 2002
+    other = buffer.recall(2002, ttl_seconds=300)
+    assert other is not None and other.urls == ("https://img.example/other.jpg",)
+    assert buffer.recall(3003, ttl_seconds=300) is None
 
 
 def test_recall_keeps_only_max_per_group() -> None:
@@ -275,34 +282,30 @@ def test_recall_keeps_only_max_per_group() -> None:
 
     clock = _FakeClock()
     buffer = ImageRecallBuffer(clock=clock, max_per_group=2)
-    buffer.remember(1001, ["https://img.example/1.jpg"])
+    buffer.remember(1001, ["https://img.example/1.jpg"], sender_user_id=2001)
     clock.now += 1
-    buffer.remember(1001, ["https://img.example/2.jpg"])
+    buffer.remember(1001, ["https://img.example/2.jpg"], sender_user_id=2001)
     clock.now += 1
-    buffer.remember(1001, ["https://img.example/3.jpg"])
+    buffer.remember(1001, ["https://img.example/3.jpg"], sender_user_id=2001)
 
     # 最旧的 1 被挤出；回捞返回最近一条
-    assert buffer.recall(1001, ttl_seconds=300) == ("https://img.example/3.jpg",)
-    clock.now += 1
-    assert buffer.recall(1001, ttl_seconds=1.5) in (
-        ("https://img.example/3.jpg",),
-        ("https://img.example/2.jpg",),
-    )
+    recalled = buffer.recall(1001, ttl_seconds=300)
+    assert recalled is not None and recalled.urls == ("https://img.example/3.jpg",)
 
 
 def test_recall_disabled_with_zero_ttl() -> None:
     from qq_bot.services.vision_extract import ImageRecallBuffer
 
     buffer = ImageRecallBuffer(clock=_FakeClock())
-    buffer.remember(1001, ["https://img.example/a.jpg"])
+    buffer.remember(1001, ["https://img.example/a.jpg"], sender_user_id=2001)
 
-    assert buffer.recall(1001, ttl_seconds=0) == ()
+    assert buffer.recall(1001, ttl_seconds=0) is None
 
 
 def test_remember_ignores_empty_urls() -> None:
     from qq_bot.services.vision_extract import ImageRecallBuffer
 
     buffer = ImageRecallBuffer(clock=_FakeClock())
-    buffer.remember(1001, [])
+    buffer.remember(1001, [], sender_user_id=2001)
 
-    assert buffer.recall(1001, ttl_seconds=300) == ()
+    assert buffer.recall(1001, ttl_seconds=300) is None

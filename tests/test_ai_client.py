@@ -1226,3 +1226,16 @@ async def test_request_completion_with_images_builds_multimodal_and_fallback_dro
     assert reply == "带图生成成功不了，纯文本"
     assert isinstance(client.calls[0]["json"]["messages"][-1]["content"], list)
     assert client.calls[1]["json"]["messages"][-1]["content"] == "最新消息 [图片]"
+
+
+@pytest.mark.asyncio
+async def test_build_chat_payload_vision_requests_get_larger_output_cap() -> None:
+    """思考模型看图时推理更长，1200 会被思考吃光导致空正文（2026-10-25 线上
+    实测 7 次带图 4 次空正文落备用）：带图请求放宽到 2400，纯文本不变。"""
+    settings = BotSettings(ai_model="test-model")
+
+    vision_payload = build_chat_payload("看图", settings, images=["https://img.example/a.jpg"])
+    text_payload = build_chat_payload("看图", settings)
+
+    assert vision_payload["max_tokens"] == 2400
+    assert text_payload["max_tokens"] == 1200

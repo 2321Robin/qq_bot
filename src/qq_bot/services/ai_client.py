@@ -222,7 +222,11 @@ def build_chat_payload(
             {"role": "user", "content": _user_content_for(user_content, images)},
         ],
         "temperature": 0.7,
-        "max_tokens": 1200,
+        # 思考模型（glm-5.3 系）的思考 token 计入 max_tokens：带图请求的
+        # 推理明显变长，1200 会被思考吃光导致正文为空（2026-10-25 线上实测：
+        # 7 次带图请求 4 次空正文 → 判空失败落备用链、丢图回答）。上限是界
+        # 不是预算（S11-BUDGET-01），带图时放宽到 2400，纯文本请求不变。
+        "max_tokens": 2400 if images else 1200,
         **_thinking_payload_extra(settings, thinking_enabled=settings.ai_qa_thinking_enabled),
     }
 
