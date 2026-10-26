@@ -1534,7 +1534,8 @@ async def run_auto_chat(
     if settings.auto_chat_interest_enabled:
         interest = state.interest_of(group_id, settings=settings)
         # 兴趣度自动进热聊（S10-HUMAN-P2 H7）：高热群且当前不在热聊窗口时，按热聊
-        # 路径处理本轮（跳过采样与门）并刷新窗口。note_reply 的 "hot_exit_limit"
+        # 路径处理本轮（跳过采样；S12-CHATFIX-01 起门不再豁免）并刷新窗口。note_reply
+        # 的 "hot_exit_limit"
         # 返回值此处有意忽略——新 streak=1 绝不可能触及 50 条兜底，streak 兜底由
         # 后续正常发言路径自然处理。
         if not hot and interest >= settings.auto_chat_interest_hot_threshold:
@@ -1623,24 +1624,27 @@ async def run_auto_chat(
     elif plusone:
         reply = plusone_text
         _metric("prefilter", "plusone")
-    elif hot:
-        _metric("prefilter", "hot_reply")
     else:
-        # 采样乘数（S10-HUMAN-P2 H7）：热度越高有效采样率越高；开关关闭时与
-        # 现状逐行等价（乘数 1、标签仍为 sampled_out）。
-        effective_rate = settings.auto_chat_sample_rate
-        if settings.auto_chat_interest_enabled:
-            effective_rate = min(1.0, effective_rate * (0.5 + 2.5 * interest))
-        if category is not TriggerCategory.YOU_TO_GATE and rng() >= effective_rate:
-            _metric(
-                "prefilter",
-                "interest_low" if settings.auto_chat_interest_enabled else "sampled_out",
-            )
-            return
-        if category is TriggerCategory.YOU_TO_GATE:
-            _metric("prefilter", "you_to_gate")
+        if hot:
+            # 热聊窗口免采样但不免门（S12-CHATFIX-01）：2026-10-26 线上复盘，
+            # 热聊链 19 连发全程无门，「肥鱼你怎么看」这类问别人的消息被抢答。
+            _metric("prefilter", "hot_reply")
         else:
-            _metric("prefilter", "passed")
+            # 采样乘数（S10-HUMAN-P2 H7）：热度越高有效采样率越高；开关关闭时与
+            # 现状逐行等价（乘数 1、标签仍为 sampled_out）。
+            effective_rate = settings.auto_chat_sample_rate
+            if settings.auto_chat_interest_enabled:
+                effective_rate = min(1.0, effective_rate * (0.5 + 2.5 * interest))
+            if category is not TriggerCategory.YOU_TO_GATE and rng() >= effective_rate:
+                _metric(
+                    "prefilter",
+                    "interest_low" if settings.auto_chat_interest_enabled else "sampled_out",
+                )
+                return
+            if category is TriggerCategory.YOU_TO_GATE:
+                _metric("prefilter", "you_to_gate")
+            else:
+                _metric("prefilter", "passed")
         gate_span = tracer.start_span("auto.gate", trace_id=current_request_id())
         # react 指令 + 可用表情 ID 提示（H9，Final Fix）：整个条件块仅在通道
         # 本轮真的可用时进 user prompt——react 回调不在、无触发消息 id（收集器

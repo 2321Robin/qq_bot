@@ -895,13 +895,34 @@ async def test_you_reference_goes_to_gate_even_with_zero_sample_rate() -> None:
 
 
 @pytest.mark.asyncio
-async def test_hot_mode_skips_gate_and_sampling() -> None:
+async def test_hot_mode_still_gates_but_skips_sampling() -> None:
+    """S12-CHATFIX-01：热聊窗口免采样不免门——2026-10-26 线上 19 连发全程
+    无门，「肥鱼你怎么看」这类问别人的消息被抢答，门必须重新把关。"""
     h = Harness(["随便聊聊"], _run_settings(auto_chat_sample_rate=0.0))
     h.state.note_reply(1001, settings=h.settings)  # 人为制造热聊态
     await _run(h, raw_text="随便聊聊")
     gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
-    assert gate_calls == []  # 不进门
+    assert len(gate_calls) == 1  # 免采样（sample_rate=0 仍回复），但过了门
     assert h.sent == ["你们这是要去哪？"]
+
+
+@pytest.mark.asyncio
+async def test_hot_mode_gate_rejection_blocks_reply() -> None:
+    """热聊窗口内门判不回 → 不生成不发送（与普通路径同闸）。"""
+    h = Harness(["随便聊聊"], _run_settings())
+    h.state.note_reply(1001, settings=h.settings)
+
+    def reject_completion():
+        async def fake(**kwargs) -> str:
+            h.completions.append(kwargs)
+            if "决策器" in kwargs["system_prompt"]:
+                return '{"should_reply": false, "reason": "none", "confidence": 0.9}'
+            return "不该被生成"
+
+        return fake
+
+    await _run(h, raw_text="肥鱼你怎么看", _completion=reject_completion())
+    assert h.sent == []
 
 
 @pytest.mark.asyncio
@@ -992,6 +1013,18 @@ class TestPromptBotVisibility:
         assert "等别人回应" in GATE_SYSTEM_PROMPT
         assert "不要当作 addressed" in GATE_SYSTEM_PROMPT
         assert "可按 banter 参与" in GATE_SYSTEM_PROMPT
+
+    def test_casual_system_prompt_has_s12_chatfix_rules(self) -> None:
+        """S12-CHATFIX-01 复盘四连：不替第三方作答 / 本X自称不指别人 /
+        关系词禁现编 / 未附图的占位禁描述（线上「本鲸的师傅」「图里画的是
+        小鲸鱼」穿帮）。"""
+        from qq_bot.services.persona import Persona, casual_system_prompt
+
+        prompt = casual_system_prompt(Persona(name="鸡煲", aliases=(), prompt="x"))
+        assert "更不能替他回答" in prompt
+        assert "不能用「本」字开头" in prompt
+        assert "别现编" in prompt
+        assert "不要描述、猜测或评价画面" in prompt
 
     def test_gate_system_prompt_injects_persona_name(self) -> None:
         prompt = gate_system_prompt("鸡煲")
@@ -1604,12 +1637,14 @@ class TestAntiEcho:
         def completion():
             async def fake(**kwargs) -> str:
                 calls["n"] += 1
+                if "决策器" in kwargs["system_prompt"]:  # S12-CHATFIX-01：热聊也要过门
+                    return h.gate_content
                 return next(seq)
 
             return fake
 
         await _run(h, raw_text="破防了？称号自己领的还赖账", _completion=completion())
-        assert calls["n"] == 2  # 回声触发一次重写
+        assert calls["n"] == 3  # 门 + 生成 + 回声重写（S12-CHATFIX-01 起热聊过门）
         assert h.sent == ["换个说法，这称号本来就是我领的"]  # 带逗号短句整条发送
 
     @pytest.mark.asyncio
@@ -1623,6 +1658,8 @@ class TestAntiEcho:
 
         def completion():
             async def fake(**kwargs) -> str:
+                if "决策器" in kwargs["system_prompt"]:  # S12-CHATFIX-01：热聊也要过门
+                    return '{"should_reply": true, "reason": "banter", "confidence": 0.9}'
                 return next(seq)
 
             return fake
@@ -2301,7 +2338,7 @@ async def test_interest_disabled_keeps_raw_sampling() -> None:
 
 @pytest.mark.asyncio
 async def test_interest_high_enters_hot_automatically() -> None:
-    """interest ≥ 阈值且不在热聊窗口 → 按热聊路径处理（跳过采样与门）并刷新窗口。"""
+    """interest ≥ 阈值且不在热聊窗口 → 按热聊路径处理（跳过采样；门不豁免）并刷新窗口。"""
     state = AutoChatState(clock=FakeClock())
     for _ in range(100):
         state.note_activity(1001, weight=1.0)
@@ -2315,7 +2352,8 @@ async def test_interest_high_enters_hot_automatically() -> None:
     before = _metric_value("prefilter", "interest_hot")
     await _run(h, "随便聊聊")
     assert h.sent  # 热度跳过采样
-    assert [c for c in h.completions if "决策器" in c["system_prompt"]] == []
+    gate_calls = [c for c in h.completions if "决策器" in c["system_prompt"]]
+    assert len(gate_calls) == 1  # S12-CHATFIX-01：热聊免采样不免门
     assert _metric_value("prefilter", "interest_hot") == before + 1
     assert h.state.hot_active(1001, settings=settings) is True
 
