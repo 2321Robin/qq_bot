@@ -80,6 +80,9 @@ async def _run(bot: OneBotV11Bot) -> None:
         raw = await bot.call_api("get_group_list")
         return [int(g.get("group_id")) for g in raw if isinstance(g, dict) and g.get("group_id")]
 
+    async def fetch_history(**kwargs):
+        return await bot.call_api("get_group_msg_history", **kwargs)
+
     async def send(group_id: int, text: str, at_user_id: int | None) -> None:
         message = Message()
         if at_user_id is not None:
@@ -99,7 +102,7 @@ async def _run(bot: OneBotV11Bot) -> None:
         settings=settings,
         state_store=CatchupStateStore(Path("data") / "catchup_state.json"),
         self_id=int(bot.self_id),
-        fetch_history_fn=bot.call_api,
+        fetch_history_fn=fetch_history,
         group_ids_fn=group_ids,
         send_fn=send,
         reply_fn=request_ai_reply,

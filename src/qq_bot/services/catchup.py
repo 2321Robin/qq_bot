@@ -336,9 +336,10 @@ async def _process_group(
 ) -> None:
     try:
         payload = await fetch_history_fn(group_id=group_id, count=settings.catchup_history_count)
-    except Exception:
+    except Exception as exc:
         metrics.CATCHUP.labels("fetch", "error").inc()
-        logger.info("catchup history fetch failed for one group; skipping")
+        # 只记异常类型名（如 ActionFailed/TimeoutError），不记消息内容
+        logger.warning("catchup history fetch failed for one group: %s", type(exc).__name__)
         return
 
     messages = parse_history(payload, self_id=self_id)
