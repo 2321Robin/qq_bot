@@ -355,8 +355,8 @@ async def _process_group(
     state[group_id] = plan.new_watermark
     state_store.save(state)
     if plan.first_start or not plan.backfill:
-        if plan.first_start:
-            metrics.CATCHUP.labels("plan", "first_start").inc()
+        # noop 指标区分"跑了无事可做"与"根本没跑"（重连验证依赖它）。
+        metrics.CATCHUP.labels("plan", "first_start" if plan.first_start else "noop").inc()
         return
 
     # 窗口内消息全部补库（记忆完整）；呼唤标记 is_ai_prompt，补答后回填。
