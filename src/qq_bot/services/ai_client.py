@@ -356,7 +356,9 @@ async def request_completion(
         raise AIReplyError("AI_API_KEY is not configured")
     active_client = _resolve_client(client)
     chosen_model = model.strip() or active_settings.ai_model
-    full_system_prompt = system_prompt + extra_system_prompt if extra_system_prompt else system_prompt
+    full_system_prompt = (
+        system_prompt + extra_system_prompt if extra_system_prompt else system_prompt
+    )
 
     def _payload(for_model: str, for_images: Sequence[str]) -> dict[str, Any]:
         payload: dict[str, Any] = {

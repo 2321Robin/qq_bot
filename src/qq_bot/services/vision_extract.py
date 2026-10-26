@@ -991,6 +991,7 @@ def is_attachment_only_text(text: str) -> bool:
     plusone 复读撞上纯图时据此转「重发原图」路径（S12-CHATFIX-01）。"""
     return not strip_attachment_placeholders(text)
 
+
 def read_image_as_data_url(path: str) -> str | None:
     """本地图片文件 → base64 data URL（多模态请求可直接携带）；文件缺失/
     超限返回 None。落库图回看（S12-IMGSTORE-01）的公开入口。"""

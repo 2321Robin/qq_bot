@@ -346,9 +346,7 @@ async def test_ai_chat_ignores_configured_sender_even_when_message_mentions_bot(
     )
     monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: _RecordingStore())
     monkeypatch.setattr(ai_chat_plugin, "run_auto_chat", fake_run_auto_chat)
-    await ai_chat_plugin.handle_ai_chat(
-        FakeEvent("你好", user_id=424242, to_me=True)
-    )  # type: ignore[arg-type]
+    await ai_chat_plugin.handle_ai_chat(FakeEvent("你好", user_id=424242, to_me=True))  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
@@ -356,7 +354,9 @@ async def test_ai_chat_ignores_self_mention_for_explicit_user_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """「参考 @机器人 自己的最近消息」：@ 自己不进 context_user_id。"""
-    event = FakeEvent("ai 参考最近的消息：他说了啥", to_me=True, segments=[FakeAtSegment(2880000001)])
+    event = FakeEvent(
+        "ai 参考最近的消息：他说了啥", to_me=True, segments=[FakeAtSegment(2880000001)]
+    )
     captured = await _run_addressed(monkeypatch, event)
     with pytest.raises(FinishCalled):
         await ai_chat_plugin.handle_ai_chat(event)  # type: ignore[arg-type]
@@ -1850,7 +1850,6 @@ def test_qa_sticker_hint_lists_candidates(monkeypatch: pytest.MonkeyPatch, tmp_p
 
 
 # ---- 回捞图归属（S11-VISION-01：模型看得到图但不知道是谁发的）----
-
 
 
 # ---- @问答引用前缀 + get_msg 回查（S11-QUOTE-01/02）----
