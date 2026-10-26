@@ -9,6 +9,41 @@ from qq_bot.services.memory_prompt import (
 )
 
 
+def test_render_bot_rows_with_persona_label() -> None:
+    """S12-CHATFIX-01：机器人写回记忆的行以 bot_label（人设名）渲染；
+    昵称目录缺失也不许把机器人渲染成「用户C」。"""
+    rows = [
+        ChatMemoryRow(
+            id=1,
+            group_id=1001,
+            user_id=2001,
+            message_text="在吗",
+            created_at="2026-10-27T00:00:00+00:00",
+            is_ai_prompt=False,
+            ai_reply="",
+        ),
+        ChatMemoryRow(
+            id=2,
+            group_id=1001,
+            user_id=2880000001,
+            message_text="刚说了句场面话",
+            created_at="2026-10-27T00:00:10+00:00",
+            is_ai_prompt=False,
+            ai_reply="",
+        ),
+    ]
+    lines = render_rows_with_aliases(rows, bot_user_id=2880000001, bot_label="鸡煲")
+    assert "鸡煲：刚说了句场面话" in lines
+    assert "用户A：在吗" in lines
+
+    # bot_label 缺失时回落字母，红线不变
+    fallback = render_rows_with_aliases(rows, bot_user_id=2880000001)
+    assert "用户B：刚说了句场面话" in fallback
+
+    context = format_chat_context(rows, bot_user_id=2880000001, bot_label="鸡煲")
+    assert "鸡煲：刚说了句场面话" in context
+
+
 def test_parse_recent_reference() -> None:
     parsed = parse_memory_reference("参考最近20条：继续总结", mentioned_user_ids=[])
 

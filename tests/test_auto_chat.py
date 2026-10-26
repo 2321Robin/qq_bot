@@ -517,6 +517,7 @@ async def _run(
     nicknames=None,
     trigger_images=(),
     send_image=None,
+    bot_user_id=None,
 ) -> None:
     async def _nick_resolver(user_ids):
         return nicknames
@@ -539,6 +540,7 @@ async def _run(
         sticker_library=sticker_library,
         send_sticker=send_sticker,
         send_image=send_image,
+        bot_user_id=bot_user_id,
         nickname_resolver=_nick_resolver if nicknames is not None else None,
         trigger_images=trigger_images,
     )
@@ -679,6 +681,21 @@ async def test_negative_feedback_sets_backoff_and_blocks() -> None:
     await _run(h, raw_text="随便")
     assert h.sent == []
     assert h.state.in_backoff(1001) is True
+
+
+@pytest.mark.asyncio
+async def test_negative_feedback_ignores_bot_own_rows() -> None:
+    """S12-CHATFIX-01：插话写回记忆后上下文里有 bot 行——bot 自己转述的
+    负反馈词（引用/复读别人骂人）不该触发对自己的退避。"""
+    h = Harness(["小洛你闭嘴啊"], _run_settings())
+    await _run(h, raw_text="别骂了别骂了", bot_user_id=2001)  # 该行就是 bot 自己的
+    assert h.sent
+    assert h.state.in_backoff(1001) is False
+
+    h2 = Harness(["小洛你闭嘴啊"], _run_settings())
+    await _run(h2, raw_text="别骂了别骂了", bot_user_id=2880000001)  # 行属于群友
+    assert h2.sent == []
+    assert h2.state.in_backoff(1001) is True
 
 
 @pytest.mark.asyncio
@@ -941,6 +958,22 @@ class TestPromptBotVisibility:
         rows = [_row("你好", user_id=2001, row_id=1, ai_reply="你好呀")]
         prompt = build_gate_user_prompt(rows)
         assert "机器人：你好呀" in prompt
+
+    def test_prompts_render_bot_rows_with_persona_label(self) -> None:
+        """S12-CHATFIX-01：机器人写回记忆的行以人设名渲染，不当「用户C」，
+        否则「这话是我说的」在模型眼里不成立。"""
+        rows = [
+            _row("在吗", user_id=2001, row_id=1),
+            _row("刚说了句场面话", user_id=2880000001, row_id=2),
+        ]
+        gate_prompt = build_gate_user_prompt(rows, bot_user_id=2880000001, bot_label="小洛")
+        assert "小洛：刚说了句场面话" in gate_prompt
+        assert "用户A：在吗" in gate_prompt
+        casual_prompt = build_casual_user_prompt(rows, bot_user_id=2880000001, bot_label="小洛")
+        assert "小洛：刚说了句场面话" in casual_prompt
+        # 不传 bot 标签时回落字母，行为与历史版本一致
+        plain = build_casual_user_prompt(rows)
+        assert "用户B：刚说了句场面话" in plain
 
     def test_gate_system_prompt_has_you_rule(self) -> None:
         assert "机器人" in GATE_SYSTEM_PROMPT

@@ -2078,7 +2078,7 @@ async def test_auto_chat_collect_route_stashes_hooks_and_submits_batch_item(
     assert item.sender_user_id == 2001
     assert item.row_id == 777
     assert 1001 in ai_chat_plugin._PENDING_AUTO_HOOKS
-    quota_check, send, react, send_sticker, send_image, trigger_images = (
+    quota_check, send, react, send_sticker, send_image, trigger_images, bot_user_id = (
         ai_chat_plugin._PENDING_AUTO_HOOKS[1001]
     )
     assert callable(quota_check)
@@ -2087,6 +2087,7 @@ async def test_auto_chat_collect_route_stashes_hooks_and_submits_batch_item(
     assert callable(send_sticker)
     assert callable(send_image)
     assert trigger_images == ()  # 普通文本消息无图，触发图占位为空元组
+    assert bot_user_id == 2880000001  # 写回记忆/渲染 bot 行要用机器人自己的 QQ 号
 
 
 @pytest.mark.asyncio
@@ -2312,6 +2313,109 @@ async def test_auto_chat_send_hook_swallows_finished_exception(
     monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: None)
 
     await send("x")  # 不抛出 FinishedException 即通过
+
+
+# ---- 机器人自己的发言写回记忆（S12-CHATFIX-01）----
+
+
+class _RecordingMemory:
+    def __init__(self) -> None:
+        self.rows: list[dict] = []
+
+    async def add_message(self, **kwargs):
+        self.rows.append(kwargs)
+        return len(self.rows)
+
+
+class _FakeSendBot:
+    def __init__(self) -> None:
+        self.sent: list[object] = []
+
+    async def send_group_msg(self, *, group_id: int, message: object) -> None:
+        self.sent.append(message)
+
+
+@pytest.mark.asyncio
+async def test_auto_chat_send_hook_records_self_messages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """插话成功出站后逐段写回聊天记忆（user_id=bot 自己），后续轮次上下文
+    才有「这话是我说的」——否则 @问答不认账（2026-10-26 线上实测）。"""
+    event = FakeEvent("随便聊聊")
+    settings = BotSettings(allowed_group_ids="1001", ai_api_key="secret")
+    memory = _RecordingMemory()
+    _, send, _react, _sticker, _image = ai_chat_plugin._build_auto_chat_hooks(
+        event, settings, memory_store=memory
+    )
+    bot = _FakeSendBot()
+    monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: bot)
+    monkeypatch.setattr(ai_chat_plugin.random, "uniform", lambda a, b: 0.0)
+
+    async def fake_finish(matcher, message):
+        bot.sent.append(message)  # 末段走 finish 链路发出
+        raise FinishedException()
+
+    monkeypatch.setattr(ai_chat_plugin, "finish_with_send_errors_logged", fake_finish)
+
+    await send(["第一句", "第二句"])
+    assert [str(m) for m in bot.sent] == ["第一句", "第二句"]
+    assert [(r["user_id"], r["message_text"]) for r in memory.rows] == [
+        (2880000001, "第一句"),
+        (2880000001, "第二句"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_auto_chat_send_hook_strips_placeholder_and_skips_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """出站保险闸：占位标记剥除；剥空段丢弃、全空整轮不发也不记账。"""
+    event = FakeEvent("随便聊聊")
+    settings = BotSettings(allowed_group_ids="1001", ai_api_key="secret")
+    memory = _RecordingMemory()
+    _, send, _react, _sticker, _image = ai_chat_plugin._build_auto_chat_hooks(
+        event, settings, memory_store=memory
+    )
+    bot = _FakeSendBot()
+    monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: bot)
+    monkeypatch.setattr(ai_chat_plugin.random, "uniform", lambda a, b: 0.0)
+
+    async def fake_finish(matcher, message):
+        bot.sent.append(message)
+        raise FinishedException()
+
+    monkeypatch.setattr(ai_chat_plugin, "finish_with_send_errors_logged", fake_finish)
+
+    await send(["看这个[图片]", "[图片]"])
+    assert [str(m) for m in bot.sent] == ["看这个"]  # 占位剥除；纯占位段丢弃
+    assert [(r["user_id"], r["message_text"]) for r in memory.rows] == [(2880000001, "看这个")]
+
+    await send(["[图片]"])
+    assert [str(m) for m in bot.sent] == ["看这个"]  # 全空整轮不发
+    assert len(memory.rows) == 1
+
+
+@pytest.mark.asyncio
+async def test_send_image_hook_records_placeholder_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """plusone 复读图成功后以 [图片] 占位行写回记忆；失败不记账。"""
+    event = FakeEvent("随便聊聊")
+    settings = BotSettings(allowed_group_ids="1001", ai_api_key="secret")
+    memory = _RecordingMemory()
+    _, _send, _react, _sticker, send_image = ai_chat_plugin._build_auto_chat_hooks(
+        event, settings, memory_store=memory
+    )
+    bot = _FakeSendBot()
+    monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: bot)
+
+    ok = await send_image("https://multimedia.example/a.jpg")
+    assert ok is True
+    assert [(r["user_id"], r["message_text"]) for r in memory.rows] == [(2880000001, "[图片]")]
+
+    monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: None)
+    assert await send_image("https://multimedia.example/b.jpg") is False
+    assert len(memory.rows) == 1  # 失败不记账
 
 
 # ---- 贴表情 react 闭包（S10-HUMAN-P2 H9，Fix Round 1 / Minor 5）----

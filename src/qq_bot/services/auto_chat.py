@@ -597,14 +597,24 @@ def build_gate_user_prompt(
     batch_rows: Sequence[ChatMemoryRow] = (),
     jargon_refs: Sequence[str] = (),
     nicknames: Mapping[int, str] | None = None,
+    bot_user_id: int | None = None,
+    bot_label: str | None = None,
 ) -> str:
     lines = ["最近群消息（最后一条是最新消息）："]
-    lines.extend(_render_rows(rows, nicknames=nicknames))
+    lines.extend(
+        _render_rows(rows, nicknames=nicknames, bot_user_id=bot_user_id, bot_label=bot_label)
+    )
     if batch_rows:
         lines.append(_BATCH_SECTION_HEADER)
         lines.extend(
             render_batch_rows(
-                batch_rows, build_user_aliases([*rows, *batch_rows], nicknames=nicknames)
+                batch_rows,
+                build_user_aliases(
+                    [*rows, *batch_rows],
+                    nicknames=nicknames,
+                    bot_user_id=bot_user_id,
+                    bot_label=bot_label,
+                ),
             )
         )
     if jargon_refs:
@@ -624,14 +634,24 @@ def build_casual_user_prompt(
     persona_examples: Sequence[str] = (),
     nicknames: Mapping[int, str] | None = None,
     search_refs: str = "",
+    bot_user_id: int | None = None,
+    bot_label: str | None = None,
 ) -> str:
     lines = ["最近群消息（最后一条是最新消息）："]
-    lines.extend(_render_rows(rows, nicknames=nicknames))
+    lines.extend(
+        _render_rows(rows, nicknames=nicknames, bot_user_id=bot_user_id, bot_label=bot_label)
+    )
     if batch_rows:
         lines.append(_BATCH_SECTION_HEADER)
         lines.extend(
             render_batch_rows(
-                batch_rows, build_user_aliases([*rows, *batch_rows], nicknames=nicknames)
+                batch_rows,
+                build_user_aliases(
+                    [*rows, *batch_rows],
+                    nicknames=nicknames,
+                    bot_user_id=bot_user_id,
+                    bot_label=bot_label,
+                ),
             )
         )
     if search_refs:
@@ -1038,9 +1058,13 @@ def build_cold_user_prompt(
     *,
     persona_examples: Sequence[str] = (),
     nicknames: Mapping[int, str] | None = None,
+    bot_user_id: int | None = None,
+    bot_label: str | None = None,
 ) -> str:
     lines = ["最近群消息（最后一条是最新消息）："]
-    lines.extend(_render_rows(rows, nicknames=nicknames))
+    lines.extend(
+        _render_rows(rows, nicknames=nicknames, bot_user_id=bot_user_id, bot_label=bot_label)
+    )
     if persona_examples:
         lines.append(_PERSONA_EXAMPLES_SECTION_HEADER)
         lines.extend(f"- {text}" for text in persona_examples)
@@ -1067,6 +1091,7 @@ def schedule_cold_check(
     _request_completion: Any = None,
     _sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     nicknames: Mapping[int, str] | None = None,
+    bot_user_id: int | None = None,
 ) -> None:
     """发言后调度一次冷场检查（spec 第五节）。进程内 task，重启丢失可接受。
     仅当上一条机器人发言具有提问性质时才视为冷场——陈述句没人接话是常态。"""
@@ -1095,7 +1120,10 @@ def schedule_cold_check(
             except Exception:
                 _cold("error")
                 return
-            latest = rows[-1] if rows else None
+            # 最新行按群友口径算（S12-CHATFIX-01）：机器人自己的发言写回记忆
+            # 后也是"最新行"，不排除的话冷场检查会被自己的话永久误判成有人接话。
+            user_rows = [r for r in rows if bot_user_id is None or r.user_id != bot_user_id]
+            latest = user_rows[-1] if user_rows else None
             if latest is not None:
                 latest_at = _row_created_at(latest)
                 if latest_at is not None and latest_at >= bot_reply_time:
@@ -1119,6 +1147,8 @@ def schedule_cold_check(
                                 recent_replies=_recent_replies(group_id),
                                 persona_examples=settings.persona_example_list,
                                 nicknames=nicknames,
+                                bot_user_id=bot_user_id,
+                                bot_label=persona.name or None,
                             )
                             + f"\n风格要求：{style_directive(random.random)}"
                         ),
@@ -1322,6 +1352,7 @@ async def run_auto_chat(
     sticker_library: StickerLibrary | None = None,
     send_sticker: Callable[[Sticker], Awaitable[bool]] | None = None,
     send_image: Callable[[str], Awaitable[bool]] | None = None,
+    bot_user_id: int | None = None,
     nickname_resolver: Callable[[frozenset[int]], Awaitable[Mapping[int, str] | None]]
     | None = None,
     trigger_images: Sequence[str] = (),
@@ -1346,6 +1377,10 @@ async def run_auto_chat(
     消息里原图的回调。None 或发送失败都整轮跳过——绝不回退为把「[图片]」
     占位当文字发出去。
 
+    ``bot_user_id``（S12-CHATFIX-01）：机器人自己的 QQ 号。插话写回聊天记忆后
+    上下文行里会出现 bot 行——以人设名渲染进 prompt（分得清"这话是我说的"），
+    负反馈检测与冷场检查的"最新消息"判定则排除 bot 行。
+
     ``nickname_resolver``（S11-AUTO-04）：按需解析群昵称的异步回调
     ``(user_ids) -> Mapping[int, str] | None``，插件经 OneBot 拉取并缓存。
     上下文行加载后调用一次，结果进门/生成 prompt 与 tune log；None 或缺
@@ -1362,6 +1397,7 @@ async def run_auto_chat(
     complete = _request_completion or _real_completion
     state = state or _SHARED_STATE
     persona = load_persona(settings)
+    bot_label = persona.name or None
     group_id = event.group_id
 
     def _metric(stage: str, result: str) -> None:
@@ -1479,7 +1515,10 @@ async def run_auto_chat(
         return
 
     bot_recently = state.recently_spoke(group_id, settings.auto_chat_cooldown_seconds)
-    detection_rows = [*rows, *_batch_as_rows(items, group_id)] if is_batch else rows
+    # 负反馈检测排除机器人自己的行（S12-CHATFIX-01 写回记忆后 rows 里有 bot
+    # 行）：自己转述群友的气话不该触发对自己的退避。
+    user_rows = [r for r in rows if bot_user_id is None or r.user_id != bot_user_id]
+    detection_rows = [*user_rows, *_batch_as_rows(items, group_id)] if is_batch else user_rows
     if detect_negative_feedback(
         detection_rows, persona=persona, settings=settings, bot_recently_spoke=bot_recently
     ):
@@ -1634,6 +1673,8 @@ async def run_auto_chat(
                     batch_rows=_batch_as_rows(items, group_id) if is_batch else (),
                     jargon_refs=jargon_refs,
                     nicknames=nicknames,
+                    bot_user_id=bot_user_id,
+                    bot_label=bot_label,
                 )
                 + reaction_hint
                 + sticker_hint,
@@ -1806,6 +1847,8 @@ async def run_auto_chat(
                             persona_examples=settings.persona_example_list,
                             nicknames=nicknames,
                             search_refs=search_refs,
+                            bot_user_id=bot_user_id,
+                            bot_label=bot_label,
                         )
                         + f"\n风格要求：{style_directive(rng)}"
                         + vision_note
@@ -1866,6 +1909,8 @@ async def run_auto_chat(
                                 persona_examples=settings.persona_example_list,
                                 nicknames=nicknames,
                                 search_refs=search_refs,
+                                bot_user_id=bot_user_id,
+                                bot_label=bot_label,
                             )
                             + "\n重写要求：你刚才的回复太长了。用 20 个字以内重说一遍，"
                             "只说最想说的那句，直接输出那句话。"
@@ -1896,6 +1941,8 @@ async def run_auto_chat(
                     person_observe_refs=observe_refs,
                     persona_examples=settings.persona_example_list,
                     search_refs=search_refs,
+                    bot_user_id=bot_user_id,
+                    bot_label=bot_label,
                 )
                 + f"\n风格要求：{style_directive(rng)}"
                 + "\n重写要求：你刚才的回复被拒绝（"
@@ -1961,6 +2008,7 @@ async def run_auto_chat(
         _request_completion=_request_completion,
         _sleep=_cold_sleep,
         nicknames=nicknames,
+        bot_user_id=bot_user_id,
     )
     parts = [reply] if plusone else split_casual_reply(reply, rng=rng)
     path_label = (

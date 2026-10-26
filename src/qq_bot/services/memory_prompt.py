@@ -98,6 +98,8 @@ def build_user_aliases(
     rows: Sequence[ChatMemoryRow],
     *,
     nicknames: Mapping[int, str] | None = None,
+    bot_user_id: int | None = None,
+    bot_label: str | None = None,
 ) -> dict[int, str]:
     """Stable per-call aliases so raw QQ ids never reach the model prompt —
     same rationale as the auto-chat gate (实测泄露问题).
@@ -105,11 +107,17 @@ def build_user_aliases(
     S11-AUTO-04（部署者裁决 2026-10-25）：有真实群昵称的群友直接用昵称
     （群内公开信息，复盘记录分得清人、模型能自然称呼）；昵称缺失或脏数据
     （空串/纯数字形似 QQ 号）时回落「用户A/B/C」字母，红线不变。字母序号
-    只按回落者计数，昵称用户不占字母位。"""
+    只按回落者计数，昵称用户不占字母位。
+    S12-CHATFIX-01：机器人自己的发言行（插话写回记忆后 rows 里会有 bot 行）
+    以 bot_label（人设名）渲染——昵称目录缺失时也不许把机器人渲染成
+    「用户C」，否则「这话是我说的」在模型眼里不成立。"""
     alias: dict[int, str] = {}
     letter_count = 0
     for row in rows:
         if row.user_id in alias:
+            continue
+        if bot_user_id is not None and row.user_id == bot_user_id and bot_label:
+            alias[row.user_id] = bot_label
             continue
         cleaned = sanitize_nickname((nicknames or {}).get(row.user_id))
         if cleaned is None:
@@ -136,8 +144,12 @@ def render_rows_with_aliases(
     rows: Sequence[ChatMemoryRow],
     *,
     nicknames: Mapping[int, str] | None = None,
+    bot_user_id: int | None = None,
+    bot_label: str | None = None,
 ) -> list[str]:
-    alias = build_user_aliases(rows, nicknames=nicknames)
+    alias = build_user_aliases(
+        rows, nicknames=nicknames, bot_user_id=bot_user_id, bot_label=bot_label
+    )
     lines: list[str] = []
     for row in rows:
         rendered = substitute_reference_tokens(row.message_text, alias)
@@ -148,15 +160,31 @@ def render_rows_with_aliases(
 
 
 def format_chat_context(
-    rows: list[ChatMemoryRow], *, nicknames: Mapping[int, str] | None = None
+    rows: list[ChatMemoryRow],
+    *,
+    nicknames: Mapping[int, str] | None = None,
+    bot_user_id: int | None = None,
+    bot_label: str | None = None,
 ) -> str:
     """@问答链的历史上下文渲染。``nicknames``（S11-VISION-01 follow-up）：
     与自主插话同一套昵称解析——有真实群昵称的群友按昵称渲染（群内公开
     信息，部署者已经 AUTO_CHAT_NICKNAMES_ENABLED 裁决），否则回落
-    用户A/B 字母。不给昵称时行为与历史版本逐字节一致。"""
+    用户A/B 字母。不给昵称时行为与历史版本逐字节一致。
+    ``bot_user_id``/``bot_label``（S12-CHATFIX-01）：机器人自己写回记忆的
+    发言行以人设名渲染。"""
     if not rows:
         return "没有找到相关历史聊天记录。"
-    return "\n".join(["历史聊天记录：", *render_rows_with_aliases(rows, nicknames=nicknames)])
+    return "\n".join(
+        [
+            "历史聊天记录：",
+            *render_rows_with_aliases(
+                rows,
+                nicknames=nicknames,
+                bot_user_id=bot_user_id,
+                bot_label=bot_label,
+            ),
+        ]
+    )
 
 
 def _extract_keyword(head: str) -> str | None:

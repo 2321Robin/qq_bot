@@ -347,7 +347,14 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                         )
                     except Exception:
                         qa_nicknames = None
-                chat_context = format_chat_context(rows, nicknames=qa_nicknames)
+                chat_context = format_chat_context(
+                    rows,
+                    nicknames=qa_nicknames,
+                    # 机器人自己的插话行（S12-CHATFIX-01 写回记忆）以人设名渲染，
+                    # 昵称目录缺失也不许把机器人渲染成「用户C」。
+                    bot_user_id=int(event.self_id) if event.self_id else None,
+                    bot_label=load_persona(settings).name or None,
+                )
             except Exception:
                 tracer.end_span(memory_span, status="error")
                 logger.exception("Chat memory read failed; continuing without chat context")
@@ -504,7 +511,7 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
 
         # 被 @ 问答路径不贴表情也不发表情包（用户在直接对话）：quota/send 用得上
         _quota_check, send, _unused_react, _unused_sticker, _unused_image = _build_auto_chat_hooks(
-            event, settings
+            event, settings, memory_store=memory_store
         )
         exit_flag = shared_state().note_reply(event.group_id, settings=settings)
         if exit_flag:
@@ -519,6 +526,7 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                 send=send,
                 quota_check=_quota_check,
                 client=http_client,
+                bot_user_id=int(event.self_id) if event.self_id else None,
             )
 
         await _send_qa_reply(
@@ -850,19 +858,42 @@ def _quote_message_fetcher() -> Callable[[int], Awaitable[tuple[int, str] | None
 
 
 def _build_auto_chat_hooks(
-    event: GroupMessageEvent, settings: BotSettings
+    event: GroupMessageEvent, settings: BotSettings, memory_store: object | None = None
 ) -> tuple[
     Callable[[], Awaitable[bool]],
     Callable[[str], Awaitable[None]],
     Callable[[int, str], Awaitable[bool]],
     Callable[[Sticker], Awaitable[bool]],
+    Callable[[str], Awaitable[bool]],
 ]:
-    """quota 准入、发送、贴表情与发表情包闭包（自主插话与被 @ 路径共用）。
+    """quota 准入、发送、贴表情、发表情包与重发图片闭包（自主插话与被 @
+    路径共用）。
     react（S10-HUMAN-P2 H9）：对触发消息贴 OneBot v11 `set_msg_emoji_like`，
     emoji_id 由决策门白名单过滤后传入；任何失败返回 False（由 auto_chat 的
     连续失败降级逻辑处置），成功 True。
     send_sticker（S10-HUMAN-P2 H10）：把库中条目对应的本地图片作为 image 段
-    发到本群；无 bot 连接/发送失败一律 False（降级与限额记账在服务层）。"""
+    发到本群；无 bot 连接/发送失败一律 False（降级与限额记账在服务层）。
+    send_image（S12-CHATFIX-01）：plusone 复读图重发公网 URL。
+    ``memory_store``（S12-CHATFIX-01）：非空时每次成功出站后把机器人自己的
+    发言写回聊天记忆——不写回则后续轮次上下文里没有"这话是我说的"，
+    @问答会不认账（2026-10-26 线上实测）。写失败静默，绝不拖累发送。"""
+
+    bot_user_id = 0
+    try:
+        bot_user_id = int(getattr(event, "self_id", 0) or 0)
+    except (TypeError, ValueError):
+        bot_user_id = 0
+
+    async def _record_self_message(text: str) -> None:
+        if memory_store is None or not bot_user_id:
+            return
+        try:
+            await memory_store.add_message(
+                group_id=event.group_id, user_id=bot_user_id, message_text=text
+            )
+            metrics.AUTO_CHAT.labels("memory", "self_recorded").inc()
+        except Exception:
+            metrics.AUTO_CHAT.labels("memory", "self_record_error").inc()
 
     async def quota_check() -> bool:
         try:
@@ -917,7 +948,10 @@ def _build_auto_chat_hooks(
                     )
                 except Exception:
                     pass  # 插话碎片丢失可接受；也不把消息内容写进日志（隐私白名单）
+                else:
+                    await _record_self_message(part)
                 await asyncio.sleep(intervals[index])
+            await _record_self_message(parts[-1])  # 移交 finish 前记账（finish 必然抛出）
             await finish_with_send_errors_logged(
                 ai_chat,
                 replace_named_mentions(parts[-1], settings.named_mention_replacement_map),
@@ -970,9 +1004,10 @@ def _build_auto_chat_hooks(
                 group_id=event.group_id,
                 message=MessageSegment.image(url),
             )
-            return True
         except Exception:
             return False
+        await _record_self_message("[图片]")  # 记忆里以占位行登记，后续轮次知道发过图
+        return True
 
     return quota_check, send, react, send_sticker, send_image
 
@@ -999,8 +1034,14 @@ async def _maybe_auto_reply(
     auto_chat_vision_enabled 开启时非空，随生成请求发给模型。"""
     load_persona(settings)  # 前置校验：人设配置可解析（坏配置早失败）
 
-    quota_check, send, react, send_sticker, send_image = _build_auto_chat_hooks(event, settings)
+    quota_check, send, react, send_sticker, send_image = _build_auto_chat_hooks(
+        event, settings, memory_store=memory_store
+    )
     trigger_images = tuple(trigger_images)
+    try:
+        auto_bot_user_id = int(event.self_id) if getattr(event, "self_id", None) else None
+    except (TypeError, ValueError):
+        auto_bot_user_id = None
 
     category = classify_trigger(raw_text, settings=settings, quoted_self=quoted_self)
     bypass = category in (
@@ -1027,6 +1068,7 @@ async def _maybe_auto_reply(
             else None,
             send_sticker=send_sticker if settings.auto_chat_sticker_enabled else None,
             send_image=send_image,
+            bot_user_id=auto_bot_user_id,
             nickname_resolver=_nickname_resolver(event.group_id, settings),
             trigger_images=trigger_images,
         )
@@ -1049,6 +1091,7 @@ async def _maybe_auto_reply(
             else None,
             send_sticker=send_sticker if settings.auto_chat_sticker_enabled else None,
             send_image=send_image,
+            bot_user_id=auto_bot_user_id,
             nickname_resolver=_nickname_resolver(event.group_id, settings),
             trigger_images=trigger_images,
         )
@@ -1064,6 +1107,7 @@ async def _maybe_auto_reply(
         send_sticker,
         send_image,
         trigger_images,
+        auto_bot_user_id,
     )
     await collector.submit(
         event.group_id,
@@ -1146,7 +1190,15 @@ def _get_auto_chat_collector() -> AutoChatCollector:
         async def _deliver(group_id: int, batch: CollectedBatch) -> None:
             hooks = _PENDING_AUTO_HOOKS.pop(group_id, None)
             if hooks:
-                quota_check, send, _react, send_sticker, send_image, trigger_images = hooks
+                (
+                    quota_check,
+                    send,
+                    _react,
+                    send_sticker,
+                    send_image,
+                    trigger_images,
+                    bot_user_id,
+                ) = hooks
             else:
                 quota_check, send, _react, send_sticker, send_image, trigger_images = (
                     None,
@@ -1156,6 +1208,7 @@ def _get_auto_chat_collector() -> AutoChatCollector:
                     None,
                     (),
                 )
+                bot_user_id = None
             try:
                 memory_store = get_chat_repository()
                 http_client = get_http_client()
@@ -1182,6 +1235,7 @@ def _get_auto_chat_collector() -> AutoChatCollector:
                 sticker_library=_deliver_sticker_library(),
                 send_sticker=send_sticker,
                 send_image=send_image,
+                bot_user_id=bot_user_id,
                 nickname_resolver=_nickname_resolver(group_id, get_settings()),
                 # 触发图（S11-VISION-01；S12-CHATFIX-01 起供 plusone 复读图取
                 # URL）：批次末条（触发消息）携带的图片源；run_auto_chat 内部
