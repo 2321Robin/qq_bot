@@ -78,11 +78,7 @@ async def _run(bot: OneBotV11Bot) -> None:
         if allowed:
             return allowed
         raw = await bot.call_api("get_group_list")
-        return [
-            int(g.get("group_id"))
-            for g in raw
-            if isinstance(g, dict) and g.get("group_id")
-        ]
+        return [int(g.get("group_id")) for g in raw if isinstance(g, dict) and g.get("group_id")]
 
     async def send(group_id: int, text: str, at_user_id: int | None) -> None:
         message = Message()

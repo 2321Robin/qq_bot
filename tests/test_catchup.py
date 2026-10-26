@@ -136,9 +136,7 @@ def test_plan_first_start_initializes_watermark_without_replay() -> None:
 
 
 def test_plan_first_start_without_messages_uses_now() -> None:
-    plan = plan_catchup(
-        [], watermark=None, now_epoch=1000, max_age_seconds=7200, max_replies=3
-    )
+    plan = plan_catchup([], watermark=None, now_epoch=1000, max_age_seconds=7200, max_replies=3)
     assert plan.first_start is True
     assert plan.new_watermark == 1000
 

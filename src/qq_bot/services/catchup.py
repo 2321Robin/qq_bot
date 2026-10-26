@@ -335,9 +335,7 @@ async def _process_group(
     rng: Callable[[], float],
 ) -> None:
     try:
-        payload = await fetch_history_fn(
-            group_id=group_id, count=settings.catchup_history_count
-        )
+        payload = await fetch_history_fn(group_id=group_id, count=settings.catchup_history_count)
     except Exception:
         metrics.CATCHUP.labels("fetch", "error").inc()
         logger.info("catchup history fetch failed for one group; skipping")
@@ -395,7 +393,9 @@ async def _process_group(
 
     if settings.catchup_announce:
         try:
-            variant = _ANNOUNCE_VARIANTS[min(int(rng() * len(_ANNOUNCE_VARIANTS)), len(_ANNOUNCE_VARIANTS) - 1)]
+            variant = _ANNOUNCE_VARIANTS[
+                min(int(rng() * len(_ANNOUNCE_VARIANTS)), len(_ANNOUNCE_VARIANTS) - 1)
+            ]
             await send_fn(group_id, variant, None)
             await sleep_fn(1.0 + rng())
         except Exception:
