@@ -409,6 +409,7 @@ async def _process_group(
             reply_fn=reply_fn,
             context_rows_fn=context_rows_fn,
             group_id=group_id,
+            now_epoch=now_epoch_fn(),
         )
         if reply is None:
             continue
@@ -439,6 +440,7 @@ async def _answer_call(
     reply_fn: ReplyFn,
     context_rows_fn: Callable[[int], Awaitable[Sequence[Any]]] | None,
     group_id: int,
+    now_epoch: int,
 ) -> str | None:
     chat_context = ""
     if context_rows_fn is not None:
@@ -447,14 +449,27 @@ async def _answer_call(
             chat_context = format_chat_context(list(rows))
         except Exception:
             chat_context = ""
+    # 12h 窗口下补答的呼唤可能已经很老：把时效告诉模型，让"在吗"这类
+    # 消息得到"来晚了"式的自然回应，而不是当成刚发生的对话。
+    age_hint = f"这条消息发出于{_describe_age(now_epoch - m.time)}。"
     try:
         return await reply_fn(
             m.text,
             settings=settings,
             chat_context=chat_context,
-            extra_system_prompt=_CATCHUP_HINT,
+            extra_system_prompt=_CATCHUP_HINT + age_hint,
         )
     except Exception:
         metrics.CATCHUP.labels("reply", "model_error").inc()
         logger.warning("catchup model reply failed for one call")
         return None
+
+
+def _describe_age(seconds: int) -> str:
+    if seconds < 90:
+        return "刚刚"
+    if seconds < 5400:
+        return f"{max(1, seconds // 60)} 分钟前"
+    if seconds < 172800:
+        return f"{max(1, seconds // 3600)} 小时前"
+    return f"{max(1, seconds // 86400)} 天前"

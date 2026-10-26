@@ -261,6 +261,7 @@ class Harness:
         self.sent: list[tuple[int, str, int | None]] = []
         self.reply_prompts: list[str] = []
         self.reply_contexts: list[str] = []
+        self.reply_hints: list[str] = []
         self.reply_result: str | Exception = "补答内容"
         self.quota_allowed = True
         self.quota_groups: list[int] = []
@@ -280,6 +281,7 @@ class Harness:
             raise self.reply_result
         self.reply_prompts.append(prompt)
         self.reply_contexts.append(kwargs.get("chat_context", ""))
+        self.reply_hints.append(kwargs.get("extra_system_prompt", ""))
         return self.reply_result
 
     async def quota(self, group_id: int) -> bool:
@@ -357,6 +359,10 @@ def test_run_backfills_and_answers_missed_calls(state_store) -> None:
     # 补答回填到呼唤的库行
     call_row = next(a for a in harness.memory.added if a["is_ai_prompt"])
     assert harness.memory.replies[call_row["row_id"]] == "补答内容"
+    # 时效提示：now=10000、消息 time=9200 → 800 秒 ≈ 13 分钟前
+    assert len(harness.reply_hints) == 1
+    assert "13 分钟前" in harness.reply_hints[0]
+    assert "掉线" in harness.reply_hints[0]
     # quota 按群检查过
     assert harness.quota_groups == [1001]
     # 水位推进到最新（机器人自身消息 9600 不参与，最新群消息是 9300）
@@ -430,8 +436,12 @@ def test_run_second_round_is_idempotent(state_store) -> None:
 
 def test_run_skips_groups_beyond_window(state_store) -> None:
     # 水位 100，消息 200，now=10_000，窗口 7200 → 200 超窗，全部跳过
+    # （窗口显式传入：默认值已放宽到 12h，不再天然覆盖此场景）
     state_store.save({1001: 100})
-    harness = Harness({1001: _history_payload(_msg(200, 2002, [_at(SELF_ID), _text("太久远了")]))})
+    harness = Harness(
+        {1001: _history_payload(_msg(200, 2002, [_at(SELF_ID), _text("太久远了")]))},
+        settings=BotSettings(catchup_max_age_seconds=7200),
+    )
     asyncio.run(harness.run(state_store))
     assert harness.sent == []
     assert harness.memory.added == []

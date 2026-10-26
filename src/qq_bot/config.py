@@ -484,10 +484,10 @@ class BotSettings(BaseSettings):
     # CATCHUP_MAX_AGE_SECONDS 的呼唤不补（防惊吓）；每群每轮最多补
     # CATCHUP_MAX_REPLIES 条，超出只补库不答。
     catchup_enabled: bool = True
-    catchup_max_age_seconds: int = 7200
-    catchup_max_replies: int = 3
+    catchup_max_age_seconds: int = 43200
+    catchup_max_replies: int = 10
     catchup_announce: bool = True
-    catchup_history_count: int = 60  # 每群单轮拉取的历史条数
+    catchup_history_count: int = 100  # 每群单轮拉取的历史条数（>=窗口消息量才能捞全）
 
     model_config = SettingsConfigDict(
         env_file=".env",
