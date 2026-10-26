@@ -137,19 +137,49 @@ def test_start_all_script_stops_existing_services_before_starting() -> None:
 
     assert "Stopping existing bot backend before fresh startup." in script
     assert "Stopping existing NapCat before fresh startup." in script
+    assert "Stopping existing SnowLuma before fresh startup." in script
     assert "Stop-BotProcesses -Processes $botProcesses" in script
-    assert "Stop-NapCatProcesses -Processes $napCatProcesses" in script
+    assert 'Stop-ProtocolProcesses -Processes $napCatProcesses -Label "NapCat"' in script
+    assert 'Stop-ProtocolProcesses -Processes $snowLumaProcesses -Label "SnowLuma"' in script
     keyword = 'Write-Host "Checking startup files..."'
     main_script = script[script.index(keyword) :]
     assert main_script.index("Stop-BotProcesses -Processes $botProcesses") < main_script.index(
         "Start-BotBackend"
     )
-    assert main_script.index(
-        "Stop-NapCatProcesses -Processes $napCatProcesses"
-    ) < main_script.index("Start-BotBackend")
-    assert main_script.index(
-        "Stop-NapCatProcesses -Processes $napCatProcesses"
-    ) < main_script.index("Start-NapCat")
+    napcat_stop = main_script.index(
+        'Stop-ProtocolProcesses -Processes $napCatProcesses -Label "NapCat"'
+    )
+    snowluma_stop = main_script.index(
+        'Stop-ProtocolProcesses -Processes $snowLumaProcesses -Label "SnowLuma"'
+    )
+    assert napcat_stop < main_script.index("Start-BotBackend")
+    assert snowluma_stop < main_script.index("Start-BotBackend")
+    assert napcat_stop < main_script.index("Start-NapCat")
+    assert snowluma_stop < main_script.index("Start-SnowLuma")
+
+
+def test_start_all_script_supports_protocol_selection() -> None:
+    script = (ROOT / "start_all.ps1").read_text(encoding="utf-8")
+
+    # Protocol defaults to napcat when the key is absent (backward compat).
+    assert '$Protocol = "napcat"' in script
+    assert "Protocol must be 'napcat' or 'snowluma'" in script
+    assert "SnowLumaDir" in script
+    assert "index.mjs" in script
+    assert "SNOWLUMA_ACCEPT_EULA" in script
+    assert "Get-SnowLumaProcess" in script
+    assert "Start-SnowLuma" in script
+
+
+def test_stop_all_script_supports_protocol_selection() -> None:
+    script = (ROOT / "stop_all.ps1").read_text(encoding="utf-8")
+
+    assert '$Protocol = "napcat"' in script
+    assert "Protocol must be 'napcat' or 'snowluma'" in script
+    assert "SnowLumaDir" in script
+    assert "Get-SnowLumaProcess" in script
+    # SnowLuma mode must not kill the manually-started QQ process.
+    assert "QQ process is left running" in script
 
 
 def test_batch_entrypoint_invokes_hidden_powershell_script() -> None:
