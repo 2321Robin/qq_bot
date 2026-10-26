@@ -477,6 +477,18 @@ class BotSettings(BaseSettings):
     auto_chat_search_enabled: bool = False
     auto_chat_search_daily_limit: int = 10  # 每群每日搜索次数上限；0 = 不限
 
+    # ---- 断线补答（S12-CATCHUP-01）----
+    # 重连后用 get_group_msg_history 拉群漫游记录：掉线窗口内漏掉的消息
+    # 补回 chat memory，其中 @机器人 的呼唤补一条 AI 回答（先发一句
+    # "刚才掉线"过渡）。护栏：首次启动只记水位不回溯；超过
+    # CATCHUP_MAX_AGE_SECONDS 的呼唤不补（防惊吓）；每群每轮最多补
+    # CATCHUP_MAX_REPLIES 条，超出只补库不答。
+    catchup_enabled: bool = True
+    catchup_max_age_seconds: int = 7200
+    catchup_max_replies: int = 3
+    catchup_announce: bool = True
+    catchup_history_count: int = 60  # 每群单轮拉取的历史条数
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

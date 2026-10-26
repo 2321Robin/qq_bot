@@ -287,6 +287,13 @@ _define(
     "QA reply sticker/face marker outcomes (S11-VISION-01)",
     ["kind", "result"],
 )
+_define(
+    "CATCHUP",
+    Counter,
+    "qq_bot_catchup_total",
+    "Reconnect catch-up outcomes (S12-CATCHUP-01)",
+    ["stage", "result"],
+)
 
 
 def set_metrics_enabled(enabled: bool) -> None:
