@@ -973,6 +973,27 @@ def append_attachment_tags(text: str, vision: VisionInputs) -> str:
     return f"{text} {tags}".strip()
 
 
+# 出站占位符保险闸（S12-CHATFIX-01）：这些标记只属于记忆文本/发送指令格式，
+# 原样出现在发送文本里都是穿帮——2026-10-26 线上实测 plusone 把字面「[图片]」
+# 四个字符当消息发进了群。发送端逐段剥除，剥后为空的段整段丢弃。
+_ATTACHMENT_PLACEHOLDER_RE = re.compile(
+    r"\[(?:图片|表情(?:[:：][^\[\]]*|#\d+)?|表情包[:：][^\[\]]*"
+    r"|发图[:：][^\[\]]*|发脸[:：][^\[\]]*)\]"
+)
+
+
+def strip_attachment_placeholders(text: str) -> str:
+    """剥除记忆占位与发送指令标记，返回 strip 后的文本（可能为空串）。"""
+    return _ATTACHMENT_PLACEHOLDER_RE.sub("", text).strip()
+
+
+def is_attachment_only_text(text: str) -> bool:
+    """纯图/表情消息的记忆文本视角：剥掉占位标记后没有剩余文字。
+
+    plusone 复读撞上纯图时据此转「重发原图」路径（S12-CHATFIX-01）。"""
+    return not strip_attachment_placeholders(text)
+
+
 # ---- 近期图片回忆 ----
 
 _RECALL_MAX_PER_GROUP = 3

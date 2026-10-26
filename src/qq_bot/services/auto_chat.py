@@ -38,6 +38,7 @@ from qq_bot.services.persona import (
 from qq_bot.services.reliability import classify_exception
 from qq_bot.services.typo_injector import maybe_apply_typo
 from qq_bot.services.sticker_library import Sticker, StickerLibrary
+from qq_bot.services.vision_extract import is_attachment_only_text
 
 logger = get_logger("qq_bot.auto_chat")
 
@@ -1320,6 +1321,7 @@ async def run_auto_chat(
     trigger_message_id: int | None = None,
     sticker_library: StickerLibrary | None = None,
     send_sticker: Callable[[Sticker], Awaitable[bool]] | None = None,
+    send_image: Callable[[str], Awaitable[bool]] | None = None,
     nickname_resolver: Callable[[frozenset[int]], Awaitable[Mapping[int, str] | None]]
     | None = None,
     trigger_images: Sequence[str] = (),
@@ -1340,6 +1342,10 @@ async def run_auto_chat(
     与发送回调。任一缺失（或库为空）时 sticker 通道不可用，候选块与指令都不进
     prompt，门给 action=sticker 也回落文本路径。
 
+    ``send_image``（S12-CHATFIX-01）：plusone 复读撞上纯图/表情消息时重发触发
+    消息里原图的回调。None 或发送失败都整轮跳过——绝不回退为把「[图片]」
+    占位当文字发出去。
+
     ``nickname_resolver``（S11-AUTO-04）：按需解析群昵称的异步回调
     ``(user_ids) -> Mapping[int, str] | None``，插件经 OneBot 拉取并缓存。
     上下文行加载后调用一次，结果进门/生成 prompt 与 tune log；None 或缺
@@ -1349,7 +1355,8 @@ async def run_auto_chat(
 
     ``trigger_images``（S11-VISION-01，V2-lite）：触发消息携带的图片源。
     决策门永远纯文本（控成本）；生成链仅在 ``auto_chat_vision_enabled`` 开启
-    时把图随请求发给模型，关闭时上下文里只有历史遗留的 ``[图片]`` 占位。"""
+    时把图随请求发给模型，关闭时上下文里只有历史遗留的 ``[图片]`` 占位。
+    S12-CHATFIX-01 起图片源同时供 plusone 复读图取公网 URL，与该开关解耦。"""
     from qq_bot.services.ai_client import request_completion as _real_completion
 
     complete = _request_completion or _real_completion
@@ -1455,6 +1462,18 @@ async def run_auto_chat(
             raw_text not in _recent_replies(group_id)
         )
         plusone_text = raw_text
+    # 复读撞上纯图/表情消息（S12-CHATFIX-01）：占位文本绝不能当文字发出去
+    # （2026-10-26 线上穿帮），转「重发触发消息里的原图」；公网 URL 拿不到
+    # 就整轮跳过——绝不回退为发文字占位。
+    plusone_image_url = ""
+    if plusone and is_attachment_only_text(plusone_text):
+        plusone_image_url = next(
+            (img for img in trigger_images if isinstance(img, str) and img.startswith("http")),
+            "",
+        )
+        if not plusone_image_url:
+            _metric("prefilter", "plusone_image_skip")
+            return
     if static == "too_short" and not plusone:
         _metric("prefilter", "too_short")
         return
@@ -1518,6 +1537,50 @@ async def run_auto_chat(
         _metric("prefilter", "quoted")
     elif category is TriggerCategory.YOU_PLURAL:
         _metric("prefilter", "you_plural")
+    elif plusone and plusone_image_url:
+        # 复读图（S12-CHATFIX-01）：跳过生成与质量闸，直接重发触发消息里的
+        # 原图。限流/负反馈等前置闸与占位（acquire）跟文本路径同构。
+        _metric("prefilter", "plusone_image")
+        if quota_check is not None and not await quota_check():
+            _metric("send", "quota_denied")
+            return
+        async with state.lock(group_id):
+            if state.acquire(
+                group_id,
+                settings=settings,
+                cooldown_seconds=(
+                    settings.auto_chat_hot_cooldown_seconds if hot else cooldown_override
+                ),
+                skip_hourly=hot,
+            ):
+                _metric("prefilter", "limit")
+                return
+            exit_flag = state.note_reply(group_id, settings=settings)
+            if exit_flag:
+                _metric("prefilter", "hot_exit_limit")
+            _remember_reply(group_id, plusone_text)  # 占位文本进防重，防连环复读图
+            _record_tune_entry(
+                settings,
+                path="plusone",
+                trigger=trigger_text,
+                context_rows=[*rows, *_batch_as_rows(items, group_id)] if is_batch else rows,
+                reply_parts=[plusone_text],
+                group_id=group_id,
+                typo_applied=False,
+                model=settings.auto_chat_reply_model or settings.ai_model,
+                nicknames=nicknames,
+            )
+            sent = False
+            if send_image is not None:
+                try:
+                    sent = await send_image(plusone_image_url)
+                except Exception:
+                    sent = False
+            if not sent:
+                _metric("send", "plusone_image_failed")
+                return
+            _metric("send", "ok")
+        return
     elif plusone:
         reply = plusone_text
         _metric("prefilter", "plusone")

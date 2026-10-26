@@ -2078,13 +2078,14 @@ async def test_auto_chat_collect_route_stashes_hooks_and_submits_batch_item(
     assert item.sender_user_id == 2001
     assert item.row_id == 777
     assert 1001 in ai_chat_plugin._PENDING_AUTO_HOOKS
-    quota_check, send, react, send_sticker, trigger_images = ai_chat_plugin._PENDING_AUTO_HOOKS[
-        1001
-    ]
+    quota_check, send, react, send_sticker, send_image, trigger_images = (
+        ai_chat_plugin._PENDING_AUTO_HOOKS[1001]
+    )
     assert callable(quota_check)
     assert callable(send)
     assert callable(react)
     assert callable(send_sticker)
+    assert callable(send_image)
     assert trigger_images == ()  # 普通文本消息无图，触发图占位为空元组
 
 
@@ -2302,7 +2303,7 @@ async def test_auto_chat_send_hook_swallows_finished_exception(
     否则调用方的后续逻辑（如 run_auto_chat 的 send/ok 指标）永远不会执行。"""
     event = FakeEvent("随便聊聊")
     settings = BotSettings(allowed_group_ids="1001", ai_api_key="secret")
-    _, send, _react, _sticker = ai_chat_plugin._build_auto_chat_hooks(event, settings)
+    _, send, _react, _sticker, _image = ai_chat_plugin._build_auto_chat_hooks(event, settings)
 
     async def fake_finish(matcher, message):
         raise FinishedException()
@@ -2324,7 +2325,7 @@ async def test_auto_chat_react_hook_returns_false_without_connected_bot(
     的连续失败降级逻辑处置），绝不抛异常。"""
     event = FakeEvent("随便聊聊")
     settings = BotSettings(allowed_group_ids="1001", ai_api_key="secret")
-    _, _send, react, _sticker = ai_chat_plugin._build_auto_chat_hooks(event, settings)
+    _, _send, react, _sticker, _image = ai_chat_plugin._build_auto_chat_hooks(event, settings)
     monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: None)
 
     assert await react(42, "128") is False
@@ -2345,7 +2346,7 @@ async def test_auto_chat_react_hook_calls_set_msg_emoji_like_with_protocol_param
 
     event = FakeEvent("随便聊聊")
     settings = BotSettings(allowed_group_ids="1001", ai_api_key="secret")
-    _, _send, react, _sticker = ai_chat_plugin._build_auto_chat_hooks(event, settings)
+    _, _send, react, _sticker, _image = ai_chat_plugin._build_auto_chat_hooks(event, settings)
     monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: FakeOneBot())
 
     assert await react(42, "128") is True
@@ -2364,7 +2365,7 @@ async def test_auto_chat_react_hook_swallows_api_errors(
 
     event = FakeEvent("随便聊聊")
     settings = BotSettings(allowed_group_ids="1001", ai_api_key="secret")
-    _, _send, react, _sticker = ai_chat_plugin._build_auto_chat_hooks(event, settings)
+    _, _send, react, _sticker, _image = ai_chat_plugin._build_auto_chat_hooks(event, settings)
     monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: ExplodingOneBot())
 
     assert await react(42, "128") is False
@@ -2395,7 +2396,7 @@ async def test_send_multi_parts_bursts_then_finishes_last(
         ai_api_key="secret",
         named_mention_replacements="@小洛=2880000001",
     )
-    _, send, _react, _sticker = ai_chat_plugin._build_auto_chat_hooks(event, settings)
+    _, send, _react, _sticker, _image = ai_chat_plugin._build_auto_chat_hooks(event, settings)
 
     monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: fake_bot)
     monkeypatch.setattr(ai_chat_plugin, "finish_with_send_errors_logged", fake_finish)
@@ -2688,7 +2689,9 @@ async def test_send_sticker_hook_returns_false_without_connected_bot(
     """无已连接 bot：闭包返回 False（服务层连续失败降级逻辑处置）。"""
     event = FakeEvent("随便聊聊")
     settings = BotSettings(allowed_group_ids="1001", ai_api_key="secret")
-    _quota, _send, _react, send_sticker = ai_chat_plugin._build_auto_chat_hooks(event, settings)
+    _quota, _send, _react, send_sticker, _image = ai_chat_plugin._build_auto_chat_hooks(
+        event, settings
+    )
     monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: None)
 
     assert await send_sticker(_sticker()) is False
@@ -2710,7 +2713,9 @@ async def test_send_sticker_hook_sends_image_segment_to_group(
 
     event = FakeEvent("随便聊聊")
     settings = BotSettings(allowed_group_ids="1001", ai_api_key="secret")
-    _quota, _send, _react, send_sticker = ai_chat_plugin._build_auto_chat_hooks(event, settings)
+    _quota, _send, _react, send_sticker, _image = ai_chat_plugin._build_auto_chat_hooks(
+        event, settings
+    )
     monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: FakeOneBot())
 
     assert await send_sticker(_sticker()) is True
@@ -2732,7 +2737,9 @@ async def test_send_sticker_hook_swallows_send_errors(
 
     event = FakeEvent("随便聊聊")
     settings = BotSettings(allowed_group_ids="1001", ai_api_key="secret")
-    _quota, _send, _react, send_sticker = ai_chat_plugin._build_auto_chat_hooks(event, settings)
+    _quota, _send, _react, send_sticker, _image = ai_chat_plugin._build_auto_chat_hooks(
+        event, settings
+    )
     monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: ExplodingOneBot())
 
     assert await send_sticker(_sticker()) is False

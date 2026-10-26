@@ -516,6 +516,7 @@ async def _run(
     send_sticker=None,
     nicknames=None,
     trigger_images=(),
+    send_image=None,
 ) -> None:
     async def _nick_resolver(user_ids):
         return nicknames
@@ -537,6 +538,7 @@ async def _run(
         trigger_message_id=FakeEvent.message_id,
         sticker_library=sticker_library,
         send_sticker=send_sticker,
+        send_image=send_image,
         nickname_resolver=_nick_resolver if nicknames is not None else None,
         trigger_images=trigger_images,
     )
@@ -1399,6 +1401,88 @@ class TestPlusOne:
         h = Harness(["6", "6"], _run_settings())
         await _run(h, raw_text="6")
         assert h.sent == []
+
+    @pytest.mark.asyncio
+    async def test_plusone_image_resends_original_url(self) -> None:
+        """S12-CHATFIX-01：复读撞上纯图消息时重发触发图原图，绝不把
+        字面「[图片]」占位当文字发出去（2026-10-26 线上穿帮）。"""
+        import qq_bot.services.auto_chat as m
+
+        m._RECENT_REPLIES[1001] = deque()
+        image_calls: list[str] = []
+
+        async def send_image(url: str) -> bool:
+            image_calls.append(url)
+            return True
+
+        h = Harness(["先发一张", "[图片]"], _run_settings())
+        await _run(
+            h,
+            raw_text="[图片]",
+            trigger_images=("https://multimedia.example/a.jpg",),
+            send_image=send_image,
+        )
+        assert image_calls == ["https://multimedia.example/a.jpg"]
+        assert h.sent == []  # 无文字出站
+        assert h.state.recently_spoke(1001, 300.0) is True  # 复读图也算发言
+
+    @pytest.mark.asyncio
+    async def test_plusone_image_without_public_url_skips_round(self) -> None:
+        """无公网 URL（本地/base64 源或提取失败）→ 整轮跳过，绝不回退发文字。"""
+        import qq_bot.services.auto_chat as m
+
+        m._RECENT_REPLIES[1001] = deque()
+        image_calls: list[str] = []
+
+        async def send_image(url: str) -> bool:
+            image_calls.append(url)
+            return True
+
+        h = Harness(["先发一张", "[图片]"], _run_settings())
+        await _run(h, raw_text="[图片]", trigger_images=(), send_image=send_image)
+        assert image_calls == []
+        assert h.sent == []
+        assert h.state.recently_spoke(1001, 300.0) is False
+
+        m._RECENT_REPLIES[1001] = deque()
+        h2 = Harness(["先发一张", "[图片]"], _run_settings())
+        await _run(
+            h2,
+            raw_text="[图片]",
+            trigger_images=("data:image/png;base64,AAAA",),
+            send_image=send_image,
+        )
+        assert image_calls == []
+        assert h2.sent == []
+
+    @pytest.mark.asyncio
+    async def test_plusone_image_send_failure_is_silent(self) -> None:
+        import qq_bot.services.auto_chat as m
+
+        m._RECENT_REPLIES[1001] = deque()
+
+        async def send_image(url: str) -> bool:
+            return False
+
+        h = Harness(["先发一张", "[图片]"], _run_settings())
+        await _run(
+            h,
+            raw_text="[图片]",
+            trigger_images=("https://multimedia.example/a.jpg",),
+            send_image=send_image,
+        )
+        assert h.sent == []
+        assert h.state.recently_spoke(1001, 300.0) is True
+
+    @pytest.mark.asyncio
+    async def test_plusone_text_with_attachment_suffix_still_text_repeats(self) -> None:
+        """图只是附注、剥占位后有正文的复读照旧走文字路径。"""
+        import qq_bot.services.auto_chat as m
+
+        m._RECENT_REPLIES[1001] = deque()
+        h = Harness(["冲冲冲 [图片]", "冲冲冲 [图片]"], _run_settings())
+        await _run(h, raw_text="冲冲冲 [图片]")
+        assert h.sent == ["冲冲冲 [图片]"]
 
 
 class TestTuneLog:

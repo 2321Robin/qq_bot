@@ -11,9 +11,39 @@ from qq_bot.services.vision_extract import (
     append_attachment_tags,
     extract_vision_inputs,
     face_id_for_name,
+    is_attachment_only_text,
     parse_reply_parts,
+    strip_attachment_placeholders,
     strip_reply_markers,
 )
+
+
+# ---- 出站占位符保险闸（S12-CHATFIX-01）----
+
+
+def test_strip_placeholders_removes_memory_tags() -> None:
+    assert strip_attachment_placeholders("[图片]") == ""
+    assert strip_attachment_placeholders("[表情:呲牙]") == ""
+    assert strip_attachment_placeholders("[表情#493]") == ""
+    assert strip_attachment_placeholders("[表情]") == ""
+    assert strip_attachment_placeholders("[表情包:.some/text]") == ""
+    assert strip_attachment_placeholders("[发图:s1]") == ""
+    assert strip_attachment_placeholders("[发脸:呲牙]") == ""
+
+
+def test_strip_placeholders_keeps_plain_text() -> None:
+    assert strip_attachment_placeholders("哈哈 [图片]") == "哈哈"
+    assert strip_attachment_placeholders("普通一句话") == "普通一句话"
+    # 普通方括号文字不是占位标记，原样保留
+    assert strip_attachment_placeholders("[引用 风哥:原文]") == "[引用 风哥:原文]"
+
+
+def test_is_attachment_only_text() -> None:
+    assert is_attachment_only_text("[图片]") is True
+    assert is_attachment_only_text("[图片] [表情:呲牙]") is True
+    assert is_attachment_only_text("") is True
+    assert is_attachment_only_text("[图片] 看这个") is False
+    assert is_attachment_only_text("纯文本") is False
 
 
 def segment(seg_type: str, **data: object) -> SimpleNamespace:

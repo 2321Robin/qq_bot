@@ -77,6 +77,7 @@ from qq_bot.services.vision_extract import (
     parse_face_spec,
     parse_reply_parts,
     shared_image_recall,
+    strip_attachment_placeholders,
     strip_reply_markers,
 )
 
@@ -260,9 +261,10 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                                 http_client=http_client,
                                 row_id=stored_row_id,
                                 quoted_self=quoted_self,
-                                trigger_images=vision.images
-                                if settings.auto_chat_vision_enabled
-                                else (),
+                                # 图片源始终传入（S12-CHATFIX-01）：plusone 复读图
+                                # 要从里头取公网 URL；是否随生成请求发给模型由
+                                # run_auto_chat 内部的 auto_chat_vision_enabled 决定。
+                                trigger_images=vision.images,
                             )
                 return
 
@@ -501,7 +503,9 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                 logger.exception("Chat memory reply update failed")
 
         # 被 @ 问答路径不贴表情也不发表情包（用户在直接对话）：quota/send 用得上
-        _quota_check, send, _unused_react, _unused_sticker = _build_auto_chat_hooks(event, settings)
+        _quota_check, send, _unused_react, _unused_sticker, _unused_image = _build_auto_chat_hooks(
+            event, settings
+        )
         exit_flag = shared_state().note_reply(event.group_id, settings=settings)
         if exit_flag:
             metrics.AUTO_CHAT.labels("prefilter", "hot_exit_limit").inc()
@@ -873,9 +877,15 @@ def _build_auto_chat_hooks(
     async def send(text: str | Sequence[str]) -> None:
         """多段发送（S7-AUTO-P2-10）：前面的碎片走裸 API 连发（带打字节奏
         的间隔，失败静默——碎片是装饰性的），最后一段走 finish 的完整
-        重试/熔断链路。"""
-        parts = [text] if isinstance(text, str) else [p for p in (p.strip() for p in text) if p]
+        重试/熔断链路。
+        出站占位符保险闸（S12-CHATFIX-01）：记忆占位/发送指令标记（[图片]/
+        [表情:x]/[发脸:#n] 等）逐段剥除，剥空的段丢弃、全空整轮不发——
+        2026-10-26 线上实测 plusone 曾把字面「[图片]」四个字符发进群。"""
+        raw_parts = [text] if isinstance(text, str) else [p for p in (p.strip() for p in text) if p]
+        parts = [p for p in (strip_attachment_placeholders(p) for p in raw_parts) if p]
         if not parts:
+            if raw_parts:
+                metrics.AUTO_CHAT.labels("send", "placeholder_only").inc()
             return
         try:
             bot = _connected_onebot_bot()
@@ -948,7 +958,23 @@ def _build_auto_chat_hooks(
         except Exception:
             return False
 
-    return quota_check, send, react, send_sticker
+    async def send_image(url: str) -> bool:
+        """重发群友刚发的图（S12-CHATFIX-01 plusone 复读图）：OneBot image 段
+        直发公网 URL（服务层只放行 http 源）。无连接 bot、发送失败一律
+        False——跳过语义在服务层，绝不回退为发文字占位。"""
+        try:
+            bot = _connected_onebot_bot()
+            if bot is None:
+                return False
+            await bot.send_group_msg(
+                group_id=event.group_id,
+                message=MessageSegment.image(url),
+            )
+            return True
+        except Exception:
+            return False
+
+    return quota_check, send, react, send_sticker, send_image
 
 
 async def _maybe_auto_reply(
@@ -973,7 +999,7 @@ async def _maybe_auto_reply(
     auto_chat_vision_enabled 开启时非空，随生成请求发给模型。"""
     load_persona(settings)  # 前置校验：人设配置可解析（坏配置早失败）
 
-    quota_check, send, react, send_sticker = _build_auto_chat_hooks(event, settings)
+    quota_check, send, react, send_sticker, send_image = _build_auto_chat_hooks(event, settings)
     trigger_images = tuple(trigger_images)
 
     category = classify_trigger(raw_text, settings=settings, quoted_self=quoted_self)
@@ -1000,6 +1026,7 @@ async def _maybe_auto_reply(
             if settings.auto_chat_sticker_enabled
             else None,
             send_sticker=send_sticker if settings.auto_chat_sticker_enabled else None,
+            send_image=send_image,
             nickname_resolver=_nickname_resolver(event.group_id, settings),
             trigger_images=trigger_images,
         )
@@ -1021,13 +1048,22 @@ async def _maybe_auto_reply(
             if settings.auto_chat_sticker_enabled
             else None,
             send_sticker=send_sticker if settings.auto_chat_sticker_enabled else None,
+            send_image=send_image,
             nickname_resolver=_nickname_resolver(event.group_id, settings),
             trigger_images=trigger_images,
         )
         return
     collector = _get_auto_chat_collector()
-    _PENDING_AUTO_HOOKS.setdefault(
-        event.group_id, (quota_check, send, react, send_sticker, trigger_images)
+    # 直接赋值而非 setdefault（S12-CHATFIX-01）：触发消息=批次最后一条，钩子里
+    # 的 trigger_images/self_id 必须来自最后一条消息——setdefault 会留住批次
+    # 第一条的旧值，批次触发图因此错位。
+    _PENDING_AUTO_HOOKS[event.group_id] = (
+        quota_check,
+        send,
+        react,
+        send_sticker,
+        send_image,
+        trigger_images,
     )
     await collector.submit(
         event.group_id,
@@ -1110,9 +1146,10 @@ def _get_auto_chat_collector() -> AutoChatCollector:
         async def _deliver(group_id: int, batch: CollectedBatch) -> None:
             hooks = _PENDING_AUTO_HOOKS.pop(group_id, None)
             if hooks:
-                quota_check, send, _react, send_sticker, trigger_images = hooks
+                quota_check, send, _react, send_sticker, send_image, trigger_images = hooks
             else:
-                quota_check, send, _react, send_sticker, trigger_images = (
+                quota_check, send, _react, send_sticker, send_image, trigger_images = (
+                    None,
                     None,
                     None,
                     None,
@@ -1144,9 +1181,11 @@ def _get_auto_chat_collector() -> AutoChatCollector:
                 # 消息"的语义要求，批次路径同样可用——库非空且开关开即注入候选。
                 sticker_library=_deliver_sticker_library(),
                 send_sticker=send_sticker,
+                send_image=send_image,
                 nickname_resolver=_nickname_resolver(group_id, get_settings()),
-                # 触发图（S11-VISION-01）：批次末条（触发消息）携带的图片源；
-                # run_auto_chat 内部按 auto_chat_vision_enabled 决定是否带上。
+                # 触发图（S11-VISION-01；S12-CHATFIX-01 起供 plusone 复读图取
+                # URL）：批次末条（触发消息）携带的图片源；run_auto_chat 内部
+                # 按 auto_chat_vision_enabled 决定是否随生成请求发出。
                 trigger_images=trigger_images,
             )
             # 交付后刷新 pending gauge（批次已出队，恢复到当前全局挂起数）
