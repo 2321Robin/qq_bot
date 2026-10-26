@@ -1356,8 +1356,15 @@ async def run_auto_chat(
     nickname_resolver: Callable[[frozenset[int]], Awaitable[Mapping[int, str] | None]]
     | None = None,
     trigger_images: Sequence[str] = (),
-) -> None:
-    """Full pipeline for one non-addressed group message (spec 一/二/三/四节).
+    force_reply: bool = False,
+    context_limit: int | None = None,
+    context_user_id: int | None = None,
+    context_keyword: str = "",
+    sticker_hint: str = "",
+) -> str | None:
+    """Full pipeline for one group message — S12-UNIFY-01 起同时承担被 @
+    （addressed）与自主插话两条入口，单一生成链单一出站（部署者裁决：
+    "这两种模式就该一模一样，或者说就是一种模式"）。
 
     ``batch``（S10-HUMAN-P0）传入收集器预筛后的批次项时走批次路径：跳过
     static_prefilter（收集器已逐条预筛），批次文本作为最后一条触发上下文；
@@ -1380,6 +1387,18 @@ async def run_auto_chat(
     ``bot_user_id``（S12-CHATFIX-01）：机器人自己的 QQ 号。插话写回聊天记忆后
     上下文行里会出现 bot 行——以人设名渲染进 prompt（分得清"这话是我说的"），
     负反馈检测与冷场检查的"最新消息"判定则排除 bot 行。
+
+    ``force_reply``（S12-UNIFY-01）：被 @/前缀/引用必回的 addressed 轮。跳过
+    static_prefilter、采样、决策门、冷却与小时/日限额、负反馈退避（被点名
+    必须回）；保留 quota 准入、输出敏感词闸、echo/repeat 质量闸与 45 字长度
+    护栏豁免（正式提问不截断）。返回值 = 实际发出的回复文本；None = 本轮
+    没有发出任何东西（addressed 调用方据此回落服务不可用文案）。
+    ``context_limit``/``context_user_id``/``context_keyword``（S12-UNIFY-01）：
+    「参考最近N条 / 参考 @某人 的消息 / 参考 XX 的聊天」检索语法透传——行数
+    覆盖（None 用 auto_chat_context_messages）与按人/关键词检索（走
+    search_messages）。
+    ``sticker_hint``（S12-UNIFY-01）：表情通道提示（插件侧算好传入），拼进
+    casual 生成 system prompt，让单一生成链也掌握 [发脸]/[发图] 标记。
 
     ``nickname_resolver``（S11-AUTO-04）：按需解析群昵称的异步回调
     ``(user_ids) -> Mapping[int, str] | None``，插件经 OneBot 拉取并缓存。
@@ -1450,16 +1469,29 @@ async def run_auto_chat(
     # 单消息路径恒等于 raw_text，与历史版本逐行等价。
     trigger_text = items[-1].raw_text if is_batch else raw_text
     static = "pass"
-    if not is_batch:
+    if not is_batch and not force_reply:
         static = static_prefilter(raw_text, settings=settings)
         if static in ("command", "sensitive"):
             _metric("prefilter", static)
             return
 
     try:
-        rows = await memory_store.recent_group_messages(
-            group_id=group_id, limit=settings.auto_chat_context_messages
+        fetch_limit = (
+            settings.auto_chat_context_messages
+            if context_limit is None
+            else min(context_limit, settings.chat_memory_max_results)
         )
+        if context_user_id is not None or context_keyword:
+            rows = await memory_store.search_messages(
+                group_id=group_id,
+                user_id=context_user_id,
+                keyword=context_keyword,
+                limit=fetch_limit,
+            )
+        else:
+            rows = await memory_store.recent_group_messages(
+                group_id=group_id, limit=fetch_limit
+            )
     except Exception as exc:
         _metric("prefilter", "error")
         record_error("auto_chat", classify_exception(exc).category.value)
@@ -1476,7 +1508,7 @@ async def run_auto_chat(
             for row in rows
             if row.id not in {it.row_id for it in items if it.row_id is not None}
         ]
-    if not rows and not is_batch:
+    if not rows and not is_batch and not force_reply:
         _metric("prefilter", "no_context")
         return
     # 昵称按需解析（S11-AUTO-04）：所需 id = 上下文行 + 批次项发送者；目录
@@ -1490,7 +1522,10 @@ async def run_auto_chat(
             nicknames = await nickname_resolver(frozenset(needed))
         except Exception:
             nicknames = None
-    if is_batch:
+    if force_reply:
+        plusone = False  # addressed 轮不复读：被 @ 的同文消息也要正经回答
+        plusone_text = raw_text
+    elif is_batch:
         plusone_text = batch_plusone_text(items, rows)
         plusone = plusone_text is not None and plusone_text not in _recent_replies(group_id)
     else:
@@ -1516,18 +1551,20 @@ async def run_auto_chat(
 
     bot_recently = state.recently_spoke(group_id, settings.auto_chat_cooldown_seconds)
     # 负反馈检测排除机器人自己的行（S12-CHATFIX-01 写回记忆后 rows 里有 bot
-    # 行）：自己转述群友的气话不该触发对自己的退避。
+    # 行）：自己转述群友的气话不该触发对自己的退避。addressed 轮整体跳过
+    # （被点名必须回，哪怕刚被骂过）。
     user_rows = [r for r in rows if bot_user_id is None or r.user_id != bot_user_id]
     detection_rows = [*user_rows, *_batch_as_rows(items, group_id)] if is_batch else user_rows
-    if detect_negative_feedback(
-        detection_rows, persona=persona, settings=settings, bot_recently_spoke=bot_recently
-    ):
-        state.set_backoff(group_id, settings.auto_chat_negative_backoff_seconds)
-        _metric("prefilter", "backoff")
-        return
-    if state.in_backoff(group_id):
-        _metric("prefilter", "backoff")
-        return
+    if not force_reply:
+        if detect_negative_feedback(
+            detection_rows, persona=persona, settings=settings, bot_recently_spoke=bot_recently
+        ):
+            state.set_backoff(group_id, settings.auto_chat_negative_backoff_seconds)
+            _metric("prefilter", "backoff")
+            return
+        if state.in_backoff(group_id):
+            _metric("prefilter", "backoff")
+            return
     hot = state.hot_active(group_id, settings=settings)
     # 兴趣度只在本轮算一次，供自动进热聊/冷却乘数/采样乘数/gauge 复用。
     interest = 0.0
@@ -1551,18 +1588,21 @@ async def run_auto_chat(
     if settings.auto_chat_interest_enabled and not hot:
         scaled = settings.auto_chat_cooldown_seconds * (1.2 - 0.7 * interest)
         cooldown_override = max(settings.auto_chat_hot_cooldown_seconds, scaled)
-    limit = state.limit_reason(
-        group_id,
-        settings=settings,
-        cooldown_seconds=(settings.auto_chat_hot_cooldown_seconds if hot else cooldown_override),
-        skip_hourly=hot,
-    )
-    if limit == "cooldown":
-        _metric("prefilter", "cooldown")
-        return
-    if limit:
-        _metric("prefilter", "limit")
-        return
+    if not force_reply:
+        limit = state.limit_reason(
+            group_id,
+            settings=settings,
+            cooldown_seconds=(
+                settings.auto_chat_hot_cooldown_seconds if hot else cooldown_override
+            ),
+            skip_hourly=hot,
+        )
+        if limit == "cooldown":
+            _metric("prefilter", "cooldown")
+            return
+        if limit:
+            _metric("prefilter", "limit")
+            return
 
     category = classify_trigger(trigger_text, settings=settings, quoted_self=quoted_self)
     tracer = get_tracer()
@@ -1571,7 +1611,9 @@ async def run_auto_chat(
     # 表达样本在生成时才取（生成路径专属），回写 id 也来自那里。
     jargon_refs = await _jargon_refs(memory_store, group_id, settings=settings)
     expression_ids: list[int] = []
-    if category is TriggerCategory.NICKNAMED:
+    if force_reply:
+        _metric("prefilter", "addressed")
+    elif category is TriggerCategory.NICKNAMED:
         _metric("prefilter", "nicknamed")
     elif category is TriggerCategory.QUOTED:
         _metric("prefilter", "quoted")
@@ -1618,9 +1660,10 @@ async def run_auto_chat(
                     sent = False
             if not sent:
                 _metric("send", "plusone_image_failed")
-                return
+                return None
             _metric("send", "ok")
-        return
+            return plusone_text
+        return None
     elif plusone:
         reply = plusone_text
         _metric("prefilter", "plusone")
@@ -1860,9 +1903,14 @@ async def run_auto_chat(
                     settings=settings,
                     client=client,
                     model=settings.auto_chat_reply_model or settings.ai_model,
-                    max_tokens=256,
+                    # S12-UNIFY-01：统一管线预算与 @问答一致（1200/带图 2400，
+                    # 上限是界不是预算，插话均值成本不变）；思考模式按部署者
+                    # 裁决全轮次开启；表情通道提示让插话也会用 [发脸]/[发图]。
+                    max_tokens=2400 if generation_images else 1200,
                     temperature=settings.auto_chat_reply_temperature,
                     images=generation_images,
+                    thinking_enabled=settings.ai_qa_thinking_enabled,
+                    extra_system_prompt=sticker_hint,
                 )
 
             gen = asyncio.ensure_future(_generate())
@@ -1895,7 +1943,7 @@ async def run_auto_chat(
         # 长度护栏（S10-HUMAN-P3-01）：超限先带上下文重写一次（上限而非一刀切，
         # 长度方差保留给生成端），重写仍超则句末截断兜底。实测 glm-4-flash 在
         # 人设锚定后平均 41 字/条、最长 83 字，群友连续两天抱怨"怎么话这么长"。
-        max_chars = settings.auto_chat_max_reply_chars
+        max_chars = 0 if force_reply else settings.auto_chat_max_reply_chars
         if max_chars > 0 and _visible_len(reply) > max_chars:
             _metric("generate", "too_long")
             try:
@@ -2016,7 +2064,9 @@ async def run_auto_chat(
     )
     parts = [reply] if plusone else split_casual_reply(reply, rng=rng)
     path_label = (
-        "nicknamed"
+        "addressed"
+        if force_reply
+        else "nicknamed"
         if category is TriggerCategory.NICKNAMED
         else "quoted"
         if category is TriggerCategory.QUOTED
@@ -2048,3 +2098,4 @@ async def run_auto_chat(
         except Exception:
             pass
     _metric("send", "ok")  # 已移交发送器；发送失败由 onebot_send 的 SEND_RESULTS 计数
+    return reply

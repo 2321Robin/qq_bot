@@ -113,9 +113,10 @@ def _thinking_payload_extra(
     携带 thinking.type=disabled（实测可关，DeepSeek 忽略该字段）。
 
     S11-QA-THINK-01（部署者北极星：回复更像人/更经过考虑）：thinking_enabled
-    显式为 True 的调用方（仅 @问答链：build_chat_payload 与 agent 网关）发
-    thinking.type=enabled 压过全局 disabled——自主插话保持关（抢答场景快比
-    深重要）。"""
+    显式为 True 的调用方发 thinking.type=enabled 压过全局 disabled。
+    S12-UNIFY-01（部署者裁决 2026-10-27：全部轮次都开思考）：统一管线里
+    所有 casual 生成轮（插话/addressed/冷场）都按 ai_qa_thinking_enabled
+    传入 True；决策门与搜索判别门是轻量分类器，保持不思考。"""
     if thinking_enabled is True:
         return {"thinking": {"type": "enabled"}}
     if not settings.ai_thinking_disabled:
@@ -335,6 +336,8 @@ async def request_completion(
     temperature: float = 0.7,
     json_mode: bool = False,
     images: Sequence[str] = (),
+    thinking_enabled: bool = False,
+    extra_system_prompt: str = "",
 ) -> str:
     """Single-turn completion with primary->fallback switching (S7-AUTO).
 
@@ -343,24 +346,29 @@ async def request_completion(
     carry no search/memory/roco context blocks.
 
     ``images``（S11-VISION-01）：自主插话生成链的触发图（决策门永不带图）；
-    落备用时与 request_ai_reply 同规则一律去掉图片。"""
+    落备用时与 request_ai_reply 同规则一律去掉图片。
+    ``thinking_enabled``（S12-UNIFY-01）：统一管线生成轮按
+    ``AI_QA_THINKING_ENABLED`` 传 True（部署者裁决全部轮次开思考）。
+    ``extra_system_prompt``（S12-UNIFY-01）：表情通道提示等附加 system 段，
+    拼在 system_prompt 之后（与 build_chat_payload 同约定）。"""
     active_settings = settings or get_settings()
     if not active_settings.has_ai_config():
         raise AIReplyError("AI_API_KEY is not configured")
     active_client = _resolve_client(client)
     chosen_model = model.strip() or active_settings.ai_model
+    full_system_prompt = system_prompt + extra_system_prompt if extra_system_prompt else system_prompt
 
     def _payload(for_model: str, for_images: Sequence[str]) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": for_model,
             "messages": [
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": full_system_prompt},
                 {"role": "user", "content": _user_content_for(user_prompt, for_images)},
             ],
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        payload.update(_thinking_payload_extra(active_settings))
+        payload.update(_thinking_payload_extra(active_settings, thinking_enabled=thinking_enabled))
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
         return payload

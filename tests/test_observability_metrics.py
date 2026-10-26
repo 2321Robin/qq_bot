@@ -118,17 +118,8 @@ async def test_metric_labels_never_carry_raw_ids() -> None:
 async def test_ai_chat_message_increments_messages_counter(monkeypatch) -> None:
     from qq_bot.plugins import ai_chat as ai_chat_plugin
 
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
+    async def fake_run_auto_chat(**kwargs) -> str:
+        await kwargs["send"]("ok")
         return "ok"
 
     async def fake_finish(message: object) -> None:
@@ -141,7 +132,8 @@ async def test_ai_chat_message_increments_messages_counter(monkeypatch) -> None:
     )
     monkeypatch.setattr(ai_chat_plugin, "get_http_client", lambda: object())
     monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin, "run_auto_chat", fake_run_auto_chat)
+    monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: None)
     monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
 
     before = await _sample_value("qq_bot_messages_total", {"kind": "ai_prompt"})

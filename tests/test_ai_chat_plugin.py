@@ -10,7 +10,7 @@ from prometheus_client import REGISTRY
 from qq_bot.config import BotSettings
 from qq_bot.plugins import ai_chat as ai_chat_plugin
 from qq_bot.runtime import RuntimeStateError
-from qq_bot.services import quote_reference, roco_knowledge, vision_extract
+from qq_bot.services import quote_reference, vision_extract
 from qq_bot.services.chat_memory import ChatMemoryRow
 from qq_bot.services.sticker_library import Sticker
 from pathlib import Path
@@ -137,118 +137,210 @@ def memory_row(
     )
 
 
+# ---- S12-UNIFY-01：addressed 与自主插话同一管线，handler 契约测试 ----
+
+
+class _RecordingStore:
+    """记录写库调用的假记忆库（统一管线测试用）。"""
+
+    def __init__(self) -> None:
+        self.rows: list[dict] = []
+
+    async def add_message(self, **kwargs) -> int:
+        self.rows.append(kwargs)
+        return 123
+
+
 @pytest.mark.asyncio
-async def test_ai_chat_formats_named_mentions_in_final_reply(
+async def _run_addressed(
     monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        assert prompt == "提醒我"
-        assert settings.ai_api_key == "secret"
-        assert search_context == ""
-        assert chat_context == "没有找到相关历史聊天记录。"
-        return "好的，@小呱呱 会收到提醒"
+    event: FakeEvent,
+    *,
+    settings: BotSettings | None = None,
+    store: object | None = None,
+    reply: str | None = "好了好了",
+) -> dict:
+    """addressed 用例公共通道：patch run_auto_chat 捕获 kwargs，fake 内调用
+    注入的 send（等价真实管线发出），返回捕获的 kwargs。"""
+    captured: dict = {}
+
+    async def fake_run_auto_chat(**kwargs):
+        captured.update(kwargs)
+        if reply is not None:
+            await kwargs["send"](reply)
+        return reply
+
+    base = BotSettings(
+        allowed_group_ids="1001",
+        ai_api_key="secret",
+        named_mention_replacements="@小呱呱=2880000001",
+    )
+    monkeypatch.setattr(ai_chat_plugin, "get_settings", lambda: settings or base)
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: store or _RecordingStore())
+    monkeypatch.setattr(ai_chat_plugin, "run_auto_chat", fake_run_auto_chat)
+    monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: None)
 
     async def fake_finish(message: object) -> None:
         raise FinishCalled(message)
 
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(
-            allowed_group_ids="1001",
-            ai_api_key="secret",
-            named_mention_replacements="@小呱呱=2880000001",
-        ),
-    )
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_chat_repository",
-        lambda: EmptyMemoryStore(),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
     monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_addressed_message_routes_through_unified_pipeline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """被 @ 消息走统一管线：force_reply 必回、触发文本=提问、带表情提示与
+    bot 自身 QQ；回复经统一出站（named-mention 替换）发出。"""
+    captured = await _run_addressed(
+        monkeypatch, FakeEvent("ai 提醒我"), reply="好的，@小呱呱 会收到提醒"
+    )
 
     with pytest.raises(FinishCalled) as exc_info:
         await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 提醒我"))  # type: ignore[arg-type]
 
+    assert captured["force_reply"] is True
+    assert captured["raw_text"] == "提醒我"
+    assert captured["context_limit"] is None
+    assert captured["trigger_images"] == ()
+    assert captured["bot_user_id"] == 2880000001
+    assert "[发脸" in captured["sticker_hint"]  # 表情通道提示随统一管线生效
     message = exc_info.value.message
     assert isinstance(message, Message)
     assert message[0].type == "text"
     assert message[0].data["text"] == "好的，"
     assert message[1].type == "at"
     assert message[1].data["qq"] == "2880000001"
-    assert message[2].type == "text"
     assert message[2].data["text"] == " 会收到提醒"
+
+
+@pytest.mark.asyncio
+async def test_bare_at_generates_naturally_instead_of_canned_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """单独 @ 不带任何内容：合成触发语进统一管线自然接话，不再出现
+    「请在 ai 后面输入要问的问题」固定文案；记忆里以同一行文本登记。"""
+    store = _RecordingStore()
+    captured = await _run_addressed(monkeypatch, FakeEvent("", to_me=True), store=store)
+
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("", to_me=True))  # type: ignore[arg-type]
+
+    assert captured["force_reply"] is True
+    assert captured["raw_text"] == "（只发了 @）"
+    assert store.rows and store.rows[0]["message_text"] == "（只发了 @）"
+
+
+@pytest.mark.asyncio
+async def test_at_with_image_only_passes_trigger_images(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """@ + 只发图：占位文本作触发、图片源随管线带给生成（封顶注入在服务侧）。"""
+    event = FakeEvent(
+        "",
+        segments=[
+            FakeImageSegment("https://multimedia.example/a.jpg"),
+        ],
+        to_me=True,
+    )
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    captured = await _run_addressed(monkeypatch, event)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(event)  # type: ignore[arg-type]
+
+    assert captured["raw_text"] == "[图片]"
+    assert captured["trigger_images"] == ("https://multimedia.example/a.jpg",)
+
+
+@pytest.mark.asyncio
+async def test_memory_reference_limit_passthrough(monkeypatch: pytest.MonkeyPatch) -> None:
+    """「参考最近5条」语法 → 统一管线 context_limit=5。"""
+    captured = await _run_addressed(monkeypatch, FakeEvent("ai 参考最近5条：聊聊"))
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 参考最近5条：聊聊"))  # type: ignore[arg-type]
+    assert captured["context_limit"] == 5
+
+
+@pytest.mark.asyncio
+async def test_memory_reference_user_scoping_passthrough(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """「参考 @某人 的最近消息」语法 → context_user_id 透传（不把 @ 自己算进去）。"""
+    event = FakeEvent("ai 参考最近的消息：他说了啥")
+    captured = await _run_addressed(monkeypatch, event)
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(event)  # type: ignore[arg-type]
+    assert captured["context_user_id"] is None  # 未带 @ 段时不指定人
+
+
+@pytest.mark.asyncio
+async def test_unified_pipeline_failure_sends_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """统一管线本轮没发出任何东西（生成失败等）→ 回落服务不可用文案。"""
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    await _run_addressed(monkeypatch, FakeEvent("ai 提醒我"), reply=None)
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled) as exc_info:
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 提醒我"))  # type: ignore[arg-type]
+
+    assert any(m in str(exc_info.value.message) for m in ai_chat_plugin._UNAVAILABLE_MESSAGES)
+
+
+@pytest.mark.asyncio
+async def test_memory_write_failure_does_not_block_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """记忆写库失败不拦回复：统一管线照常被调用。"""
+
+    class _BrokenStore:
+        async def add_message(self, **kwargs):
+            raise RuntimeError("disk full")
+
+    async def fake_finish(message: object) -> None:
+        raise FinishCalled(message)
+
+    captured = await _run_addressed(monkeypatch, FakeEvent("ai 提醒我"), store=_BrokenStore())
+    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 提醒我"))  # type: ignore[arg-type]
+    assert captured["force_reply"] is True
 
 
 @pytest.mark.asyncio
 async def test_ai_chat_replies_when_group_message_mentions_bot_without_to_me(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        assert prompt == "你好"
-        return "你好呀"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+    """只写昵称不带 @ 也算 addressed → 统一管线必回。"""
+    event = FakeEvent(
+        "你好", segments=[FakeAtSegment(2880000001), FakeTextSegment("你好")], to_me=False
     )
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_chat_repository",
-        lambda: EmptyMemoryStore(),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    with pytest.raises(FinishCalled) as exc_info:
-        await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
-            FakeEvent(
-                "你好",
-                [FakeAtSegment(2880000001), FakeTextSegment(" 你好")],
-                to_me=False,
-            )
-        )
-
-    message = exc_info.value.message
-    assert isinstance(message, Message)
-    assert message.extract_plain_text() == "你好呀"
+    captured = await _run_addressed(monkeypatch, event)
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(event)  # type: ignore[arg-type]
+    assert captured["force_reply"] is True
+    assert captured["raw_text"] == "你好"
 
 
 @pytest.mark.asyncio
 async def test_ai_chat_ignores_configured_sender_even_when_message_mentions_bot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class FakeStore:
-        async def add_message(self, *args, **kwargs) -> int:
-            raise AssertionError("ignored sender should not be recorded")
+    """忽略名单（其他机器人）即使在消息里点名机器人也不回。"""
 
-    async def fake_request_ai_reply(*args, **kwargs) -> str:
-        raise AssertionError("AI should not be called for ignored sender")
+    async def fake_run_auto_chat(**kwargs):  # pragma: no cover - 不应被调用
+        raise AssertionError("ignored sender must not reach the pipeline")
 
     monkeypatch.setattr(
         ai_chat_plugin,
@@ -256,1012 +348,87 @@ async def test_ai_chat_ignores_configured_sender_even_when_message_mentions_bot(
         lambda: BotSettings(
             allowed_group_ids="1001",
             ai_api_key="secret",
-            ai_ignored_user_ids="2880000002",
+            ai_ignored_user_ids="424242",
         ),
     )
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_chat_repository",
-        lambda: FakeStore(),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-
-    await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
-        FakeEvent(
-            "投票成功\n今日票数：81\n总票数：7196",
-            [FakeAtSegment(2880000001), FakeTextSegment(" 投票成功")],
-            to_me=True,
-            self_id=2880000001,
-            user_id=2880000002,
-        )
-    )
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: _RecordingStore())
+    monkeypatch.setattr(ai_chat_plugin, "run_auto_chat", fake_run_auto_chat)
+    await ai_chat_plugin.handle_ai_chat(
+        FakeEvent("你好", user_id=424242, to_me=True)
+    )  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
 async def test_ai_chat_ignores_self_mention_for_explicit_user_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class FakeStore:
-        async def add_message(self, *args, **kwargs) -> int:
-            return 123
-
-        async def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
-            return None
-
-        async def search_messages(
-            self,
-            *,
-            group_id: int,
-            user_id: int | None = None,
-            keyword: str | None = None,
-            limit: int,
-        ):
-            assert user_id == 2002
-            return [memory_row(message_text="他的观点", user_id=2002)]
-
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        assert prompt == "总结他的观点"
-        assert "用户A：他的观点" in chat_context
-        return "总结好了"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
-    )
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_chat_repository",
-        lambda: FakeStore(),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
+    """「参考 @机器人 自己的最近消息」：@ 自己不进 context_user_id。"""
+    event = FakeEvent("ai 参考最近的消息：他说了啥", to_me=True, segments=[FakeAtSegment(2880000001)])
+    captured = await _run_addressed(monkeypatch, event)
     with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
-            FakeEvent(
-                "参考  的最近5条：总结他的观点",
-                [
-                    FakeAtSegment(2880000001),
-                    FakeTextSegment(" 参考 "),
-                    FakeAtSegment(2002),
-                    FakeTextSegment(" 的最近5条：总结他的观点"),
-                ],
-                to_me=False,
-            )
-        )
-
-
-@pytest.mark.asyncio
-async def test_ai_chat_uses_search_context_for_search_trigger(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from qq_bot.services.search import SearchResult
-
-    async def fake_search_web(prompt: str, *, settings: BotSettings, client: object | None = None):
-        assert prompt == "今天 DeepSeek 有什么新闻"
-        assert settings.tavily_api_key == "tvly-secret"
-        return [SearchResult("DeepSeek News", "https://example.com/news", "news summary")]
-
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        assert prompt == "今天 DeepSeek 有什么新闻"
-        assert "DeepSeek News" in search_context
-        assert "https://example.com/news" in search_context
-        assert chat_context == "没有找到相关历史聊天记录。"
-        return "根据搜索结果，DeepSeek 有新闻。"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(
-            allowed_group_ids="1001",
-            ai_api_key="secret",
-            search_enabled=True,
-            tavily_api_key="tvly-secret",
-        ),
-    )
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_chat_repository",
-        lambda: EmptyMemoryStore(),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "search_web", fake_search_web)
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 今天 DeepSeek 有什么新闻"))  # type: ignore[arg-type]
-
-
-@pytest.mark.asyncio
-async def test_ai_chat_skips_search_for_normal_chat(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def fake_search_web(prompt: str, *, settings: BotSettings, client: object | None = None):
-        raise AssertionError("search should not be called")
-
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        assert prompt == "讲个笑话"
-        assert search_context == ""
-        assert chat_context == "没有找到相关历史聊天记录。"
-        assert roco_context == ""
-        return "一个简短笑话。"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(
-            allowed_group_ids="1001",
-            ai_api_key="secret",
-            search_enabled=True,
-            tavily_api_key="tvly-secret",
-        ),
-    )
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_chat_repository",
-        lambda: EmptyMemoryStore(),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "search_web", fake_search_web)
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 讲个笑话"))  # type: ignore[arg-type]
-
-
-@pytest.mark.asyncio
-async def test_ai_chat_falls_back_when_search_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from qq_bot.services.search import SearchError
-
-    async def fake_search_web(prompt: str, *, settings: BotSettings, client: object | None = None):
-        raise SearchError("search down")
-
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        assert prompt == "今天 DeepSeek 有什么新闻"
-        assert search_context == ""
-        assert chat_context == "没有找到相关历史聊天记录。"
-        return "没有联网资料时的普通回复。"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(
-            allowed_group_ids="1001",
-            ai_api_key="secret",
-            search_enabled=True,
-            tavily_api_key="tvly-secret",
-        ),
-    )
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_chat_repository",
-        lambda: EmptyMemoryStore(),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "search_web", fake_search_web)
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 今天 DeepSeek 有什么新闻"))  # type: ignore[arg-type]
-
-
-@pytest.mark.asyncio
-async def test_ai_chat_refuses_current_events_without_search_config(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def fake_request_ai_reply(*args, **kwargs) -> str:
-        raise AssertionError("AI should not answer current-event prompts without search")
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(
-            allowed_group_ids="1001",
-            ai_api_key="secret",
-            search_enabled=False,
-            tavily_api_key="",
-        ),
-    )
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_chat_repository",
-        lambda: EmptyMemoryStore(),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    with pytest.raises(FinishCalled) as exc_info:
-        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 今天有什么新闻"))  # type: ignore[arg-type]
-
-    assert "需要联网搜索" in str(exc_info.value.message)
-
-
-@pytest.mark.asyncio
-async def test_ai_chat_refuses_current_events_when_search_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from qq_bot.services.search import SearchError
-
-    async def fake_search_web(prompt: str, *, settings: BotSettings, client: object | None = None):
-        raise SearchError("search down")
-
-    async def fake_request_ai_reply(*args, **kwargs) -> str:
-        raise AssertionError("AI should not answer current-event prompts when search fails")
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(
-            allowed_group_ids="1001",
-            ai_api_key="secret",
-            search_enabled=True,
-            tavily_api_key="tvly-secret",
-        ),
-    )
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_chat_repository",
-        lambda: EmptyMemoryStore(),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "search_web", fake_search_web)
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    with pytest.raises(FinishCalled) as exc_info:
-        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 今天 DeepSeek 有什么新闻"))  # type: ignore[arg-type]
-
-    assert "联网搜索失败" in str(exc_info.value.message)
-
-
-@pytest.mark.asyncio
-async def test_ai_chat_passes_roco_context_for_roco_question(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        assert prompt == "画精灵怎么进化？"
-        assert search_context == ""
-        assert chat_context == "没有找到相关历史聊天记录。"
-        assert roco_context == "问题类型：进化\n匹配精灵：画精灵"
-        return "画像守护"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    def fake_build_roco_context(prompt: str) -> str:
-        assert prompt == "画精灵怎么进化？"
-        return "问题类型：进化\n匹配精灵：画精灵"
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
-    )
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_chat_repository",
-        lambda: EmptyMemoryStore(),
-    )
-    monkeypatch.setattr(roco_knowledge, "build_roco_context", fake_build_roco_context)
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 画精灵怎么进化？"))  # type: ignore[arg-type]
-
-
-@pytest.mark.asyncio
-async def test_legacy_path_skips_roco_context_when_disabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    started_spans: list[str] = []
-
-    class RecordingTracer:
-        def start_span(self, name: str, *, trace_id: str, **attributes: str) -> object:
-            started_spans.append(name)
-            return object()
-
-        def end_span(self, span: object, *, status: str = "ok", **attributes: str) -> None:
-            return None
-
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        assert prompt == "画精灵怎么进化？"
-        assert roco_context == ""
-        return "直答"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(
-            allowed_group_ids="1001",
-            ai_api_key="secret",
-            roco_enabled=False,
-        ),
-    )
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_chat_repository",
-        lambda: EmptyMemoryStore(),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "get_tracer", lambda: RecordingTracer())
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 画精灵怎么进化？"))  # type: ignore[arg-type]
-
-    assert "knowledge.lookup" not in started_spans
-    # 对照：同一请求其余阶段的 span 照常记录，证明 tracer 已接线。
-    assert "memory.retrieve" in started_spans
-
-
-@pytest.mark.asyncio
-async def test_ai_chat_passes_default_group_memory_context(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FakeStore:
-        async def add_message(self, *args, **kwargs) -> int:
-            return 123
-
-        async def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
-            assert message_id == 123
-            assert ai_reply == "带记忆回复"
-
-        async def recent_group_messages(self, *, group_id: int, limit: int):
-            assert group_id == 1001
-            assert limit == 10
-            return [memory_row(message_text="之前的问题", ai_reply="之前的回答", user_id=2002)]
-
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        assert prompt == "继续"
-        assert "用户A：之前的问题" in chat_context
-        assert "机器人：之前的回答" in chat_context
-        return "带记忆回复"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
-    )
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_chat_repository",
-        lambda: FakeStore(),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 继续"))  # type: ignore[arg-type]
-
-
-@pytest.mark.asyncio
-async def test_ai_chat_uses_recent_group_messages_by_default(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls = {"recent_group_messages": False, "recent_user_turns": False}
-
-    class FakeStore:
-        async def add_message(self, *args, **kwargs) -> int:
-            return 123
-
-        async def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
-            return None
-
-        async def recent_group_messages(self, *, group_id: int, limit: int):
-            calls["recent_group_messages"] = True
-            assert group_id == 1001
-            assert limit == 10
-            return [
-                memory_row(message_text="普通群友发言", user_id=2002),
-                memory_row(message_text="另一个群友发言", row_id=2, user_id=2003),
-            ]
-
-        async def recent_user_turns(self, *, group_id: int, user_id: int, limit: int):
-            calls["recent_user_turns"] = True
-            return []
-
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        assert prompt == "刚才大家在说什么"
-        assert "用户A：普通群友发言" in chat_context
-        assert "用户B：另一个群友发言" in chat_context
-        return "他们在聊天"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
-    )
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_chat_repository",
-        lambda: FakeStore(),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    with pytest.raises(FinishCalled) as exc_info:
-        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 刚才大家在说什么"))  # type: ignore[arg-type]
-
-    message = exc_info.value.message
-    assert isinstance(message, Message)
-    assert message.extract_plain_text() == "他们在聊天"
-    assert calls["recent_group_messages"] is True
-    assert calls["recent_user_turns"] is False
-
-
-@pytest.mark.asyncio
-async def test_ai_chat_uses_explicit_recent_group_history(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FakeStore:
-        async def add_message(self, *args, **kwargs) -> int:
-            return 123
-
-        async def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
-            return None
-
-        async def recent_group_messages(self, *, group_id: int, limit: int):
-            assert group_id == 1001
-            assert limit == 5
-            return []
-
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        assert prompt == "总结"
-        assert chat_context == "没有找到相关历史聊天记录。"
-        return "总结好了"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
-    )
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_chat_repository",
-        lambda: FakeStore(),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 参考最近5条：总结"))  # type: ignore[arg-type]
+        await ai_chat_plugin.handle_ai_chat(event)  # type: ignore[arg-type]
+    assert captured["context_user_id"] is None
 
 
 @pytest.mark.asyncio
 async def test_ai_chat_uses_actual_at_segment_for_explicit_user_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    class FakeStore:
-        async def add_message(self, *args, **kwargs) -> int:
-            return 123
-
-        async def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
-            return None
-
-        async def search_messages(
-            self,
-            *,
-            group_id: int,
-            user_id: int | None = None,
-            keyword: str | None = None,
-            limit: int,
-        ):
-            assert group_id == 1001
-            assert user_id == 2002
-            assert keyword is None
-            assert limit == 5
-            return [memory_row(message_text="他的观点", user_id=2002)]
-
-        async def recent_group_messages(self, *args, **kwargs):
-            raise AssertionError("should not use group history for explicit at reference")
-
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        assert prompt == "总结他的观点"
-        assert "用户A：他的观点" in chat_context
-        return "总结好了"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+    """「参考 @某人 的最近消息」：@ 段里的 QQ 号作 context_user_id。"""
+    event = FakeEvent(
+        "ai 他最近发送的消息说了啥",
+        to_me=True,
+        segments=[FakeAtSegment(3000777)],
     )
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_chat_repository",
-        lambda: FakeStore(),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
+    captured = await _run_addressed(monkeypatch, event)
     with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
-            FakeEvent(
-                "ai 参考  的最近5条：总结他的观点",
-                [
-                    FakeTextSegment("ai 参考 "),
-                    FakeAtSegment(2002),
-                    FakeTextSegment(" 的最近5条：总结他的观点"),
-                ],
-            )
-        )
-
-
-@pytest.mark.asyncio
-async def test_ai_chat_summarizes_mentioned_user_recent_messages_in_natural_prompt(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FakeStore:
-        async def add_message(self, *args, **kwargs) -> int:
-            return 123
-
-        async def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
-            return None
-
-        async def search_messages(
-            self,
-            *,
-            group_id: int,
-            user_id: int | None = None,
-            keyword: str | None = None,
-            limit: int,
-        ):
-            assert group_id == 1001
-            assert user_id == 2002
-            assert keyword is None
-            assert limit == 3
-            return [memory_row(message_text="目标用户的信息", user_id=2002)]
-
-        async def recent_user_turns(self, *args, **kwargs):
-            raise AssertionError("should not use sender history for mentioned-user summary")
-
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        assert prompt == "总结 最近三条消息"
-        assert "用户A：目标用户的信息" in chat_context
-        return "总结好了"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
-    )
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_chat_repository",
-        lambda: FakeStore(),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
-            FakeEvent(
-                "总结  最近三条消息",
-                [
-                    FakeAtSegment(2880000001),
-                    FakeTextSegment(" 总结 "),
-                    FakeAtSegment(2002),
-                    FakeTextSegment(" 最近三条消息"),
-                ],
-                to_me=False,
-            )
-        )
-
-
-@pytest.mark.asyncio
-async def test_ai_chat_does_not_scope_group_history_to_at_after_separator(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FakeStore:
-        async def add_message(self, *args, **kwargs) -> int:
-            return 123
-
-        async def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
-            return None
-
-        async def recent_group_messages(self, *, group_id: int, limit: int):
-            assert group_id == 1001
-            assert limit == 5
-            return [memory_row(message_text="群聊观点", user_id=2003)]
-
-        async def search_messages(self, *args, **kwargs):
-            raise AssertionError("question mention should not scope group history")
-
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        assert prompt == "你怎么看"
-        assert "用户A：群聊观点" in chat_context
-        return "总结好了"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
-    )
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_chat_repository",
-        lambda: FakeStore(),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
-            FakeEvent(
-                "ai 参考最近5条： 你怎么看",
-                [
-                    FakeTextSegment("ai 参考最近5条："),
-                    FakeAtSegment(2002),
-                    FakeTextSegment(" 你怎么看"),
-                ],
-            )
-        )
-
-
-@pytest.mark.asyncio
-async def test_ai_chat_memory_failure_does_not_block_reply(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class BrokenStore:
-        async def add_message(self, *args, **kwargs) -> int:
-            raise OSError("database locked")
-
-        async def recent_group_messages(self, *args, **kwargs):
-            raise OSError("database locked")
-
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        assert prompt == "你好"
-        assert chat_context == ""
-        return "你好"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
-    )
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_chat_repository",
-        lambda: BrokenStore(),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 你好"))  # type: ignore[arg-type]
-
-
-@pytest.mark.asyncio
-async def test_ai_chat_memory_store_construction_failure_does_not_block_reply(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def broken_repository():
-        raise OSError("cannot open database")
-
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        assert prompt == "你好"
-        assert chat_context == ""
-        return "你好"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", broken_repository)
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 你好"))  # type: ignore[arg-type]
+        await ai_chat_plugin.handle_ai_chat(event)  # type: ignore[arg-type]
+    assert captured["context_user_id"] == 3000777
 
 
 @pytest.mark.asyncio
 async def test_ai_chat_records_ordinary_group_message_without_reply(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    recorded: list[dict[str, object]] = []
-    request_ai_reply_called = False
-    finish_called = False
+    """普通（非 addressed）消息：不入 AI 问答链，走插话收集路径。"""
+    calls: list[dict] = []
 
-    class FakeStore:
-        async def add_message(self, **kwargs) -> int:
-            recorded.append(kwargs)
-            return 123
-
-    async def fake_request_ai_reply(*args, **kwargs) -> str:
-        nonlocal request_ai_reply_called
-        request_ai_reply_called = True
-        raise AssertionError("AI should not be called for ordinary group messages")
-
-    async def fake_finish(message: object) -> None:
-        nonlocal finish_called
-        finish_called = True
-        raise AssertionError("finish should not be called for ordinary group messages")
+    async def fake_run_auto_chat(**kwargs):
+        calls.append(kwargs)
+        return None
 
     monkeypatch.setattr(
         ai_chat_plugin,
         "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret", auto_chat_enabled=True),
     )
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_chat_repository",
-        lambda: FakeStore(),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    await ai_chat_plugin.handle_ai_chat(FakeEvent("普通聊天内容"))  # type: ignore[arg-type]
-
-    assert recorded == [
-        {
-            "group_id": 1001,
-            "user_id": 2001,
-            "message_text": "普通聊天内容",
-            "is_ai_prompt": False,
-        }
-    ]
-    assert request_ai_reply_called is False
-    assert finish_called is False
+    store = _RecordingStore()
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: store)
+    monkeypatch.setattr(ai_chat_plugin, "run_auto_chat", fake_run_auto_chat)
+    await ai_chat_plugin.handle_ai_chat(FakeEvent("今天天气不错"))  # type: ignore[arg-type]
+    # 普通消息走收集器（批次路径），直接管线调用不经 handler
+    assert calls == []
+    assert store.rows[0]["is_ai_prompt"] in (0, False)
 
 
 @pytest.mark.asyncio
-async def test_ai_chat_records_non_ai_group_messages(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    recorded: list[dict[str, object]] = []
-
-    class FakeStore:
-        async def add_message(self, **kwargs) -> int:
-            recorded.append(kwargs)
-            return 123
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
-    )
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_chat_repository",
-        lambda: FakeStore(),
-    )
-
-    await ai_chat_plugin.handle_ai_chat(FakeEvent("普通聊天"))  # type: ignore[arg-type]
-
-    assert recorded == [
-        {
-            "group_id": 1001,
-            "user_id": 2001,
-            "message_text": "普通聊天",
-            "is_ai_prompt": False,
-        }
-    ]
+async def test_agent_flag_off_keeps_unified_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AGENT_ENABLED=false：走统一管线而非 agent。"""
+    captured = await _run_addressed(monkeypatch, FakeEvent("ai 你好"))
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 你好"))  # type: ignore[arg-type]
+    assert captured["force_reply"] is True
 
 
 @pytest.mark.asyncio
-async def test_ai_chat_excludes_current_prompt_from_memory_context(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FakeStore:
-        def __init__(self) -> None:
-            self.rows = [memory_row(message_text="旧问题", row_id=1)]
+async def test_agent_enabled_skips_unified_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AGENT_ENABLED=true：agent 路径接管，统一管线不被调用。"""
 
-        async def add_message(self, *, message_text: str, **kwargs) -> int:
-            self.rows.append(memory_row(message_text=message_text, row_id=2))
-            return 2
+    async def fake_run_auto_chat(**kwargs):  # pragma: no cover - 不应被调用
+        raise AssertionError("agent path must not call the unified pipeline")
 
-        async def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
-            return None
-
-        async def recent_group_messages(self, *, group_id: int, limit: int):
-            return self.rows[-limit:]
-
-    store = FakeStore()
-
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        assert prompt == "继续"
-        assert "旧问题" in chat_context
-        assert "ai 继续" not in chat_context
-        return "好的"
+    async def fake_agent_chat(event, prompt, settings, memory_store):
+        return "agent 回复"
 
     async def fake_finish(message: object) -> None:
         raise FinishCalled(message)
@@ -1269,124 +436,15 @@ async def test_ai_chat_excludes_current_prompt_from_memory_context(
     monkeypatch.setattr(
         ai_chat_plugin,
         "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
+        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret", agent_enabled=True),
     )
-    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: store)
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
+    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: _RecordingStore())
+    monkeypatch.setattr(ai_chat_plugin, "run_auto_chat", fake_run_auto_chat)
+    monkeypatch.setattr(ai_chat_plugin, "_handle_agent_chat", fake_agent_chat)
     monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
 
     with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 继续"))  # type: ignore[arg-type]
-
-
-@pytest.mark.asyncio
-async def test_ai_chat_rejects_empty_question_after_memory_reference(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FakeStore:
-        async def add_message(self, *args, **kwargs) -> int:
-            return 123
-
-        async def recent_group_messages(self, *, group_id: int, limit: int):
-            return []
-
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        raise AssertionError("AI should not be called")
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
-    )
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_chat_repository",
-        lambda: FakeStore(),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    with pytest.raises(FinishCalled) as exc_info:
-        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 参考最近5条："))  # type: ignore[arg-type]
-
-    assert exc_info.value.message == "请输入要问的问题"
-
-
-@pytest.mark.asyncio
-async def test_concurrent_events_reuse_same_repository(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Two concurrent events must share one repository instance, not create per-message stores."""
-
-    class FakeStore:
-        def __init__(self) -> None:
-            self.writes: list[dict] = []
-
-        async def add_message(self, *, message_text: str, **kwargs) -> int:
-            self.writes.append({"message_text": message_text, **kwargs})
-            return len(self.writes)
-
-        async def update_ai_reply(self, message_id: int, ai_reply: str) -> None:
-            return None
-
-        async def recent_group_messages(self, *, group_id: int, limit: int):
-            return []
-
-    store = FakeStore()
-    repository_lookups = {"count": 0}
-
-    def get_repository():
-        repository_lookups["count"] += 1
-        return store
-
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        return f"回复：{prompt[:2]}"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", get_repository)
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    async def run_event() -> None:
-        with pytest.raises(FinishCalled):
-            await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 并发消息"))  # type: ignore[arg-type]
-
-    await asyncio.gather(run_event(), run_event())
-
-    assert repository_lookups["count"] == 2  # one lookup per event...
-    assert len(store.writes) == 2  # ...but the same shared instance
-    assert store.writes[0]["message_text"] == "ai 并发消息"
-    assert store.writes[1]["message_text"] == "ai 并发消息"
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 你好"))  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -1696,106 +754,6 @@ async def test_agent_path_runtime_unavailable_fails_explicitly(
 
 
 @pytest.mark.asyncio
-async def test_agent_flag_off_keeps_legacy_path(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """AGENT_ENABLED=false: router and orchestrator are never touched; the
-    legacy request_ai_reply path runs exactly as before (Task 13)."""
-
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        assert prompt == "你好"
-        return "你好呀"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    async def unexpected_route_request(prompt, *, settings, gateway, can_use_chat_memory):
-        raise AssertionError("router must not run when AGENT_ENABLED=false")
-
-    orchestrator = FakeOrchestrator(object())
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
-    _patch_agent_runtime(monkeypatch, FakeAgentRuntime(orchestrator, gateway=object()))
-    monkeypatch.setattr(ai_chat_plugin, "route_request", unexpected_route_request)
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    with pytest.raises(FinishCalled) as exc_info:
-        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 你好"))  # type: ignore[arg-type]
-
-    assert orchestrator.runs == []
-    assert exc_info.value.message.extract_plain_text() == "你好呀"
-
-
-@pytest.mark.asyncio
-async def test_agent_path_skips_legacy_search_assembly(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """With AGENT_ENABLED=true the legacy search call is skipped; routing
-    owns search capability (S2-AGENT-09)."""
-    from qq_bot.agent.models import (
-        GroundedAnswer,
-        ReasonCode,
-        RouteDecision,
-        RouteKind,
-    )
-    from qq_bot.agent.router import RouteTrace
-
-    async def fake_route_request(prompt, *, settings, gateway, can_use_chat_memory):
-        decision = RouteDecision(
-            primary_route=RouteKind.DIRECT_CHAT,
-            confidence=0.9,
-            reason_code=ReasonCode.STRUCTURED_CLASSIFIER,
-            allowed_tools=(),
-        )
-        return decision, RouteTrace(
-            route=RouteKind.DIRECT_CHAT,
-            confidence=0.9,
-            reason_code=ReasonCode.STRUCTURED_CLASSIFIER,
-            latency_ms=1.0,
-            is_rule=True,
-        )
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    async def unexpected_search(prompt: str, *, settings, client):
-        raise AssertionError("legacy search must not run in agent mode")
-
-    answer = GroundedAnswer(claims=())
-    orchestrator = FakeOrchestrator(answer, store=object())
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: _agent_settings(search_enabled=True, tavily_api_key="tvly-test"),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
-    _patch_agent_runtime(monkeypatch, FakeAgentRuntime(orchestrator, gateway=object()))
-    monkeypatch.setattr(ai_chat_plugin, "route_request", fake_route_request)
-    monkeypatch.setattr(ai_chat_plugin, "search_web", unexpected_search)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    with pytest.raises(FinishCalled) as exc_info:
-        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 今天有什么新闻"))  # type: ignore[arg-type]
-
-    assert str(exc_info.value.message) == ""
-
-
-@pytest.mark.asyncio
 async def test_ai_chat_quota_denial_blocks_model_call(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
@@ -1821,9 +779,9 @@ async def test_ai_chat_quota_denial_blocks_model_call(
 
         calls: list[str] = []
 
-        async def unexpected_reply(**kwargs) -> str:
-            calls.append("model")
-            return "不应到达模型"
+        async def unexpected_run_auto_chat(**kwargs):
+            calls.append("pipeline")
+            return "不应到达管线"
 
         async def fake_finish(message: object) -> None:
             raise FinishCalled(message)
@@ -1839,7 +797,7 @@ async def test_ai_chat_quota_denial_blocks_model_call(
         )
         monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
         _patch_agent_runtime(monkeypatch, _QuotaRuntime(service))
-        monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", unexpected_reply)
+        monkeypatch.setattr(ai_chat_plugin, "run_auto_chat", unexpected_run_auto_chat)
         monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
 
         with pytest.raises(FinishCalled) as exc_info:
@@ -1870,8 +828,9 @@ async def test_ai_chat_quota_scope_binds_around_model_call(
         )
         seen: list[tuple[str, int] | None] = []
 
-        async def spy_reply(prompt: str, **kwargs) -> str:
+        async def spy_run_auto_chat(**kwargs) -> str:
             seen.append(active_quota_scope())
+            await kwargs["send"]("配额内回复")
             return "配额内回复"
 
         async def fake_finish(message: object) -> None:
@@ -1884,7 +843,8 @@ async def test_ai_chat_quota_scope_binds_around_model_call(
         )
         monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
         _patch_agent_runtime(monkeypatch, _QuotaRuntime(service))
-        monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", spy_reply)
+        monkeypatch.setattr(ai_chat_plugin, "run_auto_chat", spy_run_auto_chat)
+        monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: None)
         monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
 
         with pytest.raises(FinishCalled) as exc_info:
@@ -2232,67 +1192,6 @@ def test_pick_variants_stays_within_pool(monkeypatch: pytest.MonkeyPatch) -> Non
 # ---- 二期：被 @ 路径登记与冷场调度（S7-AUTO-P2-05）----
 
 
-@pytest.mark.asyncio
-async def test_addressed_reply_registers_note_and_cold_check(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls = {"note": 0, "cold": 0, "activity": []}
-
-    class FakeAutoChatState:
-        def note_reply(self, group_id, *, settings):
-            calls["note"] += 1
-            return ""
-
-        def note_activity(self, group_id, *, weight=1.0, boost=None, half_life=None):
-            calls["activity"].append((group_id, weight, boost, half_life))
-
-    async def fake_request_ai_reply(
-        prompt,
-        *,
-        settings,
-        client=None,
-        search_context="",
-        chat_context="",
-        roco_context="",
-        images=(),
-        extra_system_prompt="",
-    ):
-        return "你好呀"
-
-    async def fake_finish(message):
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-    monkeypatch.setattr(ai_chat_plugin, "shared_state", lambda: FakeAutoChatState())
-
-    def fake_schedule_cold_check(**kwargs):
-        calls["cold"] += 1
-
-    monkeypatch.setattr(ai_chat_plugin, "schedule_cold_check", fake_schedule_cold_check)
-
-    with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 你好"))  # type: ignore[arg-type]
-
-    assert calls["note"] == 1
-    assert calls["cold"] == 1
-    # 群兴趣度计分（H7）：被 @ 问答路径同入口记一次，weight 由纯函数算出，
-    # boost 显式取自 settings.auto_chat_interest_boost
-    assert len(calls["activity"]) == 1
-    group_id, weight, boost, half_life = calls["activity"][0]
-    assert group_id == 1001
-    assert weight == 3.0  # "ai 你好" 含"你"（+2），非疑问尾
-    assert boost == BotSettings().auto_chat_interest_boost
-    # 存量折叠接线（Final Fix）：handler 显式传半衰期配置，note 前先折算
-    assert half_life == BotSettings().auto_chat_interest_half_life
-
-
 # ---- 二期收尾：send 闭包吞掉 finish 控制流异常（S7-AUTO-P2-07）----
 
 
@@ -2388,7 +1287,10 @@ async def test_auto_chat_send_hook_strips_placeholder_and_skips_empty(
 
     await send(["看这个[图片]", "[图片]"])
     assert [str(m) for m in bot.sent] == ["看这个"]  # 占位剥除；纯占位段丢弃
-    assert [(r["user_id"], r["message_text"]) for r in memory.rows] == [(2880000001, "看这个")]
+    # 记忆按原始段登记（含 [图片] 占位，与收消息存储惯例一致）；纯占位段没发出不记账
+    assert [(r["user_id"], r["message_text"]) for r in memory.rows] == [
+        (2880000001, "看这个[图片]")
+    ]
 
     await send(["[图片]"])
     assert [str(m) for m in bot.sent] == ["看这个"]  # 全空整轮不发
@@ -2668,30 +1570,12 @@ async def test_quoted_reply_with_ai_prefix_still_explicit_command(
     """Fix Round 1 回归 A：reply + "ai xxx" 前缀仍识别为显式 AI 命令；
     提示词不含 u{id} 令牌与 [引用 标记（标记只进存储）。"""
     captured: dict = {}
-
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        captured["prompt"] = prompt
-        return "帮你看了"
-
     written: list[dict] = []
 
     class RecordingStore(EmptyMemoryStore):
         async def add_message(self, **kwargs) -> int:
             written.append(kwargs)
             return 555
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
 
     monkeypatch.setattr(
         ai_chat_plugin,
@@ -2703,10 +1587,9 @@ async def test_quoted_reply_with_ai_prefix_still_explicit_command(
             auto_chat_quote_reply_enabled=True,
         ),
     )
-    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: RecordingStore())
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
+    captured = await _run_addressed(
+        monkeypatch, FakeEvent("ai 帮我看看这个"), store=RecordingStore()
+    )
     event = FakeEvent(
         "ai 帮我看看这个",
         segments=[FakeReplySegment({"id": 11, "qq": 12345, "text": "上分"})],
@@ -2714,9 +1597,9 @@ async def test_quoted_reply_with_ai_prefix_still_explicit_command(
     with pytest.raises(FinishCalled):
         await ai_chat_plugin.handle_ai_chat(event)  # type: ignore[arg-type]
 
-    prompt = captured["prompt"]
-    # S11-QUOTE-02：引用内容按昵称别名渲染进 prompt（模型不再盲答引用），
-    # u{id} 令牌与 QQ 号依旧绝不出现——隐私红线不变，只是换了渲染层。
+    prompt = captured["raw_text"]
+    # S11-QUOTE-02：引用内容按昵称别名渲染进统一管线触发文本（模型不再盲答
+    # 引用），u{id} 令牌与 QQ 号依旧绝不出现——隐私红线不变，只是换了渲染层。
     assert prompt == "回复 [引用 用户A:上分]：帮我看看这个"
     assert "u12345" not in prompt
     assert "12345" not in prompt
@@ -2731,37 +1614,7 @@ async def test_quoted_reply_addressed_to_bot_prompt_has_no_token(
     """Fix Round 1 回归 B（S11-QUOTE-02 修订）：reply + @bot（to_me）走显式
     应答路径；提示词现在携带昵称渲染的引用内容，但 u{id} 令牌与原始 QQ 号
     绝不出现（QQ 号经模型回显进群聊即隐私边界破防）。"""
-    captured: dict = {}
-
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        captured["prompt"] = prompt
-        return "看到了"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(
-            allowed_group_ids="1001",
-            ai_api_key="secret",
-            auto_chat_quote_reply_enabled=True,
-        ),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+    captured = await _run_addressed(monkeypatch, FakeEvent("帮我看看这个", to_me=True))
 
     event = FakeEvent(
         "帮我看看这个",
@@ -2771,7 +1624,7 @@ async def test_quoted_reply_addressed_to_bot_prompt_has_no_token(
     with pytest.raises(FinishCalled):
         await ai_chat_plugin.handle_ai_chat(event)  # type: ignore[arg-type]
 
-    prompt = captured["prompt"]
+    prompt = captured["raw_text"]
     assert prompt == "回复 [引用 用户A:上分]：帮我看看这个"
     assert "u12345" not in prompt
     assert "12345" not in prompt
@@ -2849,166 +1702,6 @@ async def test_send_sticker_hook_swallows_send_errors(
     assert await send_sticker(_sticker()) is False
 
 
-# ---- 联网判别门（S11-SEARCH-01）：关键词未命中时由模型判断是否需要搜 ----
-
-
-@pytest.mark.asyncio
-async def test_ai_chat_search_gate_searches_with_model_query(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from qq_bot.services.search import SearchResult
-
-    gate_calls: list[dict] = []
-
-    async def fake_request_completion(**kwargs):
-        gate_calls.append(kwargs)
-        return '{"search": true, "query": "Kimi k3.1pro 发布"}'
-
-    async def fake_search_web(prompt: str, *, settings: BotSettings, client: object | None = None):
-        assert prompt == "Kimi k3.1pro 发布"  # 用判别门产出的搜索词，而非原话
-        return [SearchResult("K3.1Pro 发布", "https://example.com/k3", "k3 info")]
-
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        assert prompt == "评价一下kimi k3.1pro"
-        assert "K3.1Pro 发布" in search_context
-        return "查到了。"
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(
-            allowed_group_ids="1001",
-            ai_api_key="secret",
-            search_enabled=True,
-            tavily_api_key="tvly-secret",
-            ai_search_gate_enabled=True,
-        ),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
-    monkeypatch.setattr(ai_chat_plugin, "request_completion", fake_request_completion)
-    monkeypatch.setattr(ai_chat_plugin, "search_web", fake_search_web)
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 评价一下kimi k3.1pro"))  # type: ignore[arg-type]
-
-    assert gate_calls and gate_calls[0]["max_tokens"] == 128
-    assert gate_calls[0]["json_mode"] is True
-
-
-@pytest.mark.asyncio
-async def test_ai_chat_search_gate_skips_when_model_says_no(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def fake_request_completion(**kwargs):
-        return '{"search": false, "query": ""}'
-
-    async def unexpected_search_web(*args, **kwargs):
-        raise AssertionError("search should not be called when gate says no")
-
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        assert search_context == ""
-        return "随便聊聊。"
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(
-            allowed_group_ids="1001",
-            ai_api_key="secret",
-            search_enabled=True,
-            tavily_api_key="tvly-secret",
-            ai_search_gate_enabled=True,
-        ),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
-    monkeypatch.setattr(ai_chat_plugin, "request_completion", fake_request_completion)
-    monkeypatch.setattr(ai_chat_plugin, "search_web", unexpected_search_web)
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 评价一下kimi k3.1pro"))  # type: ignore[arg-type]
-
-
-@pytest.mark.asyncio
-async def test_ai_chat_search_gate_fail_open_on_gate_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def fake_request_completion(**kwargs):
-        raise RuntimeError("gate model down")
-
-    async def unexpected_search_web(*args, **kwargs):
-        raise AssertionError("search should not be called when gate errors")
-
-    async def fake_request_ai_reply(
-        prompt: str,
-        *,
-        settings: BotSettings,
-        client: object | None = None,
-        search_context: str = "",
-        chat_context: str = "",
-        roco_context: str = "",
-        images: tuple[str, ...] = (),
-        extra_system_prompt: str = "",
-    ) -> str:
-        assert search_context == ""
-        return "这个本鸡真不知道。"
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(
-            allowed_group_ids="1001",
-            ai_api_key="secret",
-            search_enabled=True,
-            tavily_api_key="tvly-secret",
-            ai_search_gate_enabled=True,
-        ),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
-    monkeypatch.setattr(ai_chat_plugin, "request_completion", fake_request_completion)
-    monkeypatch.setattr(ai_chat_plugin, "search_web", unexpected_search_web)
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-
-    with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 评价一下kimi k3.1pro"))  # type: ignore[arg-type]
-
-
 # ---- 视觉（S11-VISION-01）：@问答读图 / 回复发图发表情 ----
 
 
@@ -3031,79 +1724,42 @@ def _sticker_library(tmp_path: Path):
 async def test_ai_chat_passes_images_and_attachment_placeholder_to_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """@机器人 + 只发一张图：占位文案进 prompt，图片 URL 随请求发出，
-    记忆行保留 [图片] 占位。"""
-    captured: dict = {}
-    stored: list[dict] = []
-
-    class RecordingStore(EmptyMemoryStore):
-        async def add_message(self, **kwargs) -> int:
-            stored.append(kwargs)
-            return 55
-
-    async def fake_request_ai_reply(prompt, **kwargs) -> str:
-        captured.update(kwargs)
-        captured["prompt"] = prompt
-        return "这是张梗图"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: RecordingStore())
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+    """@ + 图片：占位文本作触发，图片源随 trigger_images 进统一管线
+    （随请求发给模型的封顶与归属说明在服务层注入）。"""
+    captured = await _run_addressed(monkeypatch, FakeEvent("", to_me=True))
 
     event = FakeEvent(
         "",
-        [FakeImageSegment("https://multimedia.example/meme.jpg")],
+        segments=[
+            FakeImageSegment("https://multimedia.example/a.jpg"),
+            FakeImageSegment("https://multimedia.example/b.jpg"),
+        ],
         to_me=True,
     )
-    with pytest.raises(FinishCalled) as exc_info:
+    with pytest.raises(FinishCalled):
         await ai_chat_plugin.handle_ai_chat(event)  # type: ignore[arg-type]
 
-    assert captured["prompt"] == "[图片]"
-    assert captured["images"] == ("https://multimedia.example/meme.jpg",)
-    assert stored and stored[0]["message_text"].endswith("[图片]")
-    assert exc_info.value.message.extract_plain_text() == "这是张梗图"
+    assert captured["raw_text"] == "[图片]"
+    assert captured["trigger_images"] == (
+        "https://multimedia.example/a.jpg",
+        "https://multimedia.example/b.jpg",
+    )
 
 
 @pytest.mark.asyncio
 async def test_ai_chat_face_segment_becomes_tag_in_prompt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """QQ 经典表情渲染成 [表情:名字] 占位随问题进模型。"""
-    captured: dict = {}
-
-    async def fake_request_ai_reply(prompt, **kwargs) -> str:
-        captured["prompt"] = prompt
-        captured["images"] = kwargs.get("images")
-        return "哈哈"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
+    """QQ 经典表情渲染成 [表情:名字] 占位随触发文本进统一管线。"""
+    captured = await _run_addressed(monkeypatch, FakeEvent("", to_me=True))
 
     face_segment = SimpleNamespace(type="face", data={"id": "21", "text": "白眼"})
+    event = FakeEvent("", [FakeTextSegment(""), face_segment], to_me=True)
     with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
-            FakeEvent("这什么意思", [FakeTextSegment("这什么意思"), face_segment], to_me=True)
-        )
+        await ai_chat_plugin.handle_ai_chat(event)  # type: ignore[arg-type]
 
-    assert captured["prompt"] == "这什么意思 [表情:白眼]"
-    assert captured["images"] == ()
+    assert "[表情:白眼]" in captured["raw_text"]
+    assert captured["trigger_images"] == ()
 
 
 def test_build_outgoing_reply_plain_text_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -3198,139 +1854,6 @@ def test_qa_sticker_hint_lists_candidates(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert "[发图:dog]" in hint or "发图" in hint
     assert "一只狗" in hint
     assert "呲牙" in hint
-
-
-# ---- 跨消息图片回忆接线（S11-VISION-01 补丁）----
-
-
-@pytest.mark.asyncio
-async def test_ai_chat_recalls_recent_group_image_when_at_message_has_none(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """表情包先发一条、@机器人再发一条（本条无图）：回捞最近一张随请求发出。"""
-    from qq_bot.services.vision_extract import ImageRecallBuffer
-
-    captured: dict = {}
-    recall_buffer = ImageRecallBuffer()
-
-    async def fake_request_ai_reply(prompt, **kwargs) -> str:
-        captured["prompt"] = prompt
-        captured["images"] = kwargs.get("images")
-        return "看到了"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-    monkeypatch.setattr(ai_chat_plugin, "shared_image_recall", lambda: recall_buffer)
-
-    # 第一条：普通带图消息（非 @）
-    await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
-        FakeEvent("", [FakeImageSegment("https://multimedia.example/meme.jpg")])
-    )
-    # 第二条：@机器人纯文本
-    with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
-            FakeEvent(
-                "看得到吗", [FakeAtSegment(2880000001), FakeTextSegment("看得到吗")], to_me=True
-            )
-        )
-
-    assert captured["images"] == ("https://multimedia.example/meme.jpg",)
-    assert "已附在本条消息里" in captured["prompt"]
-
-
-@pytest.mark.asyncio
-async def test_ai_chat_recall_disabled_keeps_text_only(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """RECALL_SECONDS=0：不回捞，行为与纯文本版一致。"""
-    from qq_bot.services.vision_extract import ImageRecallBuffer
-
-    captured: dict = {}
-    recall_buffer = ImageRecallBuffer()
-
-    async def fake_request_ai_reply(prompt, **kwargs) -> str:
-        captured["images"] = kwargs.get("images")
-        return "看不到"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(
-            allowed_group_ids="1001", ai_api_key="secret", ai_qa_vision_recall_seconds=0
-        ),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-    monkeypatch.setattr(ai_chat_plugin, "shared_image_recall", lambda: recall_buffer)
-
-    await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
-        FakeEvent("", [FakeImageSegment("https://multimedia.example/meme.jpg")])
-    )
-    with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
-            FakeEvent(
-                "看得到吗", [FakeAtSegment(2880000001), FakeTextSegment("看得到吗")], to_me=True
-            )
-        )
-
-    assert captured["images"] == ()
-
-
-@pytest.mark.asyncio
-async def test_ai_chat_own_image_wins_over_recall(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """@消息自带图时用本条的图，不回捞旧图。"""
-    from qq_bot.services.vision_extract import ImageRecallBuffer
-
-    captured: dict = {}
-    recall_buffer = ImageRecallBuffer()
-    recall_buffer.remember(1001, ["https://multimedia.example/old.jpg"], sender_user_id=2002)
-
-    async def fake_request_ai_reply(prompt, **kwargs) -> str:
-        captured["images"] = kwargs.get("images")
-        return "新图"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-    monkeypatch.setattr(ai_chat_plugin, "shared_image_recall", lambda: recall_buffer)
-
-    with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
-            FakeEvent(
-                "看这张",
-                [
-                    FakeAtSegment(2880000001),
-                    FakeTextSegment("看这张"),
-                    FakeImageSegment("https://multimedia.example/fresh.jpg"),
-                ],
-                to_me=True,
-            )
-        )
-
-    assert captured["images"] == ("https://multimedia.example/fresh.jpg",)
 
 
 # ---- 回捞图归属（S11-VISION-01：模型看得到图但不知道是谁发的）----
@@ -3476,176 +1999,6 @@ async def test_quote_fetcher_swallows_api_errors(monkeypatch: pytest.MonkeyPatch
     assert await fetch(77) is None
 
 
-@pytest.mark.asyncio
-async def test_recall_note_reaches_model_prompt(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """端到端：B 发图 → A @提问，注脚（含归属）进 prompt，图片随请求发出。"""
-    from qq_bot.services.vision_extract import ImageRecallBuffer
-
-    captured: dict = {}
-    recall_buffer = ImageRecallBuffer()
-
-    async def fake_request_ai_reply(prompt, **kwargs) -> str:
-        captured["prompt"] = prompt
-        captured["images"] = kwargs.get("images")
-        return "看到了"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-    monkeypatch.setattr(ai_chat_plugin, "shared_image_recall", lambda: recall_buffer)
-
-    # B（2002）发图
-    await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
-        FakeEvent(
-            "",
-            [FakeImageSegment("https://multimedia.example/meme.jpg")],
-            user_id=2002,
-        )
-    )
-    # A（2001）@提问
-    with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
-            FakeEvent(
-                "看得到吗",
-                [FakeAtSegment(2880000001), FakeTextSegment("看得到吗")],
-                to_me=True,
-                user_id=2001,
-            )
-        )
-
-    assert captured["images"] == ("https://multimedia.example/meme.jpg",)
-    assert "不是当前提问的用户发的" in captured["prompt"]
-
-
-@pytest.mark.asyncio
-async def test_recalled_image_note_uses_group_nickname(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """昵称解析接通后，回捞注脚用真实群昵称而非"用户A/B"字母。"""
-    from qq_bot.services.vision_extract import RecalledImage
-
-    note = ai_chat_plugin._recalled_image_note(
-        RecalledImage(urls=("https://img.example/a.jpg",), sender_user_id=2002),
-        SimpleNamespace(user_id=2001, group_id=1001),
-        context_rows=[],
-        nicknames={2002: "阿伟"},
-    )
-    assert "阿伟" in note
-    assert "用户" not in note.split("不是当前提问的用户发的")[0]
-
-
-@pytest.mark.asyncio
-async def test_qa_chat_context_resolves_nicknames(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """端到端：AUTO_CHAT_NICKNAMES_ENABLED 开启时，@问答上下文按昵称渲染。"""
-    captured: dict = {}
-
-    async def fake_request_ai_reply(prompt, **kwargs) -> str:
-        captured["chat_context"] = kwargs.get("chat_context")
-        return "好"
-
-    async def fake_finish(message: object) -> None:
-        raise FinishCalled(message)
-
-    class NicknameStore(EmptyMemoryStore):
-        async def recent_group_messages(self, *, group_id: int, limit: int):
-            return [
-                ChatMemoryRow(
-                    id=1,
-                    group_id=group_id,
-                    user_id=2002,
-                    message_text="哈哈",
-                    created_at="",
-                    is_ai_prompt=False,
-                    ai_reply="",
-                )
-            ]
-
-    async def fake_resolver(user_ids):
-        return {2002: "阿伟"}
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(
-            allowed_group_ids="1001", ai_api_key="secret", auto_chat_nicknames_enabled=True
-        ),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: NicknameStore())
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-    monkeypatch.setattr(
-        ai_chat_plugin, "_nickname_resolver", lambda group_id, settings: fake_resolver
-    )
-
-    with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
-            FakeEvent(
-                "看得到吗", [FakeAtSegment(2880000001), FakeTextSegment("看得到吗")], to_me=True
-            )
-        )
-
-    assert "阿伟：哈哈" in captured["chat_context"]
-
-
-def test_build_outgoing_reply_raw_face_id_resend_client_known(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """[发脸:#编号]：客户端认识的 id 可以原样回发（读侧占位自带 id）。"""
-    monkeypatch.setattr(
-        ai_chat_plugin, "_deliver_sticker_library", lambda: _sticker_library(tmp_path)
-    )
-    settings = BotSettings(ai_qa_sticker_enabled=True)
-
-    message = ai_chat_plugin._build_outgoing_reply("给[发脸:#352]", settings=settings)
-
-    assert isinstance(message, Message)
-    assert [seg.type for seg in message] == ["text", "face"]
-    assert message[1].data["id"] == "352"
-
-
-def test_build_outgoing_reply_unknown_face_dropped(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """客户端不认识的 id（493>417）在解析层就拦下，段不会进消息。"""
-    monkeypatch.setattr(
-        ai_chat_plugin, "_deliver_sticker_library", lambda: _sticker_library(tmp_path)
-    )
-    settings = BotSettings(ai_qa_sticker_enabled=True)
-
-    message = ai_chat_plugin._build_outgoing_reply("给[发脸:#493]", settings=settings)
-
-    assert message.extract_plain_text() == "给"
-    assert all(seg.type != "face" for seg in message)
-
-
-def test_qa_sticker_hint_does_not_promise_unknown_faces(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """提示词不教回发未知表情（发出去只会被客户端丢弃，制造"我说发了
-    你没看到"），并明确告知发不出来。"""
-    monkeypatch.setattr(
-        ai_chat_plugin, "_deliver_sticker_library", lambda: _sticker_library(tmp_path)
-    )
-    hint = ai_chat_plugin._qa_sticker_hint(BotSettings(ai_qa_sticker_enabled=True))
-    assert "[发脸:#编号]" not in hint
-    assert "发不出来" in hint
-
-
-# ---- QA 回复多气泡（S11-QA-VOICE-01：嘴硬拆两句才有节奏）----
-
-
 def test_split_qa_reply_newlines_to_bubbles() -> None:
     assert ai_chat_plugin._split_qa_reply("烧啥烧\n额度就是留着这时候用的，不烧白不烧") == [
         "烧啥烧",
@@ -3667,82 +2020,6 @@ def test_split_qa_reply_caps_at_three_parts() -> None:
 
 def test_split_qa_reply_drops_blank_lines() -> None:
     assert ai_chat_plugin._split_qa_reply("\n 甲 \n\n 乙 \n") == ["甲", "乙"]
-
-
-@pytest.mark.asyncio
-async def test_qa_reply_multi_bubble_sends_parts_with_delay(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """换行分段 → 前段裸 API 发送、末段走 finish；两段都过发图解析。"""
-    sent_fragments: list = []
-    finished: list = []
-
-    class FakeBot:
-        async def send_group_msg(self, *, group_id: int, message):
-            sent_fragments.append(message)
-
-    async def fake_request_ai_reply(prompt, **kwargs) -> str:
-        return "烧啥烧\n本鸡额度就是留着这时候用的"
-
-    async def fake_finish(message: object) -> None:
-        finished.append(message)
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-    monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: FakeBot())
-
-    with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
-            FakeEvent("问一句", [FakeAtSegment(2880000001), FakeTextSegment("问一句")], to_me=True)
-        )
-
-    assert len(sent_fragments) == 1
-    assert sent_fragments[0].extract_plain_text() == "烧啥烧"
-    assert len(finished) == 1
-    assert finished[0].extract_plain_text() == "本鸡额度就是留着这时候用的"
-
-
-@pytest.mark.asyncio
-async def test_qa_reply_single_part_goes_straight_to_finish(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """无换行回复：与历史路径一致，直接 finish 单条。"""
-    finished: list = []
-
-    class FakeBot:
-        async def send_group_msg(self, *, group_id: int, message):
-            raise AssertionError("single-part reply must not use raw send")
-
-    async def fake_request_ai_reply(prompt, **kwargs) -> str:
-        return "单条回复"
-
-    async def fake_finish(message: object) -> None:
-        finished.append(message)
-        raise FinishCalled(message)
-
-    monkeypatch.setattr(
-        ai_chat_plugin,
-        "get_settings",
-        lambda: BotSettings(allowed_group_ids="1001", ai_api_key="secret"),
-    )
-    monkeypatch.setattr(ai_chat_plugin, "get_chat_repository", lambda: EmptyMemoryStore())
-    monkeypatch.setattr(ai_chat_plugin, "request_ai_reply", fake_request_ai_reply)
-    monkeypatch.setattr(ai_chat_plugin.ai_chat, "finish", fake_finish)
-    monkeypatch.setattr(ai_chat_plugin, "_connected_onebot_bot", lambda: FakeBot())
-
-    with pytest.raises(FinishCalled):
-        await ai_chat_plugin.handle_ai_chat(  # type: ignore[arg-type]
-            FakeEvent("问一句", [FakeAtSegment(2880000001), FakeTextSegment("问一句")], to_me=True)
-        )
-
-    assert not sent_fragments_guard() and finished[0].extract_plain_text() == "单条回复"
 
 
 def sent_fragments_guard() -> list:

@@ -25,7 +25,7 @@ from qq_bot.runtime import (
     get_http_client,
     get_runtime,
 )
-from qq_bot.services.ai_client import AIReplyError, request_ai_reply, request_completion
+from qq_bot.services.ai_client import AIReplyError
 from qq_bot.services.auto_chat import (
     BatchItem,
     TriggerCategory,
@@ -44,7 +44,6 @@ from qq_bot.services.memory_prompt import (
     build_user_aliases,
     extract_at_user_ids,
     extract_at_user_ids_before_separator,
-    format_chat_context,
     parse_memory_reference,
 )
 from qq_bot.services.message_formatting import replace_named_mentions
@@ -60,15 +59,6 @@ from qq_bot.services.quote_reference import (
 )
 from qq_bot.services.quota import quota_scope
 from qq_bot.services.reliability import classify_exception
-from qq_bot.services.search import (
-    SEARCH_GATE_SYSTEM_PROMPT,
-    SearchError,
-    build_search_gate_user_prompt,
-    format_search_context,
-    parse_search_intent,
-    prompt_needs_search,
-    search_web,
-)
 from qq_bot.services.vision_extract import (
     QA_FACE_WHITELIST,
     RecalledImage,
@@ -268,14 +258,15 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                             )
                 return
 
-            if not prompt:
-                if attachment_text:
-                    prompt = attachment_text
-                else:
-                    await finish_with_send_errors_logged(
-                        ai_chat,
-                        f"请在 {settings.ai_prefix} 后面输入要问的问题。",
-                    )
+            bare_at = not prompt and not attachment_text
+            if bare_at:
+                # S12-UNIFY-01：单独 @ 不带任何内容不再走「请输入要问的问题」
+                # 固定文案链——合成触发语进统一管线自然接话（记忆里也以这行
+                # 文本登记，模型/复盘都看得懂）。
+                prompt = "（只发了 @）"
+                stored_text = prompt
+            if not prompt and attachment_text:
+                prompt = attachment_text
 
             if not settings.has_ai_config():
                 await finish_with_send_errors_logged(ai_chat, "AI 功能还没有配置 API Key。")
@@ -290,11 +281,8 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
             )
             prompt = memory_reference.question
 
-            if not prompt:
-                if attachment_text:
-                    prompt = attachment_text
-                else:
-                    await finish_with_send_errors_logged(ai_chat, "请输入要问的问题")
+            if not prompt and not bare_at and not attachment_text:
+                await finish_with_send_errors_logged(ai_chat, "请输入要问的问题")
 
             # Quota admission (S4-QUOTA-02/03): gate both agent and legacy
             # paths at the entry; explicit commands never route through here.
@@ -313,54 +301,6 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
         finally:
             tracer.end_span(receive_span)
 
-        chat_context = ""
-        # 上下文行留给回捞图的归属标注（_recalled_image_note 用同一份行算
-        # 别名，保证注脚里的人称与聊天上下文渲染一致）。
-        context_rows: Sequence[ChatMemoryRow] = ()
-        # 群昵称解析（S11-AUTO-04 同源）：@问答链的历史与回捞图注脚按真实
-        # 昵称渲染，模型不再把"用户A/B"字母喊进群里；解析失败回落字母。
-        qa_nicknames: Mapping[int, str] | None = None
-        if memory_store is not None and not settings.agent_enabled:
-            memory_span = tracer.start_span("memory.retrieve", trace_id=trace_id)
-            try:
-                limit = min(
-                    memory_reference.limit or settings.chat_memory_default_turns,
-                    settings.chat_memory_max_results,
-                )
-                if memory_reference.user_id is not None or memory_reference.keyword:
-                    rows = await memory_store.search_messages(
-                        group_id=event.group_id,
-                        user_id=memory_reference.user_id,
-                        keyword=memory_reference.keyword,
-                        limit=limit,
-                    )
-                else:
-                    rows = await memory_store.recent_group_messages(
-                        group_id=event.group_id, limit=limit
-                    )
-                context_rows = rows
-                resolver = _nickname_resolver(event.group_id, settings)
-                if resolver is not None:
-                    try:
-                        qa_nicknames = await resolver(
-                            frozenset(row.user_id for row in rows) | {event.user_id}
-                        )
-                    except Exception:
-                        qa_nicknames = None
-                chat_context = format_chat_context(
-                    rows,
-                    nicknames=qa_nicknames,
-                    # 机器人自己的插话行（S12-CHATFIX-01 写回记忆）以人设名渲染，
-                    # 昵称目录缺失也不许把机器人渲染成「用户C」。
-                    bot_user_id=int(event.self_id) if event.self_id else None,
-                    bot_label=load_persona(settings).name or None,
-                )
-            except Exception:
-                tracer.end_span(memory_span, status="error")
-                logger.exception("Chat memory read failed; continuing without chat context")
-            else:
-                tracer.end_span(memory_span)
-
         memory_message_id: int | None = None
         if memory_store is not None:
             try:
@@ -374,166 +314,104 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                 record_error("memory", classify_exception(exc).category.value)
                 logger.exception("Chat memory write failed; continuing without storing message")
 
-        roco_context = ""
-        if settings.roco_enabled:
-            knowledge_span = tracer.start_span("knowledge.lookup", trace_id=trace_id)
+        if settings.agent_enabled:
+            # 结构化 agent 路径（S12-UNIFY-01 范围外，保持原样作回退）：仍走
+            # 独立生成与 ai_reply 回填/独立发送尾巴。
             try:
-                from qq_bot.services.roco_knowledge import build_roco_context
-
-                roco_context = build_roco_context(prompt)
-            except Exception as exc:
-                category = classify_exception(exc).category.value
-                tracer.end_span(knowledge_span, status="error", category=category)
-                record_error("knowledge", category)
-                logger.exception("Roco knowledge lookup failed; continuing without Roco context")
-                roco_context = ""
-            else:
-                tracer.end_span(knowledge_span)
-
-        search_context = ""
-        needs_search = prompt_needs_search(prompt)
-        # 联网判别门（S11-SEARCH-01）：关键词未命中时由模型判断是否需要搜
-        # （顺带产出搜索词），堵住"评价一下 kimi k3.1pro"这类知识可能过时、
-        # 又不含任何搜索触发词的问法。判别失败/说不需要 → 维持现状不搜。
-        search_gate_asked = False
-        search_query = ""
-        if (
-            not needs_search
-            and settings.ai_search_gate_enabled
-            and settings.has_search_config()
-            and not settings.agent_enabled
-        ):
-            search_gate_asked = True
-            try:
-                gate_content = await request_completion(
-                    system_prompt=SEARCH_GATE_SYSTEM_PROMPT,
-                    user_prompt=build_search_gate_user_prompt(prompt),
-                    settings=settings,
-                    client=http_client,
-                    model=settings.router_model,
-                    max_tokens=128,
-                    json_mode=True,
-                )
-                intent = parse_search_intent(gate_content)
-            except Exception as exc:
-                record_error("search_gate", classify_exception(exc).category.value)
-                intent = None
-            if intent is None:
-                metrics.SEARCH_GATE.labels("error").inc()
-            elif intent[0]:
-                metrics.SEARCH_GATE.labels("search").inc()
-                needs_search = True
-                search_query = intent[1]
-            else:
-                metrics.SEARCH_GATE.labels("skip").inc()
-        if needs_search and not settings.has_search_config():
-            await finish_with_send_errors_logged(
-                ai_chat,
-                "这个问题需要联网搜索才能可靠回答，但搜索功能还没有配置。",
-            )
-
-        if not settings.agent_enabled and needs_search:
-            try:
-                search_results = await search_web(
-                    search_query or prompt,
-                    settings=settings,
-                    client=http_client,
-                )
-            except SearchError:
-                logger.exception("Web search failed for current-event prompt")
-                await finish_with_send_errors_logged(
-                    ai_chat, "联网搜索失败了，先不乱编；稍后再问我试试。"
-                )
-            else:
-                if search_results:
-                    search_context = format_search_context(search_results)
-                elif search_gate_asked:
-                    # 判别路径搜不到：不硬拒答（fail-open）——用户没明确要搜，
-                    # 让模型带着"没资料"老实说不知道，比固定话术自然。
-                    metrics.SEARCH_GATE.labels("empty").inc()
-                else:
-                    await finish_with_send_errors_logged(
-                        ai_chat, "联网搜索没有找到可靠结果，先不乱编。"
-                    )
-
-        try:
-            if settings.agent_enabled:
                 with quota_scope("group", event.group_id):
                     agent_reply = await _handle_agent_chat(event, prompt, settings, memory_store)
-                if agent_reply is None:
-                    return
-                reply = agent_reply
-            else:
-                with quota_scope("group", event.group_id):
-                    # 表情占位并入模型问题文本（图片本身随 images 走多模态块）；
-                    # 提示词占位只进最终请求，不进搜索判别/本地知识检索。
-                    prompt_for_model = prompt
-                    # 引用前缀（S11-QUOTE-02）：只进最终请求，不进搜索判别/
-                    # 本地知识检索（与表情占位同一纪律）；无引用时空串原样。
-                    prompt_for_model = (
-                        _qa_quote_prefix(quoted_ref, context_rows, qa_nicknames) + prompt_for_model
-                    )
-                    if vision.face_tags:
-                        prompt_for_model = f"{prompt_for_model} {' '.join(vision.face_tags)}"
-                    # 本条消息没带图时回捞最近一张（跨消息"先发图再 @"场景）；
-                    # 注脚带上发送者身份，模型才知道图归谁（回错对象教训）。
-                    request_images = vision.images
-                    if not request_images and settings.ai_qa_vision_recall_seconds > 0:
-                        recalled = shared_image_recall().recall(
-                            event.group_id,
-                            ttl_seconds=settings.ai_qa_vision_recall_seconds,
-                        )
-                        if recalled is not None:
-                            request_images = recalled.urls
-                            metrics.AI_VISION.labels("recalled").inc()
-                            prompt_for_model = (
-                                f"{prompt_for_model} "
-                                f"{_recalled_image_note(recalled, event, context_rows, qa_nicknames)}"
-                            )
-                    reply = await request_ai_reply(
-                        prompt_for_model,
-                        settings=settings,
-                        client=http_client,
-                        search_context=search_context,
-                        chat_context=chat_context,
-                        roco_context=roco_context,
-                        images=request_images,
-                        extra_system_prompt=_qa_sticker_hint(settings),
-                    )
-        except AIReplyError:
-            await finish_with_send_errors_logged(ai_chat, _pick_variants(_UNAVAILABLE_MESSAGES))
-
-        if memory_message_id is not None:
-            try:
-                await memory_store.update_ai_reply(memory_message_id, reply)
-            except Exception:
-                logger.exception("Chat memory reply update failed")
-
-        # 被 @ 问答路径不贴表情也不发表情包（用户在直接对话）：quota/send 用得上
-        _quota_check, send, _unused_react, _unused_sticker, _unused_image = _build_auto_chat_hooks(
-            event, settings, memory_store=memory_store
-        )
-        exit_flag = shared_state().note_reply(event.group_id, settings=settings)
-        if exit_flag:
-            metrics.AUTO_CHAT.labels("prefilter", "hot_exit_limit").inc()
-        if memory_store is not None:
-            schedule_cold_check(
-                group_id=event.group_id,
-                bot_reply_text=reply,
-                bot_reply_time=datetime.now(UTC),
-                settings=settings,
-                memory_store=memory_store,
-                send=send,
-                quota_check=_quota_check,
-                client=http_client,
-                bot_user_id=int(event.self_id) if event.self_id else None,
+            except AIReplyError:
+                agent_reply = None
+                await finish_with_send_errors_logged(ai_chat, _pick_variants(_UNAVAILABLE_MESSAGES))
+            if agent_reply is None:
+                return
+            if memory_message_id is not None:
+                try:
+                    await memory_store.update_ai_reply(memory_message_id, agent_reply)
+                except Exception:
+                    logger.exception("Chat memory reply update failed")
+            _quota_check, send, _unused_react, _unused_sticker, _unused_image = (
+                _build_auto_chat_hooks(event, settings, memory_store=memory_store)
             )
-
-        await _send_qa_reply(
-            event,
-            reply,
-            settings=settings,
-        )
+            exit_flag = shared_state().note_reply(event.group_id, settings=settings)
+            if exit_flag:
+                metrics.AUTO_CHAT.labels("prefilter", "hot_exit_limit").inc()
+            if memory_store is not None:
+                schedule_cold_check(
+                    group_id=event.group_id,
+                    bot_reply_text=agent_reply,
+                    bot_reply_time=datetime.now(UTC),
+                    settings=settings,
+                    memory_store=memory_store,
+                    send=send,
+                    quota_check=_quota_check,
+                    client=http_client,
+                    bot_user_id=int(event.self_id) if event.self_id else None,
+                )
+            await _send_qa_reply(event, agent_reply, settings=settings)
+        else:
+            # S12-UNIFY-01：被 @/前缀/引用必回与自主插话是同一条管线——同一
+            # 生成链（人设话风/记忆上下文/搜索/质量闸）、同一出站（多气泡/
+            # 表情标记/占位符保险闸/写回记忆）。差异只剩两点：addressed 必回
+            # （force_reply 跳过采样/门/限额）与「参考最近N条」上下文覆盖。
+            trigger_text = prompt
+            if quoted_ref is not None and memory_store is not None:
+                # 引用前缀（S11-QUOTE-02）：昵称渲染需要一份行算别名；统一管线
+                # 内部自取上下文，这里仅为前缀渲染取一次。
+                try:
+                    prefix_rows = await memory_store.recent_group_messages(
+                        group_id=event.group_id,
+                        limit=min(
+                            memory_reference.limit or settings.chat_memory_default_turns,
+                            settings.chat_memory_max_results,
+                        ),
+                    )
+                    prefix_nicknames: Mapping[int, str] | None = None
+                    resolver = _nickname_resolver(event.group_id, settings)
+                    if resolver is not None:
+                        try:
+                            prefix_nicknames = await resolver(
+                                frozenset(r.user_id for r in prefix_rows) | {event.user_id}
+                            )
+                        except Exception:
+                            prefix_nicknames = None
+                except Exception:
+                    prefix_rows = ()
+                    prefix_nicknames = None
+                trigger_text = (
+                    _qa_quote_prefix(quoted_ref, prefix_rows, prefix_nicknames) + trigger_text
+                )
+            quota_check, send, react, send_sticker, send_image = _build_auto_chat_hooks(
+                event, settings, memory_store=memory_store
+            )
+            with quota_scope("group", event.group_id):
+                reply = await run_auto_chat(
+                    event=event,
+                    raw_text=trigger_text,
+                    settings=settings,
+                    memory_store=memory_store,
+                    send=send,
+                    quota_check=quota_check,
+                    client=http_client,
+                    quoted_self=quoted_self,
+                    react=react,
+                    trigger_message_id=event.message_id,
+                    sticker_library=(
+                        _deliver_sticker_library() if settings.auto_chat_sticker_enabled else None
+                    ),
+                    send_sticker=send_sticker if settings.auto_chat_sticker_enabled else None,
+                    send_image=send_image,
+                    bot_user_id=int(event.self_id) if event.self_id else None,
+                    nickname_resolver=_nickname_resolver(event.group_id, settings),
+                    trigger_images=vision.images,
+                    force_reply=True,
+                    context_limit=memory_reference.limit,
+                    context_user_id=memory_reference.user_id,
+                    context_keyword=memory_reference.keyword,
+                    sticker_hint=_qa_sticker_hint(settings),
+                )
+            if reply is None:
+                await finish_with_send_errors_logged(ai_chat, _pick_variants(_UNAVAILABLE_MESSAGES))
     finally:
         tracer.end_span(total_span)
 
@@ -608,6 +486,47 @@ async def _send_qa_reply(
     await finish_with_send_errors_logged(
         ai_chat, _build_outgoing_reply(parts[-1], settings=settings)
     )
+
+
+def _build_outgoing_part(part: str, *, settings: BotSettings) -> Message | None:
+    """单气泡出站构建（S12-UNIFY-01）：统一管线的每一段都过与 @问答同一套
+    表情标记解析——[发脸:名]/[发图:ID] 变真实表情/表情包（客户端不认识的
+    id 静默丢弃计数），记忆占位剥除（S12-CHATFIX-01 保险闸），named-mention
+    替换。整段为空（纯占位）返回 None，调用方丢段。"""
+    mentions = settings.named_mention_replacement_map
+    parsed = parse_reply_parts(part)
+    if parsed.stickers == 0 and parsed.faces == 0:
+        text = strip_attachment_placeholders(part)
+        if not text:
+            return None
+        return replace_named_mentions(text, mentions)
+    if parsed.dropped:
+        metrics.QA_EXPRESSIONS.labels("marker", "dropped").inc(parsed.dropped)
+    channel_available = settings.ai_qa_sticker_enabled
+    library = _deliver_sticker_library()
+    message = Message()
+    for item in parsed.parts:
+        if item.kind == "text":
+            text = strip_attachment_placeholders(item.value)
+            if text:
+                message.extend(replace_named_mentions(text, mentions))
+        elif item.kind == "sticker":
+            sticker = library.get(item.value) if channel_available and library else None
+            if sticker is None:
+                metrics.QA_EXPRESSIONS.labels("sticker", "dropped").inc()
+                continue
+            message.append(MessageSegment.image(f"file:///{sticker.path.resolve().as_posix()}"))
+            metrics.QA_EXPRESSIONS.labels("sticker", "included").inc()
+        else:
+            face_id = parse_face_spec(item.value) if channel_available else None
+            if face_id is None:
+                metrics.QA_EXPRESSIONS.labels("face", "dropped").inc()
+                continue
+            message.append(MessageSegment.face(face_id))
+            metrics.QA_EXPRESSIONS.labels("face", "included").inc()
+    if not message:
+        return None
+    return message
 
 
 def _build_outgoing_reply(reply: str, *, settings: BotSettings) -> Message:
@@ -911,51 +830,45 @@ def _build_auto_chat_hooks(
         重试/熔断链路。
         出站占位符保险闸（S12-CHATFIX-01）：记忆占位/发送指令标记（[图片]/
         [表情:x]/[发脸:#n] 等）逐段剥除，剥空的段丢弃、全空整轮不发——
-        2026-10-26 线上实测 plusone 曾把字面「[图片]」四个字符发进群。"""
+        2026-10-26 线上实测 plusone 曾把字面「[图片]」四个字符发进群。
+        S12-UNIFY-01：每段出站前过表情标记解析（_build_outgoing_part）——
+        [发脸:名]/[发图:ID] 变成真实 QQ 表情/表情包图片，与 @问答同一闸门
+        （客户端不认识的 id 静默丢弃），插话与回答同一套出站能力。"""
         raw_parts = [text] if isinstance(text, str) else [p for p in (p.strip() for p in text) if p]
-        parts = [p for p in (strip_attachment_placeholders(p) for p in raw_parts) if p]
-        if not parts:
+        pairs: list[tuple[str, object]] = []
+        for part in raw_parts:
+            message = _build_outgoing_part(part, settings=settings)
+            if message is not None:
+                pairs.append((part, message))  # 纯占位段丢弃且不记账（没发出就不算说过）
+        if not pairs:
             if raw_parts:
                 metrics.AUTO_CHAT.labels("send", "placeholder_only").inc()
             return
         try:
             bot = _connected_onebot_bot()
             if bot is None:
-                await finish_with_send_errors_logged(
-                    ai_chat,
-                    replace_named_mentions(
-                        "，".join(parts), settings.named_mention_replacement_map
-                    ),
-                )
+                await finish_with_send_errors_logged(ai_chat, pairs[0][1])
                 return
             if settings.auto_chat_typing_enabled:
                 intervals = typing_intervals(
-                    parts,
+                    [raw for raw, _ in pairs],
                     base=settings.auto_chat_typing_base_seconds,
                     per_char=settings.auto_chat_typing_per_char,
                     max_seconds=settings.auto_chat_typing_max_seconds,
                     rng=random.random,
                 )
             else:
-                intervals = [random.uniform(0.6, 1.4) for _ in parts[:-1]]
-            for index, part in enumerate(parts[:-1]):
+                intervals = [random.uniform(0.6, 1.4) for _ in pairs[:-1]]
+            for index, (raw_part, message) in enumerate(pairs[:-1]):
                 try:
-                    await bot.send_group_msg(
-                        group_id=event.group_id,
-                        message=replace_named_mentions(
-                            part, settings.named_mention_replacement_map
-                        ),
-                    )
+                    await bot.send_group_msg(group_id=event.group_id, message=message)
                 except Exception:
                     pass  # 插话碎片丢失可接受；也不把消息内容写进日志（隐私白名单）
                 else:
-                    await _record_self_message(part)
+                    await _record_self_message(raw_part)
                 await asyncio.sleep(intervals[index])
-            await _record_self_message(parts[-1])  # 移交 finish 前记账（finish 必然抛出）
-            await finish_with_send_errors_logged(
-                ai_chat,
-                replace_named_mentions(parts[-1], settings.named_mention_replacement_map),
-            )
+            await _record_self_message(pairs[-1][0])  # 移交 finish 前记账（finish 必然抛出）
+            await finish_with_send_errors_logged(ai_chat, pairs[-1][1])
         except FinishedException:
             pass  # matcher.finish 正常完成的控制流异常；吞掉让 ok 指标可执行
 
