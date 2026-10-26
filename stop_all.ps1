@@ -1,11 +1,14 @@
 <#
 .SYNOPSIS
-    Stops the QQ bot backend and NapCatQQ processes.
+    Stops the QQ bot backend and protocol client processes.
 
 .DESCRIPTION
     Loads startup configuration from startup.local.ps1 (or a custom path),
-    validates the NapCat directory, then stops matching bot and NapCat
-    processes. Does not require the Python virtual environment.
+    validates the protocol directory, then stops matching bot and protocol
+    (NapCat or SnowLuma) processes. Does not require the Python virtual
+    environment. In SnowLuma mode the QQ process itself is left running
+    because the user started and logged into it manually; close it by hand
+    if a full shutdown is needed.
 
 .PARAMETER ConfigPath
     Path to the startup configuration file. Defaults to startup.local.ps1
@@ -47,15 +50,27 @@ if (-not $StartupConfig) {
     exit 1
 }
 
-# ---- Validate NapCatDir ----
-if (-not $StartupConfig.ContainsKey("NapCatDir") -or [string]::IsNullOrEmpty($StartupConfig["NapCatDir"])) {
-    Write-Host "ERROR: NapCatQQ directory (NapCatDir) is not configured."
+# ---- Validate protocol selection (default: napcat for backward compatibility) ----
+if ($StartupConfig.ContainsKey("Protocol") -and -not [string]::IsNullOrEmpty($StartupConfig["Protocol"])) {
+    $Protocol = "$($StartupConfig["Protocol"])".Trim().ToLowerInvariant()
+} else {
+    $Protocol = "napcat"
+}
+if ($Protocol -ne "napcat" -and $Protocol -ne "snowluma") {
+    Write-Host "ERROR: Protocol must be 'napcat' or 'snowluma' (got '$Protocol')."
     exit 1
 }
 
-$NapCatDir = $StartupConfig["NapCatDir"]
-if (-not (Test-Path -LiteralPath $NapCatDir -PathType Container)) {
-    Write-Host "ERROR: Configured NapCatDir was not found. Check the path in your startup configuration."
+# ---- Validate the protocol directory ----
+$protocolDirKey = if ($Protocol -eq "napcat") { "NapCatDir" } else { "SnowLumaDir" }
+if (-not $StartupConfig.ContainsKey($protocolDirKey) -or [string]::IsNullOrEmpty($StartupConfig[$protocolDirKey])) {
+    Write-Host "ERROR: $Protocol directory ($protocolDirKey) is not configured."
+    exit 1
+}
+
+$ProtocolDir = $StartupConfig[$protocolDirKey]
+if (-not (Test-Path -LiteralPath $ProtocolDir -PathType Container)) {
+    Write-Host "ERROR: Configured $protocolDirKey was not found. Check the path in your startup configuration."
     exit 1
 }
 
@@ -82,6 +97,20 @@ function Get-NapCatProcess {
     $directoryPrefix = [System.IO.Path]::GetFullPath($Directory).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
     return @(Get-Process -Name NapCatWinBootMain,QQ -ErrorAction SilentlyContinue | Where-Object {
         $_.Path -and [System.IO.Path]::GetFullPath($_.Path).StartsWith($directoryPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+    })
+}
+
+function Get-SnowLumaProcess {
+    # Match node.exe processes launched with the absolute entry-script path,
+    # so system-wide unrelated node processes are never touched. Returns
+    # Get-Process objects (.Id) like Get-NapCatProcess does.
+    param([string]$Directory)
+
+    $entryPattern = [regex]::Escape((Join-Path $Directory "index.mjs"))
+    return @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" | Where-Object {
+        $_.CommandLine -and $_.CommandLine -match $entryPattern
+    } | ForEach-Object {
+        Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
     })
 }
 
@@ -117,12 +146,23 @@ if ($botProcesses.Count -gt 0) {
     Write-Host "Bot backend is not running."
 }
 
-$napCatProcesses = @(Get-NapCatProcess -Directory $NapCatDir)
-if ($napCatProcesses.Count -gt 0) {
-    Write-Host "Stopping NapCat..."
-    Stop-NapCatProcesses -Processes $napCatProcesses
+if ($Protocol -eq "napcat") {
+    $napCatProcesses = @(Get-NapCatProcess -Directory $ProtocolDir)
+    if ($napCatProcesses.Count -gt 0) {
+        Write-Host "Stopping NapCat..."
+        Stop-NapCatProcesses -Processes $napCatProcesses
+    } else {
+        Write-Host "NapCat is not running."
+    }
 } else {
-    Write-Host "NapCat is not running."
+    $snowLumaProcesses = @(Get-SnowLumaProcess -Directory $ProtocolDir)
+    if ($snowLumaProcesses.Count -gt 0) {
+        Write-Host "Stopping SnowLuma..."
+        Stop-NapCatProcesses -Processes $snowLumaProcesses
+    } else {
+        Write-Host "SnowLuma is not running."
+    }
+    Write-Host "Note: the QQ process is left running (started manually in SnowLuma mode)."
 }
 
 Write-Host "Shutdown complete."

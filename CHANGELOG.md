@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **协议端可切换（NapCat → SnowLuma）**：`startup.local.ps1` 新增 `Protocol`（`napcat` 默认 / `snowluma`）与 `SnowLumaDir` 键，`start_all.ps1` / `stop_all.ps1` 按协议分支启动/停止；bot 后端与 OneBot 调用零改动（依赖 API 含 NapCat 扩展 `get_group_msg_history`、`set_msg_emoji_like` 已对照 SnowLuma v2.2.0 源码逐一确认）。**服务器（Docker）已于 2026-10-26 15:54 切至 SnowLuma 容器，后端零重启；napcat 容器保留回退（restart=no）**。切换/回退步骤见 `docs/2026-10-26-snowluma-migration.md`。动机：NapCat 2026-03 起被风控针对性检测频繁掉线。
+
 - **断线补答（S12-CATCHUP-01）**：NapCat 重连（含腾讯静默踢下线后的恢复）后，通过 `get_group_msg_history` 拉群漫游记录，把掉线窗口内漏掉的消息补回 chat memory，并对其中 @机器人 的呼唤补一条 AI 回答（附"刚才掉线"过渡语）。护栏：首次启动只记水位不回溯；超过 `CATCHUP_MAX_AGE_SECONDS`（默认 12 小时）的呼唤不补；每群每轮最多 `CATCHUP_MAX_REPLIES`（默认 10）条，超出只补库不答；quota 拒绝时静默；60 秒防抖吸收 ws 抖动。动机：2026-07-01 / 08-30 / 10-26 三次同模式静默掉线，期间呼唤全部丢失。
 
 ## [0.2.0] - 2026-10-26
