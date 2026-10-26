@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **复盘六连穿帮修复（S12-CHATFIX-01，2026-10-26 晚复盘中裁决）**：
+  - **plusone 复读纯图不再发文字**：复读撞上纯图/表情消息时改为重发触发消息里的公网原图（lock/acquire/note_reply/tune 与文本路径同构），URL 拿不到或发送失败整轮跳过，绝不回退发文字；新增出站占位符保险闸（`strip_attachment_placeholders`）逐段剥除 `[图片]`/`[表情:x]`/`[发图:x]`/`[发脸:x]` 等标记，剥空段丢弃、全空整轮不发。此前把字面「[图片]」四个字符当消息发进了群（2026-10-26 21:16 线上实录）。
+  - **机器人自己的插话写回聊天记忆**：send/send_image 钩子成功出站后以 bot 自身 QQ 号 `add_message`，后续轮次上下文以人设名渲染 bot 行（`build_user_aliases` 新增 `bot_user_id`/`bot_label`）——此前 @问答被问"你发的图呢"时因上下文里没有自己的发言而全盘否认。负反馈检测与冷场检查"最新消息"判定排除 bot 自身行（后者不排除会永久误判有人接话）。
+  - **热聊窗口免采样不免门**：机器人发言后 8 分钟的热聊链此前完全跳过决策门（当晚 19 条插话全程无门），现每轮照常过门——「肥鱼你怎么看」这类问别人的消息由门拦下或转旁观 banter，react/sticker 通道随门在热聊窗口顺带生效。
+  - **生成端四条硬规则**（casual_system_prompt）：不替第三方回答「XX你怎么看」式提问；「本X」自称只能指自己、给别人的称呼禁用「本」字（线上「叫本鲸不就完了」「本鲸的师傅」穿帮）；师傅/老板等关系禁现编；上下文 `[图片]` 占位未附图禁止描述猜测（线上「图里画的是小鲸鱼」瞎编穿帮）。配套打开 `AUTO_CHAT_VISION_ENABLED`（插话生成看触发图）。
+  - 附带修复：`_PENDING_AUTO_HOOKS` 由 `setdefault` 改为覆盖——原实现留住批次第一条消息的钩子，批次触发图与触发消息错位。
+
 ### Added
 
 - **协议端可切换（NapCat → SnowLuma）**：`startup.local.ps1` 新增 `Protocol`（`napcat` 默认 / `snowluma`）与 `SnowLumaDir` 键，`start_all.ps1` / `stop_all.ps1` 按协议分支启动/停止；bot 后端与 OneBot 调用零改动（依赖 API 含 NapCat 扩展 `get_group_msg_history`、`set_msg_emoji_like` 已对照 SnowLuma v2.2.0 源码逐一确认）。**服务器（Docker）已于 2026-10-26 15:54 切至 SnowLuma 容器，后端零重启；napcat 容器保留回退（restart=no）**。切换/回退步骤见 `docs/2026-10-26-snowluma-migration.md`。动机：NapCat 2026-03 起被风控针对性检测频繁掉线。
