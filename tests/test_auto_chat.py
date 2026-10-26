@@ -518,6 +518,7 @@ async def _run(
     trigger_images=(),
     send_image=None,
     bot_user_id=None,
+    trigger_row_id=None,
 ) -> None:
     async def _nick_resolver(user_ids):
         return nicknames
@@ -543,6 +544,7 @@ async def _run(
         bot_user_id=bot_user_id,
         nickname_resolver=_nick_resolver if nicknames is not None else None,
         trigger_images=trigger_images,
+        trigger_row_id=trigger_row_id,
     )
 
 
@@ -1549,6 +1551,135 @@ class TestPlusOne:
         h = Harness(["冲冲冲 [图片]", "冲冲冲 [图片]"], _run_settings())
         await _run(h, raw_text="冲冲冲 [图片]")
         assert h.sent == ["冲冲冲 [图片]"]
+
+
+class _ImageStoreMemory(FakeMemory):
+    """带落库图接口的假记忆：回捞命中与消息档路径可注入。"""
+
+    def __init__(self, texts, *, hit=None, stored_paths=None):
+        super().__init__(texts)
+        self._hit = hit
+        self._stored_paths = stored_paths or []
+
+    async def latest_chat_image(self, group_id, *, newer_than):
+        return self._hit
+
+    async def chat_image_paths_for_message(self, message_id):
+        return self._stored_paths
+
+
+@pytest.mark.asyncio
+async def test_recalled_stored_image_reaches_generation_with_attribution(
+    tmp_path,
+) -> None:
+    """S12-IMGSTORE-01：本条没带图时回捞群里最近落库图随请求附给模型，
+    归属（谁发的）进 prompt——重启也不丢。"""
+    import base64 as _b64
+
+    magic = bytes([0x89]) + b"PNG" + bytes([13, 10]) + bytes([26]) + b"fake"
+    png = tmp_path / "recall.png"
+    png.write_bytes(magic)
+    h = Harness(["看这个"], _run_settings(auto_chat_vision_enabled=True))
+    h.memory = _ImageStoreMemory(["看这个"], hit=(png.as_posix(), 2002))
+    completions = []
+
+    def completion():
+        async def fake(**kwargs) -> str:
+            completions.append(kwargs)
+            if "决策器" in kwargs["system_prompt"]:
+                return h.gate_content
+            return "图看到了"
+
+        return fake
+
+    await _run(
+        h,
+        raw_text="看这个",
+        _completion=completion(),
+        nicknames={2002: "风哥", 2001: "用户甲"},
+    )
+    casual = [c for c in completions if "决策器" not in c["system_prompt"]]
+    expected = "data:image/png;base64," + _b64.b64encode(magic).decode()
+    assert casual and casual[0]["images"] == (expected,)
+    assert "风哥" in casual[0]["user_prompt"]
+
+
+@pytest.mark.asyncio
+async def test_trigger_image_suppresses_recall() -> None:
+    """本条自带图：不再回捞，只附触发图（封顶语义）。"""
+    h = Harness(["看这个"], _run_settings(auto_chat_vision_enabled=True))
+    h.memory = _ImageStoreMemory(["看这个"], hit=("data:image/png;base64,AAAA", 2002))
+    completions = []
+
+    def completion():
+        async def fake(**kwargs) -> str:
+            completions.append(kwargs)
+            if "决策器" in kwargs["system_prompt"]:
+                return h.gate_content
+            return "图看到了"
+
+        return fake
+
+    await _run(
+        h,
+        raw_text="看这个",
+        _completion=completion(),
+        trigger_images=("https://multimedia.example/live.png",),
+    )
+    casual = [c for c in completions if "决策器" not in c["system_prompt"]]
+    assert casual[0]["images"] == ("https://multimedia.example/live.png",)
+
+
+@pytest.mark.asyncio
+async def test_recall_disabled_keeps_generation_text_only() -> None:
+    """回捞 TTL=0：纯文本生成，不查库。"""
+    h = Harness(
+        ["看这个"],
+        _run_settings(auto_chat_vision_enabled=True, ai_qa_vision_recall_seconds=0.0),
+    )
+    h.memory = _ImageStoreMemory(["看这个"], hit=("data:image/png;base64,AAAA", 2002))
+    completions = []
+
+    def completion():
+        async def fake(**kwargs) -> str:
+            completions.append(kwargs)
+            if "决策器" in kwargs["system_prompt"]:
+                return h.gate_content
+            return "图收到了"
+
+        return fake
+
+    await _run(h, raw_text="看这个", _completion=completion())
+    casual = [c for c in completions if "决策器" not in c["system_prompt"]]
+    assert casual[0]["images"] == ()
+
+
+@pytest.mark.asyncio
+async def test_plusone_image_prefers_stored_file() -> None:
+    """plusone 复读图优先用落库本地文件重发——QQ 图 URL 过期免疫。"""
+    import qq_bot.services.auto_chat as m
+
+    h = Harness(["先发一张", "[图片]"], _run_settings())
+    h.memory = _ImageStoreMemory(
+        ["先发一张", "[图片]"], stored_paths=["C:/appdata/data/chat_images/1001/901_0.png"]
+    )
+    m._RECENT_REPLIES[1001] = deque()
+    image_calls: list[str] = []
+
+    async def send_image(url: str) -> bool:
+        image_calls.append(url)
+        return True
+
+    await _run(
+        h,
+        raw_text="[图片]",
+        trigger_images=(),
+        send_image=send_image,
+        trigger_row_id=901,
+    )
+    assert len(image_calls) == 1
+    assert image_calls[0].startswith("file:///")
+    assert image_calls[0].endswith("901_0.png")
 
 
 class TestTuneLog:

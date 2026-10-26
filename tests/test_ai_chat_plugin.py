@@ -10,7 +10,7 @@ from prometheus_client import REGISTRY
 from qq_bot.config import BotSettings
 from qq_bot.plugins import ai_chat as ai_chat_plugin
 from qq_bot.runtime import RuntimeStateError
-from qq_bot.services import quote_reference, vision_extract
+from qq_bot.services import quote_reference
 from qq_bot.services.chat_memory import ChatMemoryRow
 from qq_bot.services.sticker_library import Sticker
 from pathlib import Path
@@ -110,13 +110,6 @@ def _fresh_shared_quote_lru(monkeypatch: pytest.MonkeyPatch) -> None:
     """引用接线（S10-HUMAN-P0-06）使用进程级共享 LRU 单例；每个用例前重置，
     避免跨用例的消息登记残留影响引用解析结果。"""
     monkeypatch.setattr(quote_reference, "_SHARED_LRU", None)
-
-
-@pytest.fixture(autouse=True)
-def _fresh_shared_image_recall(monkeypatch: pytest.MonkeyPatch) -> None:
-    """跨消息图片回忆（S11-VISION-01）同样走进程级单例；每例重置，避免
-    前面用例 remember 的图片被后面用例 recall 到。"""
-    monkeypatch.setattr(vision_extract, "_SHARED_IMAGE_RECALL", None)
 
 
 def memory_row(
@@ -1858,52 +1851,6 @@ def test_qa_sticker_hint_lists_candidates(monkeypatch: pytest.MonkeyPatch, tmp_p
 
 # ---- 回捞图归属（S11-VISION-01：模型看得到图但不知道是谁发的）----
 
-
-@pytest.mark.asyncio
-async def test_recalled_image_note_attributes_other_sender(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """别人发的图 + 我来提问：注脚用上下文一致的"用户X"标注，并点明不是提问者发的。"""
-    from qq_bot.services.vision_extract import RecalledImage
-
-    note = ai_chat_plugin._recalled_image_note(
-        RecalledImage(urls=("https://img.example/a.jpg",), sender_user_id=2002),
-        SimpleNamespace(user_id=2001, group_id=1001),
-        context_rows=[],
-    )
-    assert "用户A" in note
-    assert "不是当前提问的用户发的" in note
-
-    # 发送者已在上下文行里时，别名与上下文渲染一致
-    row = ChatMemoryRow(
-        id=1,
-        group_id=1001,
-        user_id=2002,
-        message_text="[图片]",
-        created_at="",
-        is_ai_prompt=False,
-        ai_reply="",
-    )
-    note2 = ai_chat_plugin._recalled_image_note(
-        RecalledImage(urls=("https://img.example/a.jpg",), sender_user_id=2002),
-        SimpleNamespace(user_id=2001, group_id=1001),
-        context_rows=[row],
-    )
-    assert "用户A" in note2  # 2002 在上下文里排第一个 → 用户A
-
-
-@pytest.mark.asyncio
-async def test_recalled_image_note_attributes_current_user(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from qq_bot.services.vision_extract import RecalledImage
-
-    note = ai_chat_plugin._recalled_image_note(
-        RecalledImage(urls=("https://img.example/a.jpg",), sender_user_id=2001),
-        SimpleNamespace(user_id=2001, group_id=1001),
-        context_rows=[],
-    )
-    assert "当前提问的用户自己刚发的" in note
 
 
 # ---- @问答引用前缀 + get_msg 回查（S11-QUOTE-01/02）----

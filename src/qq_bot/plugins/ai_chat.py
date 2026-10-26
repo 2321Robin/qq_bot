@@ -25,6 +25,7 @@ from qq_bot.runtime import (
     get_http_client,
     get_runtime,
 )
+from qq_bot.services.chat_images import ChatImageStore
 from qq_bot.services.ai_client import AIReplyError
 from qq_bot.services.auto_chat import (
     BatchItem,
@@ -60,13 +61,12 @@ from qq_bot.services.quote_reference import (
 from qq_bot.services.quota import quota_scope
 from qq_bot.services.reliability import classify_exception
 from qq_bot.services.vision_extract import (
+    VisionInputs,
     QA_FACE_WHITELIST,
-    RecalledImage,
     append_attachment_tags,
     extract_vision_inputs,
     parse_face_spec,
     parse_reply_parts,
-    shared_image_recall,
     strip_attachment_placeholders,
     strip_reply_markers,
 )
@@ -161,11 +161,6 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
             )
             if vision.dropped_images:
                 metrics.AI_VISION.labels("dropped").inc(vision.dropped_images)
-            # 跨消息图片回忆（S11-VISION-01 补丁）：群友习惯"先发表情包再 @
-            # 说话"——带图消息先进缓冲，@问答链自己没带图时回捞 TTL 内最近
-            # 一张（见 QA 分支）。只存进程内存，重启即空。
-            if vision.images:
-                shared_image_recall().remember(event.group_id, vision.images, event.user_id)
             # 记忆/批次文本用占位：历史轮次知道"这里有一张图/一个表情"，
             # 原始图片不入库（隐私红线与 token 成本，V2 设计决策）。
             attachment_text = ("[图片]" if vision.image_segments else "") + "".join(
@@ -242,6 +237,14 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                             "Chat memory write failed; continuing without storing message"
                         )
                     else:
+                        await _persist_message_images(
+                            group_id=event.group_id,
+                            row_id=stored_row_id,
+                            vision=vision,
+                            settings=settings,
+                            memory_store=memory_store,
+                            http_client=http_client,
+                        )
                         if settings.auto_chat_enabled:
                             await _maybe_auto_reply(
                                 event,
@@ -313,6 +316,15 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
             except Exception as exc:
                 record_error("memory", classify_exception(exc).category.value)
                 logger.exception("Chat memory write failed; continuing without storing message")
+            else:
+                await _persist_message_images(
+                    group_id=event.group_id,
+                    row_id=memory_message_id,
+                    vision=vision,
+                    settings=settings,
+                    memory_store=memory_store,
+                    http_client=http_client,
+                )
 
         if settings.agent_enabled:
             # 结构化 agent 路径（S12-UNIFY-01 范围外，保持原样作回退）：仍走
@@ -409,6 +421,7 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                     context_user_id=memory_reference.user_id,
                     context_keyword=memory_reference.keyword,
                     sticker_hint=_qa_sticker_hint(settings),
+                    trigger_row_id=memory_message_id,
                 )
             if reply is None:
                 await finish_with_send_errors_logged(ai_chat, _pick_variants(_UNAVAILABLE_MESSAGES))
@@ -598,32 +611,6 @@ def _qa_sticker_hint(settings: BotSettings) -> str:
         "也不要发明候选之外的 ID 或名字。"
         f"表情包候选（ID：描述）：\n{listed}\n可用QQ表情名：{faces}"
     )
-
-
-def _recalled_image_note(
-    recalled: RecalledImage,
-    event: GroupMessageEvent,
-    context_rows: Sequence[ChatMemoryRow],
-    nicknames: Mapping[int, str] | None = None,
-) -> str:
-    """回捞图的归属注脚（S11-VISION-01）：模型看得到图但不知道是谁发的，
-    会把提问者当成发图者回错对象。发送者=当前提问者时直说；别人发的用与
-    聊天上下文一致的别名标注（同一份 context_rows + 同一套昵称解析，保证
-    两个渲染层人称对得上；QQ 号照旧不进 prompt）。"""
-    if recalled.sender_user_id == event.user_id:
-        return "（这张图就是当前提问的用户自己刚发的，已附在本条消息里）"
-    synthetic = ChatMemoryRow(
-        id=-1,
-        group_id=event.group_id,
-        user_id=recalled.sender_user_id or 0,
-        message_text="[图片]",
-        created_at="",
-        is_ai_prompt=False,
-        ai_reply="",
-    )
-    alias = build_user_aliases([*context_rows, synthetic], nicknames=nicknames)
-    label = alias.get(recalled.sender_user_id or 0, "群友")
-    return f"（这张图是群里的{label}刚发的、已附在本条消息里，不是当前提问的用户发的）"
 
 
 def _qa_quote_prefix(
@@ -984,6 +971,7 @@ async def _maybe_auto_reply(
             bot_user_id=auto_bot_user_id,
             nickname_resolver=_nickname_resolver(event.group_id, settings),
             trigger_images=trigger_images,
+            trigger_row_id=row_id,
         )
         return
     if bypass:
@@ -1007,6 +995,7 @@ async def _maybe_auto_reply(
             bot_user_id=auto_bot_user_id,
             nickname_resolver=_nickname_resolver(event.group_id, settings),
             trigger_images=trigger_images,
+            trigger_row_id=row_id,
         )
         return
     collector = _get_auto_chat_collector()
@@ -1070,6 +1059,48 @@ def _nickname_resolver(
             return None
 
     return _resolve
+
+
+_CHAT_IMAGE_STORE: ChatImageStore | None = None
+
+
+def _chat_image_store() -> ChatImageStore:
+    """进程级群聊图片仓库单例（S12-IMGSTORE-01）：目录从当前 settings 固化。"""
+    global _CHAT_IMAGE_STORE
+    if _CHAT_IMAGE_STORE is None:
+        _CHAT_IMAGE_STORE = ChatImageStore(Path(get_settings().chat_image_dir))
+    return _CHAT_IMAGE_STORE
+
+
+async def _persist_message_images(
+    *,
+    group_id: int,
+    row_id: int | None,
+    vision: VisionInputs,
+    settings: BotSettings,
+    memory_store: object | None,
+    http_client: object | None,
+) -> None:
+    """消息写库后把随附图片落盘（S12-IMGSTORE-01）。存储是记忆增强：
+    开关关、无行 id、无图、任何失败都直接跳过，绝不拖累消息主流程。"""
+    if (
+        not settings.chat_image_store_enabled
+        or row_id is None
+        or not vision.images
+        or memory_store is None
+    ):
+        return
+    try:
+        await _chat_image_store().ingest(
+            repository=memory_store,
+            settings=settings,
+            group_id=group_id,
+            message_row_id=row_id,
+            sources=tuple(vision.images),
+            http_client=http_client,
+        )
+    except Exception:
+        metrics.AUTO_CHAT.labels("chat_image", "failed").inc()
 
 
 def _sticker_store() -> StickerStore:
@@ -1150,6 +1181,7 @@ def _get_auto_chat_collector() -> AutoChatCollector:
                 send_image=send_image,
                 bot_user_id=bot_user_id,
                 nickname_resolver=_nickname_resolver(group_id, get_settings()),
+                trigger_row_id=batch.items[-1].row_id if batch.items else None,
                 # 触发图（S11-VISION-01；S12-CHATFIX-01 起供 plusone 复读图取
                 # URL）：批次末条（触发消息）携带的图片源；run_auto_chat 内部
                 # 按 auto_chat_vision_enabled 决定是否随生成请求发出。

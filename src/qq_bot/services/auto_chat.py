@@ -1361,6 +1361,7 @@ async def run_auto_chat(
     context_user_id: int | None = None,
     context_keyword: str = "",
     sticker_hint: str = "",
+    trigger_row_id: int | None = None,
 ) -> str | None:
     """Full pipeline for one group message — S12-UNIFY-01 起同时承担被 @
     （addressed）与自主插话两条入口，单一生成链单一出站（部署者裁决：
@@ -1399,6 +1400,8 @@ async def run_auto_chat(
     search_messages）。
     ``sticker_hint``（S12-UNIFY-01）：表情通道提示（插件侧算好传入），拼进
     casual 生成 system prompt，让单一生成链也掌握 [发脸]/[发图] 标记。
+    ``trigger_row_id``（S12-IMGSTORE-01）：触发消息的记忆行 id——plusone 复读图
+    优先按它取落库原图重发（URL 过期免疫），取不到回落公网 URL。
 
     ``nickname_resolver``（S11-AUTO-04）：按需解析群昵称的异步回调
     ``(user_ids) -> Mapping[int, str] | None``，插件经 OneBot 拉取并缓存。
@@ -1489,9 +1492,7 @@ async def run_auto_chat(
                 limit=fetch_limit,
             )
         else:
-            rows = await memory_store.recent_group_messages(
-                group_id=group_id, limit=fetch_limit
-            )
+            rows = await memory_store.recent_group_messages(group_id=group_id, limit=fetch_limit)
     except Exception as exc:
         _metric("prefilter", "error")
         record_error("auto_chat", classify_exception(exc).category.value)
@@ -1538,10 +1539,21 @@ async def run_auto_chat(
     # 就整轮跳过——绝不回退为发文字占位。
     plusone_image_url = ""
     if plusone and is_attachment_only_text(plusone_text):
-        plusone_image_url = next(
-            (img for img in trigger_images if isinstance(img, str) and img.startswith("http")),
-            "",
-        )
+        # S12-IMGSTORE-01：优先用落库本地文件重发（消息行刚落库即有档），
+        # QQ 图 URL 过期不再影响；无落库时回落公网 URL；都没有整轮跳过。
+        stored_paths: list[str] = []
+        if trigger_row_id is not None and memory_store is not None:
+            try:
+                stored_paths = await memory_store.chat_image_paths_for_message(trigger_row_id)
+            except Exception:
+                stored_paths = []
+        if stored_paths:
+            plusone_image_url = f"file:///{Path(stored_paths[0]).resolve().as_posix()}"
+        else:
+            plusone_image_url = next(
+                (img for img in trigger_images if isinstance(img, str) and img.startswith("http")),
+                "",
+            )
         if not plusone_image_url:
             _metric("prefilter", "plusone_image_skip")
             return
@@ -1879,6 +1891,44 @@ async def run_auto_chat(
                 if generation_images
                 else ""
             )
+            # 落库回捞（S12-IMGSTORE-01）：本条没带图时把群里最近一张落库图
+            # 随请求附给模型（封顶 ai_qa_vision_max_images，回捞 1 张），带发送者
+            # 归属——"先发图再说话"跨消息场景重启也能看图。
+            if (
+                not generation_images
+                and settings.auto_chat_vision_enabled
+                and settings.ai_qa_vision_recall_seconds > 0
+                and memory_store is not None
+                and len(generation_images) < settings.ai_qa_vision_max_images
+            ):
+                try:
+                    from qq_bot.services.chat_images import ChatImageStore
+
+                    hit = await ChatImageStore(Path(settings.chat_image_dir)).recall_latest(
+                        repository=memory_store,
+                        group_id=group_id,
+                        ttl_seconds=settings.ai_qa_vision_recall_seconds,
+                    )
+                except Exception:
+                    hit = None
+                if hit is not None:
+                    recalled_url, recalled_sender = hit
+                    alias_map = build_user_aliases(
+                        rows,
+                        nicknames=nicknames,
+                        bot_user_id=bot_user_id,
+                        bot_label=bot_label,
+                    )
+                    recalled_label = (
+                        (nicknames or {}).get(recalled_sender)
+                        or alias_map.get(recalled_sender)
+                        or "群友"
+                    )
+                    generation_images = (recalled_url,)
+                    vision_note = (
+                        f"\n（随请求附了群里 {recalled_label} 刚发的那张图，回应可结合图片内容。）"
+                    )
+                    metrics.AI_VISION.labels("recalled").inc()
 
             async def _generate() -> str:
                 return await complete(

@@ -28,9 +28,7 @@ from __future__ import annotations
 import base64
 import logging
 import re
-import time
-from collections import deque
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -993,89 +991,10 @@ def is_attachment_only_text(text: str) -> bool:
     plusone 复读撞上纯图时据此转「重发原图」路径（S12-CHATFIX-01）。"""
     return not strip_attachment_placeholders(text)
 
-
-# ---- 近期图片回忆 ----
-
-_RECALL_MAX_PER_GROUP = 3
-_RECALL_MAX_GROUPS = 32
-
-
-@dataclass(frozen=True)
-class RecalledImage:
-    """回捞结果：TTL 内该群最近一条带图消息的图片源与发送者。
-
-    发送者随图一并交还，调用方才能在 prompt 里说清"这张图是谁发的"
-    （2026-10-25 线上实测：模型看得到图但不知道归属，把 A 提问的图当成
-    A 发的，回错对象）。"""
-
-    urls: tuple[str, ...]
-    sender_user_id: int | None
-
-
-class ImageRecallBuffer:
-    """进程内近期图片回忆（S11-VISION-01 跨消息补丁）。
-
-    QQ 群聊习惯是"先发表情包/截图，再 @ 机器人说话"——两条消息，@那条
-    本身不带图。问答链只看 @消息自身时永远看不到图（2026-10-25 线上实测：
-    视觉计数为零，机器人只能念记忆里的 [图片] 占位）。此缓冲在收到带图
-    消息时记住图片源与发送者；@消息自己没带图时按 TTL 回捞同群最近一张。
-
-    只存进程内存（重启即空），不写库、不进日志——图片 URL 的暴露面与
-    消息本身相同，且远短于 provider 侧缓存；与 [图片] 占位同一条隐私红线。
-    时钟可注入（测试），结构与 quote_reference 的 LRU 同族。"""
-
-    def __init__(
-        self,
-        *,
-        max_per_group: int = _RECALL_MAX_PER_GROUP,
-        max_groups: int = _RECALL_MAX_GROUPS,
-        clock: Callable[[], float] = time.monotonic,
-    ) -> None:
-        self._max_per_group = max(1, max_per_group)
-        self._max_groups = max(1, max_groups)
-        self._clock = clock
-        self._entries: dict[int, deque[tuple[float, tuple[str, ...], int | None]]] = {}
-        self._order: deque[int] = deque()
-
-    def remember(self, group_id: int, urls: Sequence[str], sender_user_id: int) -> None:
-        """记录一条带图消息的图片源与发送者（空 urls 忽略；每群只留最近 N 条）。"""
-        cleaned = tuple(url for url in urls if url)
-        if not cleaned:
-            return
-        now = self._clock()
-        entries = self._entries.get(group_id)
-        if entries is None:
-            if len(self._entries) >= self._max_groups:
-                oldest = self._order.popleft()
-                self._entries.pop(oldest, None)
-            entries = deque(maxlen=self._max_per_group)
-            self._entries[group_id] = entries
-            self._order.append(group_id)
-        entries.append((now, cleaned, sender_user_id))
-
-    def recall(self, group_id: int, *, ttl_seconds: float) -> RecalledImage | None:
-        """TTL 内该群最近一条带图消息的图片源与发送者；过期/无记录返回 None。"""
-        if ttl_seconds <= 0:
-            return None
-        entries = self._entries.get(group_id)
-        if not entries:
-            return None
-        now = self._clock()
-        for timestamp, urls, sender_user_id in reversed(entries):
-            if now - timestamp <= ttl_seconds:
-                return RecalledImage(urls=urls, sender_user_id=sender_user_id)
-        return None
-
-
-_SHARED_IMAGE_RECALL: ImageRecallBuffer | None = None
-
-
-def shared_image_recall() -> ImageRecallBuffer:
-    """进程级回忆缓冲单例（同 shared_quote_lru 的形态）。"""
-    global _SHARED_IMAGE_RECALL
-    if _SHARED_IMAGE_RECALL is None:
-        _SHARED_IMAGE_RECALL = ImageRecallBuffer()
-    return _SHARED_IMAGE_RECALL
+def read_image_as_data_url(path: str) -> str | None:
+    """本地图片文件 → base64 data URL（多模态请求可直接携带）；文件缺失/
+    超限返回 None。落库图回看（S12-IMGSTORE-01）的公开入口。"""
+    return _read_local_image(Path(path))
 
 
 # ---- 出站发图标记 ----

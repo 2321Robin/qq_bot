@@ -219,6 +219,96 @@ class ChatMemoryRepository:
         )
         await connection.commit()
 
+    # ---- 群聊图片落库（S12-IMGSTORE-01）----
+
+    async def add_chat_image(
+        self,
+        group_id: int,
+        message_id: int,
+        path: str,
+        created_at: datetime | None = None,
+        now: datetime | None = None,
+    ) -> int:
+        connection = self._require_open()
+        timestamp = self._to_utc_iso(created_at or now or datetime.now(UTC))
+        cursor = await connection.execute(
+            """
+            INSERT INTO chat_images (group_id, message_id, path, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (group_id, message_id, path, timestamp),
+        )
+        await connection.commit()
+        return int(cursor.lastrowid)
+
+    async def latest_chat_image(
+        self, group_id: int, *, newer_than: datetime
+    ) -> tuple[str, int] | None:
+        """TTL 内该群最新一张落库图：(文件路径, 发送者 user_id)。无则 None。"""
+        connection = self._require_open()
+        cursor = await connection.execute(
+            """
+            SELECT ci.path, cm.user_id
+            FROM chat_images ci
+            JOIN chat_messages cm ON cm.id = ci.message_id
+            WHERE ci.group_id = ? AND ci.created_at >= ?
+            ORDER BY ci.id DESC
+            LIMIT 1
+            """,
+            (group_id, self._to_utc_iso(newer_than)),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return str(row[0]), int(row[1])
+
+    async def chat_image_paths_for_message(self, message_id: int) -> list[str]:
+        connection = self._require_open()
+        cursor = await connection.execute(
+            "SELECT path FROM chat_images WHERE message_id = ? ORDER BY id",
+            (message_id,),
+        )
+        rows = await cursor.fetchall()
+        return [str(r[0]) for r in rows]
+
+    async def prune_chat_images(
+        self, group_id: int, *, keep_count: int, cutoff: datetime
+    ) -> list[str]:
+        """双限清理（每群滚动保留 keep_count 张 + 超过 cutoff 的过期行），
+        返回应删除的文件路径列表（行删除由本方法完成，文件由调用方 unlink）。
+        任何失败向上抛——调用方负责吞掉（清理绝不拖累消息主流程）。"""
+        connection = self._require_open()
+        cutoff_iso = self._to_utc_iso(cutoff)
+        stale = await connection.execute(
+            """
+            SELECT path FROM chat_images
+            WHERE group_id = ? AND (created_at < ? OR id NOT IN (
+                SELECT id FROM chat_images
+                WHERE group_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+            ))
+            """,
+            (group_id, cutoff_iso, group_id, keep_count),
+        )
+        paths = [str(r[0]) for r in await stale.fetchall()]
+        if not paths:
+            return []
+        await connection.execute(
+            """
+            DELETE FROM chat_images
+            WHERE group_id = ? AND (created_at < ? OR id NOT IN (
+                SELECT id FROM chat_images
+                WHERE group_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+            ))
+            """,
+            (group_id, cutoff_iso, group_id, keep_count),
+        )
+        await connection.commit()
+        return paths
+
     async def recent_user_turns(
         self,
         *,

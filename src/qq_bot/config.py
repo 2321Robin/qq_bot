@@ -256,6 +256,15 @@ class BotSettings(BaseSettings):
     chat_memory_default_turns: int = 10
     chat_memory_max_results: int = 20
 
+    # S12-IMGSTORE-01（部署者北极星：机器人得像活人一样看得见图）：群聊图片
+    # 下载落盘 data/chat_images/<群>/<消息行id>_<序号>，供后续轮次回看与回捞。
+    # 双限清理：每群滚动保留最近 keep_count 张，且超过 chat_memory_retention_days
+    # 的文件与行一起删除（与文本记忆同寿命，不留孤儿文件）。
+    chat_image_store_enabled: bool = True
+    chat_image_keep_count: int = 100
+    chat_image_dir: str = "data/chat_images"
+    chat_image_download_timeout_seconds: float = 10.0
+
     search_enabled: bool = False
     tavily_api_key: str = Field(default="", repr=False)
     search_max_results: int = 5

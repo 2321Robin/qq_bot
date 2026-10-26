@@ -224,6 +224,29 @@ MIGRATIONS: tuple[Migration, ...] = (
             """,
         ),
     ),
+    Migration(
+        version=6,
+        name="chat_images",
+        statements=(
+            """
+            CREATE TABLE IF NOT EXISTS chat_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_chat_images_group_created
+            ON chat_images (group_id, created_at)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_chat_images_message
+            ON chat_images (message_id)
+            """,
+        ),
+    ),
 )
 
 SUPPORTED_SCHEMA_VERSION = max(migration.version for migration in MIGRATIONS)
