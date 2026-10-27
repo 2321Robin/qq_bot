@@ -12,15 +12,25 @@ import json
 import pytest
 
 from qq_bot.config import BotSettings
+from qq_bot.services import catchup as catchup_service
 from qq_bot.services.catchup import (
     CatchupStateStore,
     HistoricalMessage,
+    LiveWatermark,
     parse_history,
     plan_catchup,
     run_catch_up,
 )
 
 SELF_ID = 2381444078
+
+
+@pytest.fixture(autouse=True)
+def _isolated_live_watermark(monkeypatch: pytest.MonkeyPatch, tmp_path_factory):
+    """进程级共享水位单例每例重置：测试间互不泄漏（在线水位跨测试残留
+    会改变 plan 的有效水位）。"""
+    store = CatchupStateStore(tmp_path_factory.mktemp("live") / "live_state.json")
+    monkeypatch.setattr(catchup_service, "_LIVE_WATERMARK", LiveWatermark(store))
 
 
 def _history_payload(*items: dict) -> dict:
@@ -236,7 +246,13 @@ class FakeMemoryStore:
     def __init__(self) -> None:
         self.added: list[dict] = []
         self.replies: dict[int, str] = {}
+        self.duplicates: set[str] = set()  # has_message_like 命中的文本
         self._next_id = 1
+
+    async def has_message_like(
+        self, group_id, user_id, message_text, *, around, window_seconds: int = 180
+    ) -> bool:
+        return message_text in self.duplicates
 
     async def add_message(self, **kwargs) -> int:
         row_id = self._next_id
@@ -294,7 +310,13 @@ class Harness:
     async def context_rows(self, group_id: int):
         return ()
 
-    async def run(self, state_store: CatchupStateStore, *, self_id: int = SELF_ID) -> None:
+    async def run(
+        self,
+        state_store: CatchupStateStore,
+        *,
+        self_id: int = SELF_ID,
+        live_watermark: LiveWatermark | None = None,
+    ) -> None:
         await run_catch_up(
             settings=self.settings,
             state_store=state_store,
@@ -309,6 +331,7 @@ class Harness:
             sleep_fn=self.sleep,
             now_epoch_fn=lambda: 10_000,
             rng=lambda: 0.5,
+            live_watermark=live_watermark,
         )
 
 
@@ -418,6 +441,123 @@ def test_run_truncates_to_max_replies(state_store) -> None:
     assert len(answered) == 1
     assert answered[0][2] == 2003  # 保留最新
     assert len(harness.memory.added) == 2  # 被裁的呼唤仍补库
+
+
+# ---- S12-CATCHUP-02：在线水位 + 入库去重 ----
+
+
+class _FakeClock:
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def test_live_watermark_note_and_effective(tmp_path) -> None:
+    store = CatchupStateStore(tmp_path / "state.json")
+    store.save({1001: 100, 1002: 50})
+    lw = LiveWatermark(store, clock=_FakeClock())
+
+    assert lw.effective(1001, 100) == 100  # 未登记在线水位 → 持久化值
+    lw.note(1001, 200)
+    assert lw.effective(1001, 100) == 200  # 在线值更大
+    assert lw.effective(1002, None) is None
+    lw.note(1002, 40)  # 早于持久化值也登记（取 max 在 effective）
+    assert lw.effective(1002, 50) == 50
+    lw.note(1002, 60)
+    assert lw.effective(1002, 50) == 60
+
+
+def test_live_watermark_flush_is_throttled_and_merges(tmp_path) -> None:
+    path = tmp_path / "state.json"
+    store = CatchupStateStore(path)
+    clock = _FakeClock()
+    lw = LiveWatermark(store, flush_interval_seconds=30.0, clock=clock)
+
+    lw.note(1001, 200)
+    assert store.load() == {}  # 节流窗口内不落盘
+    clock.advance(30.0)
+    lw.note(1001, 300)
+    assert store.load() == {1001: 300}  # 过窗合并写回
+    lw.note(1001, 250)  # 更小的值不回退
+    clock.advance(30.0)
+    lw.note(1001, 250)
+    assert store.load() == {1001: 300}
+
+
+async def test_flush_writes_pending_watermark(tmp_path) -> None:
+    store = CatchupStateStore(tmp_path / "state.json")
+    lw = LiveWatermark(store, clock=_FakeClock())
+    lw.note(1001, 500)
+    await lw.flush()
+    assert store.load() == {1001: 500}
+
+
+def test_run_live_watermark_prevents_reanswer_of_online_messages(state_store, tmp_path) -> None:
+    """部署重启场景（2026-10-27 线上事故）：持久化水位落后于在线水位——
+    在线期间已处理的消息不再被补答重复入库/重答。"""
+    live = LiveWatermark(CatchupStateStore(tmp_path / "live.json"))
+    live.note(1001, 9800)  # 在线已处理到 9800
+    state_store.save({1001: 9000})  # 补答水位落后
+    harness = Harness(
+        {
+            1001: _history_payload(
+                _msg(9200, 2002, [_at(SELF_ID), _text("在线时已答过的呼唤")]),
+                _msg(9900, 2002, [_at(SELF_ID), _text("真掉线期间的呼唤")]),
+            )
+        }
+    )
+    import asyncio
+
+    asyncio.run(harness.run(state_store, live_watermark=live))
+    replies = [s for s in harness.sent if s[2] is not None]
+    assert len(replies) == 1
+    assert harness.reply_prompts == ["真掉线期间的呼唤"]
+    assert [a["message_text"] for a in harness.memory.added] == ["真掉线期间的呼唤"]
+    assert state_store.load() == {1001: 9900}
+    assert live.get(1001) == 9900  # 补答水位同步回在线状态
+
+
+def test_run_deduped_calls_skip_backfill_and_announce(state_store) -> None:
+    """水位缝隙兜底：在线 handler 已入库的同文同行不再补库，呼唤不再重答，
+    全部呼唤被去重时连 announce 都不发（无事可做的补答最惊吓）。"""
+    state_store.save({1001: 9000})
+    harness = Harness(
+        {
+            1001: _history_payload(
+                _msg(9100, 2001, [_text("在线时聊过的话")]),
+                _msg(9200, 2002, [_at(SELF_ID), _text("在线时已答过的呼唤")]),
+                _msg(9300, 2003, [_text("真掉线的闲聊")]),
+            )
+        }
+    )
+    harness.memory.duplicates = {"在线时聊过的话", "在线时已答过的呼唤"}
+    import asyncio
+
+    asyncio.run(harness.run(state_store))
+    assert [a["message_text"] for a in harness.memory.added] == ["真掉线的闲聊"]
+    assert harness.sent == []  # 无呼唤可答 → 无 announce 无补答
+    assert harness.quota_groups == []
+
+
+def test_run_dedup_probe_failure_falls_back_to_insert(state_store) -> None:
+    """去重探测不可用（旧存储/异常）→ 放行原路径，不因探测失败丢补库。"""
+    state_store.save({1001: 9000})
+    harness = Harness({1001: _history_payload(_msg(9200, 2002, [_text("闲聊")]))})
+
+    class BrokenProbeStore(FakeMemoryStore):
+        async def has_message_like(self, *args, **kwargs):
+            raise RuntimeError("probe unavailable")
+
+    harness.memory = BrokenProbeStore()
+    import asyncio
+
+    asyncio.run(harness.run(state_store))
+    assert len(harness.memory.added) == 1
 
 
 def test_run_second_round_is_idempotent(state_store) -> None:

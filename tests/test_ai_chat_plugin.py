@@ -273,6 +273,25 @@ async def test_memory_reference_user_scoping_passthrough(
 
 
 @pytest.mark.asyncio
+async def test_handler_advances_live_catchup_watermark(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """S12-CATCHUP-02：在线消息入库后推进补答水位——重连后补答只看真掉线
+    窗口，不再把在线已答过的呼唤重答一遍（2026-10-27 线上事故回归）。"""
+    from qq_bot.services import catchup as catchup_service
+    from qq_bot.services.catchup import CatchupStateStore, LiveWatermark
+
+    store = CatchupStateStore(tmp_path / "live.json")
+    monkeypatch.setattr(catchup_service, "_LIVE_WATERMARK", LiveWatermark(store))
+    await _run_addressed(monkeypatch, FakeEvent("ai 在吗"))
+    with pytest.raises(FinishCalled):
+        await ai_chat_plugin.handle_ai_chat(FakeEvent("ai 在吗"))  # type: ignore[arg-type]
+
+    live = catchup_service.shared_live_watermark()
+    assert live.get(1001) is not None and live.get(1001) > 0
+
+
+@pytest.mark.asyncio
 async def test_unified_pipeline_failure_sends_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

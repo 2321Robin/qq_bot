@@ -18,7 +18,7 @@ from nonebot.adapters.onebot.v11 import Message, MessageSegment
 from qq_bot.config import get_settings
 from qq_bot.runtime import RuntimeStateError, get_chat_repository, get_runtime
 from qq_bot.services.ai_client import request_ai_reply
-from qq_bot.services.catchup import CatchupStateStore, run_catch_up
+from qq_bot.services.catchup import CatchupStateStore, run_catch_up, shared_live_watermark
 
 driver = get_driver()
 
@@ -28,6 +28,16 @@ _MIN_INTERVAL_SECONDS = 60.0
 
 # 后台任务保留引用，防止被垃圾回收中途丢弃（与 scheduler 同款）。
 _CATCHUP_TASKS: set[asyncio.Task] = set()
+
+
+@driver.on_shutdown
+async def _flush_live_watermark() -> None:
+    """优雅停机前把在线水位刷盘（S12-CATCHUP-02）：节流窗口内未落盘的
+    进度不丢，重启后补答窗口精准。"""
+    try:
+        await shared_live_watermark().flush()
+    except Exception:
+        logger.exception("catchup live watermark flush failed")
 
 
 @driver.on_bot_connect

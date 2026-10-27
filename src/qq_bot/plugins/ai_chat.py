@@ -2,6 +2,7 @@ from datetime import UTC, datetime, timedelta
 import asyncio
 import random
 import re
+import time
 from collections.abc import Mapping, Sequence
 from types import SimpleNamespace
 from pathlib import Path
@@ -26,6 +27,7 @@ from qq_bot.runtime import (
     get_runtime,
 )
 from qq_bot.services.chat_images import ChatImageStore
+from qq_bot.services.catchup import shared_live_watermark
 from qq_bot.services.ai_client import AIReplyError
 from qq_bot.services.auto_chat import (
     BatchItem,
@@ -237,6 +239,7 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                             "Chat memory write failed; continuing without storing message"
                         )
                     else:
+                        _note_live_watermark(event)
                         await _persist_message_images(
                             group_id=event.group_id,
                             row_id=stored_row_id,
@@ -317,6 +320,7 @@ async def _handle_ai_chat(event: GroupMessageEvent) -> None:
                 record_error("memory", classify_exception(exc).category.value)
                 logger.exception("Chat memory write failed; continuing without storing message")
             else:
+                _note_live_watermark(event)
                 await _persist_message_images(
                     group_id=event.group_id,
                     row_id=memory_message_id,
@@ -1070,6 +1074,21 @@ def _chat_image_store() -> ChatImageStore:
     if _CHAT_IMAGE_STORE is None:
         _CHAT_IMAGE_STORE = ChatImageStore(Path(get_settings().chat_image_dir))
     return _CHAT_IMAGE_STORE
+
+
+def _note_live_watermark(event: object) -> None:
+    """在线收到的每条消息入库后推进补答水位（S12-CATCHUP-02）：补答重连
+    后只看真掉线窗口，不再把部署重启前在线已答过的呼唤重答一遍。失败
+    静默——水位是补答增强，绝不拖累消息主流程。"""
+    raw = getattr(event, "time", None)
+    try:
+        ts = int(raw) if raw else int(time.time())
+    except (TypeError, ValueError):
+        ts = int(time.time())
+    try:
+        shared_live_watermark().note(event.group_id, ts)
+    except Exception:
+        pass
 
 
 async def _persist_message_images(

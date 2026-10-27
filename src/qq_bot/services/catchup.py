@@ -8,9 +8,13 @@ chat memory，并对其中 @机器人 的呼唤补一条 AI 回答——腾讯�
 
 护栏（防止补答变成惊吓）：
 - 首次启动只初始化水位，不回溯历史；
+- 水位随在线收发实时推进（S12-CATCHUP-02 LiveWatermark），补答只覆盖
+  真掉线窗口，部署重启不再把在线已答过的呼唤重答一遍；
 - 只处理水位之后、且在 ``catchup_max_age_seconds`` 窗口内的消息，更久
   的呼唤不补（水位照常推进，一次性跳过）；
-- 每群一次最多补 ``catchup_max_replies`` 条呼唤，超出部分只补库不答。
+- 每群一次最多补 ``catchup_max_replies`` 条呼唤，超出部分只补库不答；
+- 补答入库前按「同群同人同文 ±180s」探测去重，在线已处理过的消息
+  跳过（水位节流落盘的残余缝隙兜底）。
 
 隐私纪律与全项目一致：日志/指标只记计数与结果，绝不写消息文本。
 """
@@ -256,6 +260,81 @@ class CatchupStateStore:
             logger.warning("catchup state save failed; watermark not persisted")
 
 
+class LiveWatermark:
+    """在线收发推进的补答水位（S12-CATCHUP-02）。
+
+    S12-CATCHUP-01 的水位只有补答轮自己推进——机器人在线时正常收发的每条
+    消息完全不碰它，于是"重连窗口"（上次补答水位 → 现在）远大于真正的
+    "掉线窗口"：一次部署重启就会把在线期间已回答过的呼唤原样重答一遍
+    （2026-10-27 线上实录）。此状态由消息处理器在每条消息入库后 note()，
+    补答轮取 ``effective = max(持久化水位, 在线水位)``，重连后补答只覆盖
+    真掉线窗口。
+
+    note() 不随消息落盘（热路径零 IO）：内存取每群最大时间戳，节流
+    ``flush_interval_seconds`` 合并写回文件；优雅停机由插件钩子补一次
+    flush。进程崩溃丢失的最多是一个节流窗口的消息，残余重复由补答入库
+    去重兜底。"""
+
+    def __init__(
+        self,
+        store: CatchupStateStore,
+        *,
+        flush_interval_seconds: float = 30.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._store = store
+        self._live: dict[int, int] = {}
+        self._flush_interval = flush_interval_seconds
+        self._clock = clock
+        self._last_flush = clock()
+
+    def note(self, group_id: int, ts: int) -> None:
+        """登记一条已处理消息的时间（每群取最大值），必要时节流落盘。"""
+        current = self._live.get(group_id)
+        if current is None or ts > current:
+            self._live[group_id] = int(ts)
+        if self._clock() - self._last_flush >= self._flush_interval:
+            self._flush_now()
+
+    def get(self, group_id: int) -> int | None:
+        return self._live.get(group_id)
+
+    def effective(self, group_id: int, persisted: int | None) -> int | None:
+        """补答轮应使用的水位：持久化值与在线值的较大者。"""
+        live = self._live.get(group_id)
+        if live is None:
+            return persisted
+        if persisted is None:
+            return live
+        return max(live, persisted)
+
+    async def flush(self) -> None:
+        self._flush_now()
+
+    def _flush_now(self) -> None:
+        self._last_flush = self._clock()
+        state = self._store.load()
+        changed = False
+        for group_id, ts in self._live.items():
+            if ts > state.get(group_id, 0):
+                state[group_id] = ts
+                changed = True
+        if changed:
+            self._store.save(state)
+
+
+_SHARED_STATE_PATH = Path("data") / "catchup_state.json"
+_LIVE_WATERMARK: LiveWatermark | None = None
+
+
+def shared_live_watermark() -> LiveWatermark:
+    """进程级单例：消息处理器 note、补答轮读、停机钩子 flush 共用。"""
+    global _LIVE_WATERMARK
+    if _LIVE_WATERMARK is None:
+        _LIVE_WATERMARK = LiveWatermark(CatchupStateStore(_SHARED_STATE_PATH))
+    return _LIVE_WATERMARK
+
+
 # ---- 编排（所有 IO 以函数注入，服务层不依赖 nonebot 适配器） ----
 
 SendFn = Callable[[int, str, int | None], Awaitable[None]]
@@ -281,8 +360,13 @@ async def run_catch_up(
     sleep_fn: SleepFn = asyncio.sleep,
     now_epoch_fn: Callable[[], int] = lambda: int(time.time()),
     rng: Callable[[], float] = random.random,
+    live_watermark: LiveWatermark | None = None,
 ) -> None:
-    """对一个已连接的 bot 跑一轮补答（逐群串行，单群失败不拖累他群）。"""
+    """对一个已连接的 bot 跑一轮补答（逐群串行，单群失败不拖累他群）。
+
+    ``live_watermark``（S12-CATCHUP-02）：消息处理器在线推进的水位；None 用
+    共享单例。补答按 max(持久化水位, 在线水位) 圈定范围，重连后不再重答
+    在线期间已处理过的消息。"""
     if not settings.catchup_enabled:
         return
 
@@ -294,6 +378,7 @@ async def run_catch_up(
         return
 
     state = state_store.load()
+    live = live_watermark or shared_live_watermark()
     for group_id in group_ids:
         try:
             await _process_group(
@@ -301,6 +386,7 @@ async def run_catch_up(
                 settings=settings,
                 state=state,
                 state_store=state_store,
+                live=live,
                 self_id=self_id,
                 fetch_history_fn=fetch_history_fn,
                 send_fn=send_fn,
@@ -323,6 +409,7 @@ async def _process_group(
     settings: BotSettings,
     state: dict[int, int],
     state_store: CatchupStateStore,
+    live: LiveWatermark,
     self_id: int,
     fetch_history_fn: Callable[..., Awaitable[object]],
     send_fn: SendFn,
@@ -345,7 +432,7 @@ async def _process_group(
     messages = parse_history(payload, self_id=self_id)
     plan = plan_catchup(
         messages,
-        watermark=state.get(group_id),
+        watermark=live.effective(group_id, state.get(group_id)),
         now_epoch=now_epoch_fn(),
         max_age_seconds=settings.catchup_max_age_seconds,
         max_replies=settings.catchup_max_replies,
@@ -354,17 +441,32 @@ async def _process_group(
     # 水位先落盘再干活：补答中途崩溃也不会下一轮重复补同批消息。
     state[group_id] = plan.new_watermark
     state_store.save(state)
+    live.note(group_id, plan.new_watermark)
     if plan.first_start or not plan.backfill:
         # noop 指标区分"跑了无事可做"与"根本没跑"（重连验证依赖它）。
         metrics.CATCHUP.labels("plan", "first_start" if plan.first_start else "noop").inc()
         return
 
     # 窗口内消息全部补库（记忆完整）；呼唤标记 is_ai_prompt，补答后回填。
+    # S12-CATCHUP-02：在线已处理过的消息（handler 已入库同文同行）跳过——
+    # 水位缝隙/重启窗口下的重复入库与重复回答双保险；探测失败放行原路径。
     call_rows: dict[HistoricalMessage, int] = {}
     if memory_store is not None:
         call_set = set(plan.calls)
         backfilled = 0
         for m in plan.backfill:
+            try:
+                duplicate = await memory_store.has_message_like(
+                    group_id,
+                    m.user_id,
+                    m.text,
+                    around=datetime.fromtimestamp(m.time, UTC),
+                )
+            except Exception:
+                duplicate = False
+            if duplicate:
+                metrics.CATCHUP.labels("backfill", "duplicate").inc()
+                continue
             try:
                 row_id = await memory_store.add_message(
                     group_id=group_id,
@@ -382,7 +484,11 @@ async def _process_group(
         if backfilled:
             metrics.CATCHUP.labels("backfill", "ok").inc(backfilled)
 
-    if not plan.calls:
+    # 全部呼唤都被去重跳过时不再 announce/不耗 quota（无事可做的补答最惊吓）。
+    answerable = (
+        list(plan.calls) if memory_store is None else [m for m in plan.calls if m in call_rows]
+    )
+    if not answerable:
         if plan.skipped_old:
             record_event(logger, logging.INFO, "catchup_skipped_old", skipped=plan.skipped_old)
         return
@@ -402,7 +508,7 @@ async def _process_group(
         except Exception:
             metrics.CATCHUP.labels("announce", "error").inc()
 
-    for index, m in enumerate(plan.calls):
+    for index, m in enumerate(answerable):
         reply = await _answer_call(
             m,
             settings=settings,

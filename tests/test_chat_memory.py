@@ -389,3 +389,27 @@ async def test_event_loop_remains_schedulable_during_operations(repository) -> N
         await repository.add_message(1001, 2001, f"m{index}", created_at=now, now=now)
     await task
     assert progress["ticks"] > 0
+
+
+# ---- S12-CATCHUP-02：补答入库去重探测 ----
+
+
+@pytest.mark.asyncio
+async def test_has_message_like_matches_same_user_text_within_window(repository) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    await repository.add_message(
+        group_id=1001,
+        user_id=2001,
+        message_text="在吗",
+        created_at=datetime.now(UTC) - timedelta(seconds=30),
+    )
+    around = datetime.now(UTC)
+    assert await repository.has_message_like(1001, 2001, "在吗", around=around) is True
+    assert (
+        await repository.has_message_like(1001, 2001, "在吗", around=around, window_seconds=5)
+        is False
+    )
+    assert await repository.has_message_like(1001, 2002, "在吗", around=around) is False  # 别人说的
+    assert await repository.has_message_like(1001, 2001, "不在吗", around=around) is False  # 别的话
+    assert await repository.has_message_like(1002, 2001, "在吗", around=around) is False  # 别的群

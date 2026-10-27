@@ -219,6 +219,31 @@ class ChatMemoryRepository:
         )
         await connection.commit()
 
+    async def has_message_like(
+        self,
+        group_id: int,
+        user_id: int,
+        message_text: str,
+        *,
+        around: datetime,
+        window_seconds: int = 180,
+    ) -> bool:
+        """窗口内同群同人同文是否已存在（S12-CATCHUP-02 补答入库去重）：
+        在线 handler 已处理过的消息不再由补答重复入库/重答。"""
+        connection = self._require_open()
+        start = self._to_utc_iso(around - timedelta(seconds=window_seconds))
+        end = self._to_utc_iso(around + timedelta(seconds=window_seconds))
+        cursor = await connection.execute(
+            """
+            SELECT 1 FROM chat_messages
+            WHERE group_id = ? AND user_id = ? AND message_text = ?
+              AND created_at BETWEEN ? AND ?
+            LIMIT 1
+            """,
+            (group_id, user_id, message_text, start, end),
+        )
+        return await cursor.fetchone() is not None
+
     # ---- 群聊图片落库（S12-IMGSTORE-01）----
 
     async def add_chat_image(
